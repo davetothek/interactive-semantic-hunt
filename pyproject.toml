@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "interactive-semantic-hunt"
+version = "0.1.0"
+description = "Interactive semantic search for code, inspired by fzf"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "huggingface-hub>=0.23.0",
+    "llama-cpp-python>=0.2.75",
+    "textual>=0.70.0",
+    "diskcache>=5.6.0",
+]
+
+[project.optional-dependencies]
+st = ["sentence-transformers"]
+ollama = ["ollama"]
+
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "ty",
+    "pytest",
+    "pytest-cov",
+    "poethepoet",
+]
+
+[project.scripts]
+ish = "ish.interfaces.cli.main:main"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+cache-dir = ".cache/ruff"
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+select = [
+  "TID252", # Disallow relative imports from parent directories (i.e., 'from ..core import x')
+  "E",      # Enforce PEP 8 style guide (whitespace and formatting rules)
+  "F",      # Pyflakes checks for logical errors (e.g., unused variables, undefined names)
+  "I",      # isort ensures imports are sorted properly
+  "W",      # Handle warnings from pycodestyle
+  "B",      # Find common bugs with flake8-bugbear
+  "C4",     # Improve list comprehensions with flake8-comprehensions
+  "UP",     # Utilize pyupgrade for automatic syntax upgrades
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+cache_dir = ".cache/pytest"
+addopts = "--cov=ish --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+source = ["ish"]
+omit = [
+    "*/interfaces/python/*",
+    "*/interfaces/tui/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.poe.tasks]
+test = "pytest"
+lint = "ruff check --fix src tests"
+format = "ruff format src tests"
+typecheck = "ty check src"
+check = ["lint", "typecheck", "test"]

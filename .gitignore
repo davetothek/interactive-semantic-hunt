@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ish embedding cache
+.ish_cache/
+
+# Tool caches (ruff, pytest)
+.cache/
