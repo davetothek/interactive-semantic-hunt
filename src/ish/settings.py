@@ -30,14 +30,17 @@ class ConfigError(Exception):
     """Raise when a configuration file cannot be read or understood."""
 
 
-def _opt(help: str, *, flag: str | None = None, **argparse: Any):
+def _opt(help: str, *, flag: str | None = None, **cli: Any):
     """Describe one option for both the CLI and the TOML file.
 
     Derive the long flag from the field name unless *flag* adds a short
     one. Every option reaches both interfaces — there is deliberately no
     way to declare one that only a config file accepts.
+
+    Extra keywords describe how the command line accepts the option. The
+    CLI interface interprets them; this module never imports a parser.
     """
-    return {"help": help, "flag": flag, "argparse": argparse}
+    return {"help": help, "flag": flag, "cli": cli}
 
 
 @dataclass(frozen=True, slots=True)
