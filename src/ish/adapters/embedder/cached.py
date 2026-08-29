@@ -26,7 +26,9 @@ class CachedEmbedder(Embedder):
     touches no disk when the embedder is never called.
     """
 
-    def __init__(self, embedder: Embedder, cache_dir: str | None = None) -> None:
+    def __init__(
+        self, embedder: Embedder, *, cache_dir: str | None = None
+    ) -> None:
         self._embedder = embedder
         self._cache_dir = cache_dir or _default_cache_dir()
         self._cache: diskcache.Cache | None = None

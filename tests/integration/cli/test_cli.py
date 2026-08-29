@@ -225,3 +225,39 @@ def test_interactive_tui_st(
     )
     exit_code = main(["", str(project), "-i", "--embedder", "st"])
     assert exit_code == 0
+
+
+class TestConfigFile:
+    """Verify that ish.toml reaches the running command."""
+
+    def test_project_config_changes_behavior(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A config-file ignore rule prunes the scan."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "app.py").write_text("def keep(): pass\n")
+        (tmp_path / "build").mkdir()
+        (tmp_path / "build" / "gen.py").write_text("def drop(): pass\n")
+        (tmp_path / "ish.toml").write_text('ignore = ["build"]\n')
+
+        exit_code = main(["", str(tmp_path)])
+        out = capsys.readouterr().out
+
+        assert exit_code == 0
+        assert "keep" in out
+        assert "drop" not in out
+
+    def test_broken_config_exits_cleanly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "ish.toml").write_text("limit = = 3\n")
+
+        exit_code = main(["", str(tmp_path)])
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "Cannot parse" in captured.err
+        assert captured.out == ""

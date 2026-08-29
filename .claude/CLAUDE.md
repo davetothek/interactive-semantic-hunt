@@ -53,6 +53,7 @@ interfaces → application → domain
 |---|---|---|
 | Domain | `src/ish/domain/chunk.py` | `Chunk` dataclass |
 | Composition | `src/ish/bootstrap.py` | Composition root — all wiring and registries |
+| Composition | `src/ish/settings.py` | Option set — one source of truth for CLI flags and TOML keys |
 | Port | `src/ish/application/ports/parser.py` | `Parser` Protocol and `ParseError` |
 | Port | `src/ish/application/ports/embedder.py` | `Embedder` Protocol |
 | Port | `src/ish/application/ports/vector_store.py` | `VectorStore` Protocol |
@@ -62,6 +63,7 @@ interfaces → application → domain
 | Adapter | `src/ish/adapters/embedder/` | Embedding backends and disk cache |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store |
 | Interface | `src/ish/interfaces/format.py` | Shared CLI/TUI output formatting |
+| Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |
 | Interface | `src/ish/interfaces/python/api.py` | Python API (future) |
@@ -114,7 +116,21 @@ src/foo.py:35-42  method    ConfigLoader.load
 - `EMBEDDERS` — embedding backends by CLI name. Register new backends here; the `--embedder` choices derive from this dict.
 - `build_parsers()` — the list of source parsers. Register new parsers (Tree-sitter, AsciiDoc, ...) here; file discovery derives its suffix set from each parser's `suffixes`.
 
-Interfaces call `bootstrap.build_scan()` / `bootstrap.build_search(name)` and never construct adapters themselves. No dependency injection framework.
+Interfaces call `bootstrap.build_scan(settings)` / `bootstrap.build_search(settings)` and never construct adapters themselves. No dependency injection framework.
+
+## Configuration
+
+`src/ish/settings.py` declares every configurable option once, as fields on the frozen `Settings` dataclass. The CLI builds its flags from those fields and the TOML loader accepts the same names, so the two interfaces cannot drift. Add an option by adding one field — never by editing `args.py`.
+
+Precedence, resolved only in `load_settings()`:
+
+```
+defaults < ~/.config/ish/ish.toml < ./ish.toml (searched upward) < ISH_* env < CLI flags
+```
+
+- **No use case ever receives a `Settings` object.** `Scan` and `Search` take explicit constructor arguments; `bootstrap` reads the settings and passes values. Keep the dependency arrow pointing at values, not at a config bag.
+- There is deliberately no way to declare a config-only or CLI-only option. `tests/unit/test_settings.py` enforces the parity in both directions.
+- An unknown key warns and is skipped. A malformed or unreadable file raises `ConfigError` and exits 1.
 
 `src/ish/__init__.py` must stay free of layer imports — `tests/unit/test_package.py` enforces this in a fresh interpreter.
 

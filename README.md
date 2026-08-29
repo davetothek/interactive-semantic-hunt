@@ -54,8 +54,32 @@ nvim $(ish -i src/)
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend |
 | `-v`, `-vv` | Increase log detail |
 | `--color {auto,always,never}` | Control log color |
+| `--limit N` | Maximum search results |
+| `--ignore DIR ...` | Directory names to skip |
+| `--model NAME` | Override the backend model |
 
 Logs go to stderr, so you can pipe stdout safely.
+
+## Configure
+
+Every command-line option is also a key in `ish.toml`, under the same name.
+Put project settings in `ish.toml` at the root of your repository:
+
+```toml
+embedder = "ollama"
+model = "mxbai-embed-large"
+limit = 10
+ignore = [".git", ".venv", "build", "node_modules"]
+```
+
+User-level defaults go in `~/.config/ish/ish.toml`. Later sources win:
+
+```
+defaults < ~/.config/ish/ish.toml < ./ish.toml < ISH_* environment < command line
+```
+
+Set any option from the environment with the `ISH_` prefix, for example
+`ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.
 
 ## Develop
 

@@ -1,11 +1,19 @@
-"""CLI configuration parsing and models."""
+"""Parse command-line arguments.
+
+Build every option flag from ``ish.settings.Settings`` so the command line
+and ``ish.toml`` always accept the same option set.
+"""
 
 import argparse
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 from ish import bootstrap
+from ish.settings import Settings, load_settings
+
+# Options whose accepted values come from a registry rather than a literal.
+_DYNAMIC_CHOICES = {"embedder": lambda: sorted(bootstrap.EMBEDDERS)}
 
 
 def _is_path_syntax(value: str) -> bool:
@@ -20,23 +28,52 @@ def _is_path_syntax(value: str) -> bool:
     )
 
 
+def _describe_default(value: object) -> str:
+    """Render a default value for help text."""
+    if isinstance(value, tuple):
+        return " ".join(value)
+    return str(value)
+
+
+def add_settings_options(parser: argparse.ArgumentParser) -> None:
+    """Add one command-line flag for every configurable setting."""
+    group = parser.add_argument_group("options (also settable in ish.toml)")
+    for f in fields(Settings):
+        meta = f.metadata
+        flags = [meta.get("flag") or f"--{f.name.replace('_', '-')}"]
+        if meta.get("flag"):
+            # Keep the derived long flag alongside an explicit short one.
+            flags.append(f"--{f.name.replace('_', '-')}")
+
+        kwargs = dict(meta.get("argparse", {}))
+        if f.name in _DYNAMIC_CHOICES:
+            kwargs["choices"] = _DYNAMIC_CHOICES[f.name]()
+
+        default = _describe_default(f.default)
+        help_text = meta["help"]
+        if default:
+            help_text = f"{help_text} (default: {default})"
+
+        # Default to None so the settings loader can tell "not supplied"
+        # from "supplied the same value as the default".
+        group.add_argument(*flags, dest=f.name, default=None, help=help_text, **kwargs)
+
+
 @dataclass(frozen=True, slots=True)
 class CliArgs:
-    """Runtime arguments parsed from the CLI."""
+    """Hold the per-run inputs plus the resolved settings."""
 
     path: Path
     query: str
-    embedder: str
     interactive: bool
-    verbosity: int
-    color: bool
+    settings: Settings
 
     @classmethod
     def from_args(cls, argv: list[str] | None = None) -> CliArgs:
         """Parse command-line arguments and return a typed data class."""
         parser = argparse.ArgumentParser(
             prog="ish",
-            description="Discover and list semantic code chunks in Python files.",
+            description="Discover and list semantic code chunks in source files.",
         )
         parser.add_argument(
             "query",
@@ -51,33 +88,12 @@ class CliArgs:
             help="Root path to scan (default: current directory).",
         )
         parser.add_argument(
-            "--embedder",
-            choices=sorted(bootstrap.EMBEDDERS),
-            default=bootstrap.DEFAULT_EMBEDDER,
-            help=(
-                "Which embedding backend to use "
-                f"(default: {bootstrap.DEFAULT_EMBEDDER})."
-            ),
-        )
-        parser.add_argument(
-            "-v",
-            "--verbose",
-            action="count",
-            default=0,
-            help="Increase logging verbosity (e.g., -v for INFO, -vv for DEBUG).",
-        )
-        parser.add_argument(
             "-i",
             "--interactive",
             action="store_true",
             help="Run the interactive TUI.",
         )
-        parser.add_argument(
-            "--color",
-            choices=["auto", "always", "never"],
-            default="auto",
-            help="Control log coloring (default: auto).",
-        )
+        add_settings_options(parser)
 
         import importlib.metadata
 
@@ -111,18 +127,17 @@ class CliArgs:
             path_val = query_val
             query_val = ""
 
-        if args.color == "auto":
-            import sys
-
-            use_color = sys.stderr.isatty()
-        else:
-            use_color = args.color == "always"
+        overrides = {f.name: getattr(args, f.name, None) for f in fields(Settings)}
+        path = Path(path_val).resolve()
 
         return cls(
-            path=Path(path_val).resolve(),
+            path=path,
             query=query_val,
-            embedder=args.embedder,
             interactive=args.interactive,
-            verbosity=args.verbose,
-            color=use_color,
+            settings=load_settings(overrides, start=_search_root(path)),
         )
+
+
+def _search_root(path: Path) -> Path:
+    """Return the directory to search upward from for a project config."""
+    return path if path.is_dir() else path.parent

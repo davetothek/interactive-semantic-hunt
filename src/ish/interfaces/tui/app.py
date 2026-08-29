@@ -47,10 +47,13 @@ class IshApp(App[tuple[Chunk, float] | None]):
         ("escape", "quit", "Quit"),
     ]
 
-    def __init__(self, search_use_case: Search, root_path: Path) -> None:
+    def __init__(
+        self, search_use_case: Search, root_path: Path, *, limit: int = 50
+    ) -> None:
         super().__init__()
         self.search_use_case = search_use_case
         self.root_path = root_path
+        self.limit = limit
         self._current_results: list[tuple[Chunk, float]] = []
         self._all_chunks: list[Chunk] = []
 
@@ -156,7 +159,9 @@ class IshApp(App[tuple[Chunk, float] | None]):
             return
 
         # Perform the actual ML search in a background thread so UI doesn't freeze
-        results = await asyncio.to_thread(self.search_use_case.search, query, limit=50)
+        results = await asyncio.to_thread(
+            self.search_use_case.search, query, limit=self.limit
+        )
         self._populate_results(list(results), show_scores=True)
 
     async def on_input_changed(self, event: Input.Changed) -> None:
