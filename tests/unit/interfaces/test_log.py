@@ -77,3 +77,18 @@ def test_formatter_with_color():
     out_err = formatter.format(record_err)
     assert "Test err" in out_err
     assert _Ansi.RED in out_err
+
+
+def test_resolve_color_modes(monkeypatch):
+    """Verify the tri-state color option resolves to a boolean."""
+    import sys
+
+    from ish.interfaces.cli.log import resolve_color
+
+    assert resolve_color("always") is True
+    assert resolve_color("never") is False
+
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+    assert resolve_color("auto") is True
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
+    assert resolve_color("auto") is False

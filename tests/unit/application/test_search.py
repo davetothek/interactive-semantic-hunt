@@ -53,7 +53,7 @@ class TestSearchUseCase:
         results = search.run(Path("dummy"), "my query", limit=3)
 
         # Verify Scan was initialized with the parser and run with the path
-        mock_scan_class.assert_called_once_with(parsers=[mock_parser])
+        mock_scan_class.assert_called_once_with(parsers=[mock_parser], ignored_dirs=())
         mock_scan_instance.run.assert_called_once_with(Path("dummy"))
 
         # Verify the chunk was formatted and embedded

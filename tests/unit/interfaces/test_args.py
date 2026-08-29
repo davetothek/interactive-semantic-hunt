@@ -1,21 +1,19 @@
-"""Test CLI configuration parsing."""
+"""Test CLI argument parsing."""
 
 from pathlib import Path
 
-from ish.interfaces.cli.config import CliArgs
+import pytest
+
+from ish.interfaces.cli.args import CliArgs
+from ish.settings import Settings
 
 
-def test_default_args(monkeypatch):
-    import sys
-
-    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+def test_default_args():
     args = CliArgs.from_args([])
     assert args.path == Path(".").resolve()
-    assert args.verbosity == 0
-    assert args.color is True
     assert args.query == ""
-    assert args.embedder == "llama.cpp"
     assert args.interactive is False
+    assert args.settings == Settings()
 
 
 def test_custom_path():
@@ -25,29 +23,32 @@ def test_custom_path():
 
 
 def test_verbosity_flags():
-    args = CliArgs.from_args(["-v"])
-    assert args.verbosity == 1
-
-    args = CliArgs.from_args(["-vv"])
-    assert args.verbosity == 2
+    assert CliArgs.from_args(["-v"]).settings.verbosity == 1
+    assert CliArgs.from_args(["-vv"]).settings.verbosity == 2
 
 
-def test_color_never():
-    args = CliArgs.from_args(["--color=never"])
-    assert args.color is False
+def test_color_flag():
+    assert CliArgs.from_args(["--color=never"]).settings.color == "never"
+    assert CliArgs.from_args(["--color=always"]).settings.color == "always"
+    assert CliArgs.from_args([]).settings.color == "auto"
 
 
-def test_color_always():
-    args = CliArgs.from_args(["--color=always"])
-    assert args.color is True
+def test_limit_flag():
+    assert CliArgs.from_args(["--limit", "17"]).settings.limit == 17
 
 
-def test_color_auto_not_tty(monkeypatch):
-    import sys
+def test_ignore_flag():
+    args = CliArgs.from_args(["--ignore", "build", "dist"])
+    assert args.settings.ignore == ("build", "dist")
 
-    monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
-    args = CliArgs.from_args([])
-    assert args.color is False
+
+def test_cli_beats_project_config(tmp_path, monkeypatch):
+    """Confirm a flag overrides the same key in ish.toml."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "ish.toml").write_text("limit = 3\n")
+
+    assert CliArgs.from_args(["q", "."]).settings.limit == 3
+    assert CliArgs.from_args(["q", ".", "--limit", "8"]).settings.limit == 8
 
 
 def test_path_like_query_becomes_path(tmp_path, monkeypatch):
@@ -88,11 +89,8 @@ def test_missing_path_like_query_stays_query(tmp_path, monkeypatch):
 
 
 def test_version_flag(capsys):
-    import pytest
-
     with pytest.raises(SystemExit) as exc_info:
         CliArgs.from_args(["--version"])
 
     assert exc_info.value.code == 0
-    out = capsys.readouterr().out
-    assert "ish" in out
+    assert "ish" in capsys.readouterr().out

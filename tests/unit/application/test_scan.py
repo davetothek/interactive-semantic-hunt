@@ -302,3 +302,42 @@ class TestVenvDirectory:
         parsed_names = [p.name for p, _ in fake_parser.calls]
         assert "activate.py" not in parsed_names
         assert "app.py" in parsed_names
+
+
+class TestConfigurableIgnores:
+    """Verify that the caller chooses which directory names to skip."""
+
+    def test_custom_ignore_list(self, fake_parser: FakeParser, tmp_path: Path) -> None:
+        (tmp_path / "app.py").write_text("pass\n")
+        (tmp_path / "build").mkdir()
+        (tmp_path / "build" / "gen.py").write_text("pass\n")
+
+        scanner = Scan(parsers=[fake_parser], ignored_dirs=["build"])
+        scanner.run(tmp_path)
+
+        parsed = [p.name for p, _ in fake_parser.calls]
+        assert parsed == ["app.py"]
+
+    def test_custom_list_replaces_defaults(
+        self, fake_parser: FakeParser, tmp_path: Path
+    ) -> None:
+        """A caller-supplied list is the whole list, not an addition."""
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "hook.py").write_text("pass\n")
+
+        scanner = Scan(parsers=[fake_parser], ignored_dirs=["build"])
+        scanner.run(tmp_path)
+
+        assert [p.name for p, _ in fake_parser.calls] == ["hook.py"]
+
+    def test_empty_falls_back_to_defaults(
+        self, fake_parser: FakeParser, tmp_path: Path
+    ) -> None:
+        (tmp_path / "__pycache__").mkdir()
+        (tmp_path / "__pycache__" / "c.py").write_text("pass\n")
+        (tmp_path / "app.py").write_text("pass\n")
+
+        scanner = Scan(parsers=[fake_parser])
+        scanner.run(tmp_path)
+
+        assert [p.name for p, _ in fake_parser.calls] == ["app.py"]

@@ -92,6 +92,16 @@ _VERBOSITY_MAP: dict[int, int] = {
 }
 
 
+def resolve_color(mode: str) -> bool:
+    """Decide whether to color log output.
+
+    Treat ``auto`` as "color only when stderr is a terminal".
+    """
+    if mode == "auto":
+        return sys.stderr.isatty()
+    return mode == "always"
+
+
 def setup_logging(
     verbosity: int = 0,
     color: bool = True,

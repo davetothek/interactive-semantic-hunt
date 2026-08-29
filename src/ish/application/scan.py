@@ -9,8 +9,8 @@ from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
-# Directories to skip during recursive discovery.
-_IGNORED_DIRS = frozenset({".git", ".venv", "venv", "__pycache__"})
+# Directories to skip when the caller names none.
+DEFAULT_IGNORED_DIRS = frozenset({".git", ".venv", "venv", "__pycache__"})
 
 
 class Scan:
@@ -21,7 +21,13 @@ class Scan:
     root path to get back every chunk found under that path.
     """
 
-    def __init__(self, *, parsers: Sequence[Parser]) -> None:
+    def __init__(
+        self,
+        *,
+        parsers: Sequence[Parser],
+        ignored_dirs: Sequence[str] = (),
+    ) -> None:
+        self._ignored_dirs = frozenset(ignored_dirs) or DEFAULT_IGNORED_DIRS
         self._by_suffix: dict[str, Parser] = {}
         for parser in parsers:
             for suffix in parser.suffixes:
@@ -83,7 +89,7 @@ class Scan:
             if entry.is_dir():
                 if entry.is_symlink():
                     log.debug("Skip directory symlink %s", entry)
-                elif entry.name not in _IGNORED_DIRS:
+                elif entry.name not in self._ignored_dirs:
                     self._walk(entry, result)
             elif entry.is_file() and entry.suffix in self._by_suffix:
                 result.append(entry)

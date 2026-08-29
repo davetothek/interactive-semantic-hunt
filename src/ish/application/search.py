@@ -22,11 +22,12 @@ class Search:
         parsers: Sequence[Parser],
         embedder: Embedder,
         vector_store: VectorStore,
+        ignored_dirs: Sequence[str] = (),
     ) -> None:
         self._embedder = embedder
         self._vector_store = vector_store
         # Reuse the scan orchestration for the first step
-        self._scanner = Scan(parsers=parsers)
+        self._scanner = Scan(parsers=parsers, ignored_dirs=ignored_dirs)
 
     def build_index(self, root: Path) -> Sequence[Chunk] | None:
         """Scan the directory and embed all chunks into the vector store.
