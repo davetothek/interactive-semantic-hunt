@@ -45,7 +45,7 @@ def add_settings_options(parser: argparse.ArgumentParser) -> None:
             # Keep the derived long flag alongside an explicit short one.
             flags.append(f"--{f.name.replace('_', '-')}")
 
-        kwargs = dict(meta.get("argparse", {}))
+        kwargs = dict(meta.get("cli", {}))
         if f.name in _DYNAMIC_CHOICES:
             kwargs["choices"] = _DYNAMIC_CHOICES[f.name]()
 
