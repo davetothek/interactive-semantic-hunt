@@ -18,8 +18,8 @@ def test_build_parsers_satisfy_the_port() -> None:
     assert all(isinstance(p, Parser) for p in parsers)
 
 
-def test_build_scan_wires_the_use_case() -> None:
-    assert isinstance(bootstrap.build_scan(Settings()), Scan)
+def test_build_scan_wires_the_use_case(tmp_path) -> None:
+    assert isinstance(bootstrap.build_scan(Settings(), tmp_path), Scan)
 
 
 def test_unknown_embedder_is_reported() -> None:
@@ -208,3 +208,16 @@ class TestBackendDefaults:
     def test_ollama_is_the_default_backend(self) -> None:
         """The default must need no model load per process."""
         assert Settings().embedder == "ollama"
+
+
+class TestGitAwareness:
+    """Verify how the git filter is wired."""
+
+    def test_enabled_by_default(self, tmp_path) -> None:
+        assert bootstrap.build_ignored_by(Settings(), tmp_path) is not None
+
+    def test_disabled_by_the_option(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        settings = replace(Settings(), git=False)
+        assert bootstrap.build_ignored_by(settings, tmp_path) is None

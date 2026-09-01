@@ -209,3 +209,45 @@ class TestHybridSearch:
 
     def test_lexical_of_nothing(self, store: PurePythonVectorStore) -> None:
         assert store._lexical("", limit=5) == []
+
+
+class TestResultFilter:
+    """Verify the keep predicate on the in-memory store."""
+
+    def _seed(self, store: PurePythonVectorStore) -> None:
+        store.add_vectors({"a": [1.0, 0.0], "b": [0.9, 0.1]})
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("alpha"), "a")])
+        store.set_file(
+            Path("b.md"),
+            STAMP,
+            [
+                (
+                    Chunk(
+                        path=Path("b.md"),
+                        text="t",
+                        kind="section",
+                        language="markdown",
+                        symbol="Beta",
+                        start_line=1,
+                        end_line=1,
+                    ),
+                    "b",
+                )
+            ],
+        )
+
+    def test_filter_removes_a_language(self, store: PurePythonVectorStore) -> None:
+        self._seed(store)
+        results = store.search(
+            [1.0, 0.0], limit=5, keep=lambda c: c.language == "markdown"
+        )
+        assert [c.symbol for c, _ in results] == ["Beta"]
+
+    def test_filter_applies_to_the_lexical_half(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        self._seed(store)
+        results = store.search(
+            [1.0, 0.0], "alpha_thing", limit=5, keep=lambda c: c.language == "markdown"
+        )
+        assert all(c.language == "markdown" for c, _ in results)

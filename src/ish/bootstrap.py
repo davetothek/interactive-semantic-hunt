@@ -164,13 +164,24 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
     )
 
 
-def build_scan(settings: Settings) -> Scan:
+def build_ignored_by(settings: Settings, root: Path):
+    """Return the predicate that skips files a repository ignores."""
+    if not settings.git:
+        return None
+
+    from ish.adapters.vcs.git import GitVisibleFiles
+
+    return GitVisibleFiles(root).ignores
+
+
+def build_scan(settings: Settings, root: Path) -> Scan:
     """Wire the scan use case."""
     return Scan(
         parsers=build_parsers(settings),
         ignored_dirs=settings.ignore,
         include=settings.include,
         exclude=settings.exclude,
+        ignored_by=build_ignored_by(settings, root),
     )
 
 
@@ -184,6 +195,9 @@ def build_search(settings: Settings, root: Path) -> Search:
         ignored_dirs=settings.ignore,
         include=settings.include,
         exclude=settings.exclude,
+        ignored_by=build_ignored_by(settings, root),
         reindex=settings.reindex,
         hybrid=not settings.no_hybrid,
+        lang=settings.lang,
+        under=settings.under,
     )

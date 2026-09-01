@@ -7,6 +7,7 @@ import logging
 import sys
 
 from ish import bootstrap
+from ish.application.search import build_result_filter
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.cli.log import resolve_color, setup_logging
 from ish.interfaces.format import (
@@ -53,9 +54,11 @@ def _run_tui(args: CliArgs) -> int:
 
 def _run_scan(args: CliArgs) -> int:
     """Scan the path and list every chunk in the plain output format."""
-    scanner = bootstrap.build_scan(args.settings)
+    scanner = bootstrap.build_scan(args.settings, args.path)
+    keep = build_result_filter(args.settings.lang, args.settings.under)
     for chunk in scanner.run(args.path):
-        sys.stdout.write(f"{format_chunk_line(chunk)}\n")
+        if keep is None or keep(chunk):
+            sys.stdout.write(f"{format_chunk_line(chunk)}\n")
     return 0
 
 

@@ -19,7 +19,7 @@ import math
 import re
 import sqlite3
 import threading
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from operator import mul
 from pathlib import Path
 from typing import Any
@@ -328,13 +328,18 @@ class SqliteVectorStore:
         query_vector: Sequence[float],
         query_text: str = "",
         limit: int = 5,
+        keep: Callable[[Chunk], bool] | None = None,
     ) -> Sequence[tuple[Chunk, float]]:
         """Rank chunks by vector similarity, fused with a lexical order."""
         scored = self._semantic(query_vector)
+        if keep is not None:
+            scored = [pair for pair in scored if keep(pair[0])]
         if not query_text or not is_code_like(query_text):
             return scored[:limit]
 
         lexical = self._lexical(query_text, limit=max(limit * 4, 20))
+        if keep is not None:
+            lexical = [chunk for chunk in lexical if keep(chunk)]
         if not lexical:
             return scored[:limit]
 

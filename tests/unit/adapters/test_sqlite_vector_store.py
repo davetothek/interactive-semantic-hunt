@@ -502,3 +502,58 @@ def test_code_query_with_no_lexical_hit_uses_the_vector_order(
 
     results = store.search([1.0, 0.0], "absent_identifier", limit=3)
     assert [c.symbol for c, _ in results] == ["present"]
+
+
+class TestResultFilter:
+    """Verify the keep predicate, applied before the limit."""
+
+    def _seed(self, store: SqliteVectorStore) -> None:
+        store.add_vectors({"a": [1.0, 0.0], "b": [0.9, 0.1]})
+        store.set_file(
+            Path("src/a.py"),
+            STAMP,
+            [(make_chunk("alpha", "src/a.py"), "a")],
+        )
+        store.set_file(
+            Path("docs/b.md"),
+            STAMP,
+            [
+                (
+                    Chunk(
+                        path=Path("docs/b.md"),
+                        text="text",
+                        kind="section",
+                        language="markdown",
+                        symbol="Beta",
+                        start_line=1,
+                        end_line=2,
+                    ),
+                    "b",
+                )
+            ],
+        )
+
+    def test_filter_removes_a_language(self, store: SqliteVectorStore) -> None:
+        self._seed(store)
+        results = store.search(
+            [1.0, 0.0], limit=5, keep=lambda c: c.language == "markdown"
+        )
+        assert [c.symbol for c, _ in results] == ["Beta"]
+
+    def test_filter_applies_before_the_limit(self, store: SqliteVectorStore) -> None:
+        """A filtered search still returns a full page."""
+        self._seed(store)
+        results = store.search(
+            [1.0, 0.0], limit=1, keep=lambda c: c.language == "markdown"
+        )
+        assert len(results) == 1
+        assert results[0][0].symbol == "Beta"
+
+    def test_filter_applies_to_the_lexical_half(
+        self, store: SqliteVectorStore
+    ) -> None:
+        self._seed(store)
+        results = store.search(
+            [1.0, 0.0], "alpha_thing", limit=5, keep=lambda c: c.language == "markdown"
+        )
+        assert all(c.language == "markdown" for c, _ in results)

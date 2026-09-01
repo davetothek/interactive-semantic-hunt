@@ -195,3 +195,84 @@ class TestIncrementalBehavior:
 
         assert chunks is not None
         assert embedder.texts_embedded == before
+
+
+class TestResultFilters:
+    """Verify the query-scope filters.
+
+    These narrow what a search returns. They must never reach the index,
+    or the next run would prune everything they exclude.
+    """
+
+    @pytest.fixture()
+    def mixed(self, tmp_path: Path) -> Path:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "src" / "a.py").write_text("alpha\n")
+        (tmp_path / "docs" / "b.py").write_text("beta\n")
+        return tmp_path
+
+    def _search(self, embedder, mixed: Path, **kwargs) -> Search:
+        return Search(
+            parsers=[WordParser()],
+            embedder=embedder,
+            vector_store=PurePythonVectorStore(),
+            **kwargs,
+        )
+
+    def test_no_filter_returns_everything(
+        self, embedder: CountingEmbedder, mixed: Path
+    ) -> None:
+        search = self._search(embedder, mixed)
+        search.build_index(mixed)
+        assert len(search.all_chunks()) == 2
+
+    def test_under_narrows_by_path(
+        self, embedder: CountingEmbedder, mixed: Path
+    ) -> None:
+        search = self._search(embedder, mixed, under="/docs/")
+        search.build_index(mixed)
+        assert [c.symbol for c in search.all_chunks()] == ["beta"]
+
+    def test_lang_narrows_by_language(
+        self, embedder: CountingEmbedder, mixed: Path
+    ) -> None:
+        search = self._search(embedder, mixed, lang=["nothing"])
+        search.build_index(mixed)
+        assert search.all_chunks() == []
+
+    def test_lang_keeps_a_matching_language(
+        self, embedder: CountingEmbedder, mixed: Path
+    ) -> None:
+        search = self._search(embedder, mixed, lang=["python"])
+        search.build_index(mixed)
+        assert len(search.all_chunks()) == 2
+
+    def test_search_respects_the_filter(
+        self, embedder: CountingEmbedder, mixed: Path
+    ) -> None:
+        search = self._search(embedder, mixed, under="/docs/")
+        search.build_index(mixed)
+        results = search.search("alpha", limit=5)
+        assert all("/docs/" in str(c.path) for c, _ in results)
+
+    def test_the_filter_does_not_shrink_the_index(
+        self, embedder: CountingEmbedder, mixed: Path
+    ) -> None:
+        """A narrowed query must leave every file indexed."""
+        store = PurePythonVectorStore()
+        Search(
+            parsers=[WordParser()],
+            embedder=embedder,
+            vector_store=store,
+            under="/docs/",
+        ).build_index(mixed)
+
+        assert len(store.file_stamps()) == 2
+        assert len(store.chunks()) == 2
+
+    def test_invalid_under_expression_is_reported(
+        self, embedder: CountingEmbedder, mixed: Path
+    ) -> None:
+        with pytest.raises(ValueError, match="'under'"):
+            self._search(embedder, mixed, under="(unclosed")

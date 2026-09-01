@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
-from ish.application.search import Search
+from ish.application.search import Search, build_result_filter
 from ish.interfaces.cli.log import setup_logging
 from ish.interfaces.format import format_chunk_line, format_result_line
 from ish.interfaces.mcp.protocol import Server, Tool
@@ -84,7 +84,10 @@ class IshTools:
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
         root = self._resolve(arguments.get("path"))
-        chunks = bootstrap.build_scan(self._settings).run(root)
+        chunks = bootstrap.build_scan(self._settings, root).run(root)
+        keep = build_result_filter(self._settings.lang, self._settings.under)
+        if keep is not None:
+            chunks = [chunk for chunk in chunks if keep(chunk)]
         if not chunks:
             return f"No source files found under {root}."
         return "\n".join(format_chunk_line(chunk) for chunk in chunks)

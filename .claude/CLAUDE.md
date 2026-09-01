@@ -214,6 +214,19 @@ The scan recursively finds files whose suffix a registered parser claims and ign
 
 **Every rule about what to index belongs in `Scan.accepts()` and nowhere else.** Discovery and index pruning both ask that one predicate, so a filter added in only one of them would make pruning delete files it should keep. `test_accepts_agrees_with_discovery` pins this.
 
+### Two kinds of filter, which must never be confused
+
+| | options | applies to | prunes? |
+|---|---|---|---|
+| **Index scope** | `include`, `exclude`, `ignore`, `languages`, `git` | what enters the index | yes, through `Scan.accepts()` |
+| **Query scope** | `lang`, `under` | what a search returns | never |
+
+A query-scope filter that reached `Scan.accepts()` would make the next run prune everything it excluded, so `ish --lang markdown` would silently delete every Python chunk. Keep them apart: query filters are built by `build_result_filter()` and passed to the store as the `keep` predicate, applied before the limit so a filtered search still returns a full page. `test_the_filter_does_not_shrink_the_index` pins this.
+
+Every listing path applies `build_result_filter()` too — the CLI scan and the MCP `list_chunks` — so a listing and a search never disagree about what is in view.
+
+`--git` is index scope, on by default. It asks git rather than reimplementing ignore rules, so nested `.gitignore` files and global excludes are honored for free. The adapter runs one command per repository and caches the answer, degrades to ignoring nothing outside a repository or when git is unavailable, and is injected into `Scan` as a plain predicate so the application never learns what a version control system is.
+
 Regular expressions rather than globs, deliberately: one matching system keeps `accepts()` a single cheap predicate, and two systems would be two places to keep in step with pruning.
 
 ## Writing style
