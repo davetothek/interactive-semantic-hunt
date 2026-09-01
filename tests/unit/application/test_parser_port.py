@@ -10,6 +10,7 @@ from ish.domain.chunk import Chunk
 class FakeParser:
     """Minimal implementation that satisfies the Parser protocol."""
 
+    language = "python"
     suffixes = frozenset({".py"})
 
     def parse(self, path: Path, source: str) -> Sequence[Chunk]:
@@ -19,6 +20,7 @@ class FakeParser:
                 path=path,
                 text=source,
                 kind="module",
+                language="python",
                 symbol=None,
                 start_line=1,
                 end_line=1,

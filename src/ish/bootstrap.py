@@ -50,11 +50,35 @@ EMBEDDERS: dict[str, Callable[[str], Embedder]] = {
 }
 
 
-def build_parsers(settings: Settings) -> list[Parser]:
-    """Return every registered source parser. Register new parsers here only."""
+def _python_parser() -> Parser:
     from ish.adapters.parser.python import PythonParser
 
-    return [PythonParser()]
+    return PythonParser()
+
+
+# Source parsers by language name. Each factory imports lazily so an unused
+# grammar adds no startup cost. Register new parsers here only.
+PARSERS: dict[str, Callable[[], Parser]] = {
+    "python": _python_parser,
+}
+
+
+def build_parsers(settings: Settings) -> list[Parser]:
+    """Return the enabled source parsers.
+
+    Build every registered parser when the ``languages`` option is empty.
+    Otherwise build only the languages it names, in that order.
+    """
+    wanted = settings.languages or tuple(PARSERS)
+
+    unknown = [name for name in wanted if name not in PARSERS]
+    if unknown:
+        valid = ", ".join(sorted(PARSERS))
+        raise ValueError(
+            f"Unknown language(s): {', '.join(unknown)}. Valid languages: {valid}"
+        )
+
+    return [PARSERS[name]() for name in wanted]
 
 
 def build_embedder(settings: Settings) -> Embedder:

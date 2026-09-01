@@ -41,6 +41,7 @@ class TestPurePythonVectorStore:
 
         return Chunk(
             kind="function",
+            language="python",
             symbol=name,
             path=Path("foo.py"),
             start_line=1,

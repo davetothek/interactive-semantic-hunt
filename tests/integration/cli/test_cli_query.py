@@ -27,6 +27,7 @@ def test_query_output(
 
     c1 = Chunk(
         kind="function",
+        language="python",
         symbol="foo",
         path=Path("foo.py"),
         start_line=1,
@@ -65,6 +66,7 @@ def test_query_output_ollama(
 
     c1 = Chunk(
         kind="function",
+        language="python",
         symbol="foo",
         path=Path("foo.py"),
         start_line=1,
@@ -102,6 +104,7 @@ def test_query_output_st(
 
     c1 = Chunk(
         kind="function",
+        language="python",
         symbol="foo",
         path=Path("foo.py"),
         start_line=1,

@@ -133,10 +133,10 @@ class IshApp(App[tuple[Chunk, float] | None]):
 
         chunk, _ = self._current_results[index]
         code = chunk.text
-        # Use rich Syntax for Python highlighting
+        # Highlight with the chunk's own language so every parser renders right.
         syntax = Syntax(
             code,
-            "python",
+            chunk.language or "text",
             theme="gruvbox-dark",
             line_numbers=True,
             start_line=chunk.start_line,

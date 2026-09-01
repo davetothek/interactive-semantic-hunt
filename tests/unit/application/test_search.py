@@ -13,6 +13,7 @@ class TestSearchUseCase:
     def _make_chunk(self, symbol: str) -> Chunk:
         return Chunk(
             kind="function",
+            language="python",
             symbol=symbol,
             path=Path("foo.py"),
             start_line=1,

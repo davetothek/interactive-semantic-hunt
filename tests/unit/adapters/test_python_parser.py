@@ -274,3 +274,18 @@ class TestPathPropagation:
         path = Path("src/app/models.py")
         chunks = parser.parse(path, "def f(): pass\n")
         assert chunks[0].path == path
+
+
+class TestLanguageStamp:
+    """Verify that every chunk carries its source language."""
+
+    def test_chunks_are_stamped(self, parser: PythonParser) -> None:
+        chunks = parser.parse(DUMMY_PATH, "class A:\n    def b(self): pass\n")
+        assert {c.language for c in chunks} == {"python"}
+
+    def test_parser_declares_its_identity(self, parser: PythonParser) -> None:
+        assert parser.language == "python"
+        assert ".py" in parser.suffixes
+
+    def test_stub_files_are_claimed(self, parser: PythonParser) -> None:
+        assert ".pyi" in parser.suffixes

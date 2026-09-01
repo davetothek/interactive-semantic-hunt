@@ -31,8 +31,13 @@ class Scan:
         self._by_suffix: dict[str, Parser] = {}
         for parser in parsers:
             for suffix in parser.suffixes:
-                if suffix in self._by_suffix:
-                    raise ValueError(f"Two parsers claim the suffix {suffix!r}")
+                owner = self._by_suffix.get(suffix)
+                if owner is not None:
+                    raise ValueError(
+                        f"The {owner.language!r} and {parser.language!r} parsers "
+                        f"both claim {suffix!r}. Set the 'languages' option to "
+                        f"enable only one of them."
+                    )
                 self._by_suffix[suffix] = parser
 
     def run(self, root: Path) -> Sequence[Chunk]:

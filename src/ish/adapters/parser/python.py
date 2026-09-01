@@ -14,7 +14,8 @@ from ish.domain.chunk import Chunk
 class PythonParser:
     """Extract semantic chunks from Python source using the ``ast`` module."""
 
-    suffixes = frozenset({".py"})
+    language = "python"
+    suffixes = frozenset({".py", ".pyi"})
 
     def parse(self, path: Path, source: str) -> Sequence[Chunk]:
         """Parse *source* and return chunks for every recognized definition.
@@ -75,6 +76,7 @@ class PythonParser:
                 path=path,
                 text=_extract_text(lines, start, node.end_lineno or node.lineno),
                 kind=kind,
+                language=self.language,
                 symbol=symbol,
                 start_line=start,
                 end_line=node.end_lineno or node.lineno,
@@ -98,6 +100,7 @@ class PythonParser:
                 path=path,
                 text=_extract_text(lines, start, node.end_lineno or node.lineno),
                 kind="class",
+                language=self.language,
                 symbol=symbol,
                 start_line=start,
                 end_line=node.end_lineno or node.lineno,
