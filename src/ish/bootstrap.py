@@ -71,6 +71,18 @@ def _asciidoc_parser() -> Parser:
     return MarkupParser.asciidoc()
 
 
+def _yaml_parser() -> Parser:
+    from ish.adapters.parser.structured import StructuredParser
+
+    return StructuredParser.yaml()
+
+
+def _json_parser() -> Parser:
+    from ish.adapters.parser.structured import StructuredParser
+
+    return StructuredParser.json()
+
+
 def _cpp_parser() -> Parser:
     from ish.adapters.parser.tree_sitter import cpp_parser
 
@@ -84,6 +96,8 @@ PARSERS: dict[str, Callable[[], Parser]] = {
     "markdown": _markdown_parser,
     "asciidoc": _asciidoc_parser,
     "cpp": _cpp_parser,
+    "yaml": _yaml_parser,
+    "json": _json_parser,
 }
 
 
