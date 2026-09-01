@@ -69,6 +69,8 @@ nvim $(ish -i src/)
 | `--color {auto,always,never}` | Control log color |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip |
+| `--include REGEX ...` | Index only paths matching these patterns |
+| `--exclude REGEX ...` | Never index paths matching these patterns |
 | `--model NAME` | Override the backend model |
 | `--reindex` | Discard the stored index and build it again |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
@@ -107,7 +109,13 @@ embedder = "ollama"
 model = "mxbai-embed-large"
 limit = 10
 ignore = [".git", ".venv", "build", "node_modules"]
+
+# Regular expressions, searched against the path.
+exclude = ["/vendor/", "_pb2\\.py$", "(_test|_spec)\\.py$"]
 ```
+
+`include` and `exclude` take regular expressions rather than globs, so `/vendor/`
+matches at any depth and alternation works. `exclude` wins over `include`.
 
 User-level defaults go in `~/.config/ish/ish.toml`. Later sources win:
 

@@ -1,6 +1,7 @@
 """Implement the scan use case — discover files, parse, return chunks."""
 
 import logging
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -8,6 +9,21 @@ from ish.application.ports.parser import ParseError, Parser
 from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
+
+
+def _compile(patterns: Sequence[str], option: str) -> list[re.Pattern[str]]:
+    """Compile path filters, naming the option when one is malformed."""
+    compiled: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error as exc:
+            raise ValueError(
+                f"The {option!r} option has an invalid regular expression "
+                f"{pattern!r}: {exc}"
+            ) from exc
+    return compiled
+
 
 # Directories to skip when the caller names none.
 DEFAULT_IGNORED_DIRS = frozenset({".git", ".venv", "venv", "__pycache__"})
@@ -26,8 +42,12 @@ class Scan:
         *,
         parsers: Sequence[Parser],
         ignored_dirs: Sequence[str] = (),
+        include: Sequence[str] = (),
+        exclude: Sequence[str] = (),
     ) -> None:
         self._ignored_dirs = frozenset(ignored_dirs) or DEFAULT_IGNORED_DIRS
+        self._include = _compile(include, "include")
+        self._exclude = _compile(exclude, "exclude")
         self._by_suffix: dict[str, Parser] = {}
         for parser in parsers:
             for suffix in parser.suffixes:
@@ -62,11 +82,20 @@ class Scan:
         """Return True when this scan would index *path*.
 
         Answer without touching the filesystem, so a caller can ask
-        about a file it cannot currently read.
+        about a file it cannot currently read. Index pruning asks this
+        question, so every rule that decides what to index belongs here
+        and nowhere else.
         """
         if path.suffix not in self._by_suffix:
             return False
-        return not any(part in self._ignored_dirs for part in path.parts)
+        if any(part in self._ignored_dirs for part in path.parts):
+            return False
+
+        # Search the whole path, so "vendor/" matches at any depth.
+        text = path.as_posix()
+        if self._include and not any(p.search(text) for p in self._include):
+            return False
+        return not any(p.search(text) for p in self._exclude)
 
     def parse_file(self, path: Path) -> Sequence[Chunk] | None:
         """Read and parse one discovered file.
@@ -93,7 +122,7 @@ class Scan:
         Return the discovered paths sorted, so results stay stable.
         """
         if root.is_file():
-            return [root] if root.suffix in self._by_suffix else []
+            return [root] if self.accepts(root) else []
 
         result: list[Path] = []
         self._walk(root, result)
@@ -115,5 +144,5 @@ class Scan:
                     log.debug("Skip directory symlink %s", entry)
                 elif entry.name not in self._ignored_dirs:
                     self._walk(entry, result)
-            elif entry.is_file() and entry.suffix in self._by_suffix:
+            elif entry.is_file() and self.accepts(entry):
                 result.append(entry)
