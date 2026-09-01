@@ -341,3 +341,54 @@ class TestScanAccepts:
 
         scan = Scan(parsers=[LineParser()])
         assert scan.accepts(Path("/definitely/not/here.py")) is True
+
+
+class TestIncrementalEmbedding:
+    """Verify that a long index keeps the work it has already done."""
+
+    def test_a_failure_keeps_earlier_batches(
+        self, store, tmp_path: Path, monkeypatch
+    ) -> None:
+        """One failed request must not discard every vector before it."""
+        from ish.application import index as module
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 2)
+
+        class Flaky:
+            model_name = "flaky"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def embed_documents(self, texts):
+                self.calls += 1
+                if self.calls > 2:
+                    raise TimeoutError("the daemon stopped answering")
+                return [[float(len(t))] for t in texts]
+
+            def embed_query(self, text):
+                return [1.0]
+
+        for n in range(8):
+            (tmp_path / f"f{n}.py").write_text(f"chunk{n}\n")
+
+        with pytest.raises(TimeoutError):
+            build(Flaky(), store).refresh(tmp_path)
+
+        # Two batches of two landed before the third failed.
+        assert len(store.missing_vectors([])) == 0
+        assert store.missing_vectors(["nothing"]) == {"nothing"}
+
+    def test_a_large_index_is_stored_in_batches(
+        self, embedder, store, tmp_path: Path, monkeypatch
+    ) -> None:
+        from ish.application import index as module
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 3)
+        for n in range(7):
+            (tmp_path / f"f{n}.py").write_text(f"chunk{n}\n")
+
+        stats = build(embedder, store).refresh(tmp_path)
+
+        assert stats.vectors_embedded == 7
+        assert len(store.chunks()) == 7

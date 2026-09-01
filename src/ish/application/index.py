@@ -18,6 +18,10 @@ from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
+# Store vectors this many at a time. A first index of a large tree runs
+# for minutes, so keep the work already done when a request fails.
+EMBED_BATCH = 256
+
 
 def _still_on_disk(path: Path) -> bool:
     """Return True unless the file is known to be gone.
@@ -180,17 +184,26 @@ class Index:
         return parsed, embedded
 
     def _embed_missing(self, texts: dict[str, str]) -> int:
-        """Embed only the texts the store has never seen. Return the count."""
+        """Embed only the texts the store has never seen. Return the count.
+
+        Store each batch as it completes. A first index of a large tree
+        takes minutes, and one failed request should not discard every
+        vector earned before it.
+        """
         missing = self._store.missing_vectors(texts.keys())
         if not missing:
             return 0
 
         ordered = sorted(missing)
-        log.info(
-            "Embedding %d new chunks (%d reused)",
-            len(ordered),
-            len(texts) - len(ordered),
-        )
-        vectors = self._embedder.embed_documents([texts[digest] for digest in ordered])
-        self._store.add_vectors(dict(zip(ordered, vectors, strict=True)))
-        return len(ordered)
+        reused = len(texts) - len(ordered)
+        log.info("Embedding %d new chunks (%d reused)", len(ordered), reused)
+
+        done = 0
+        for start in range(0, len(ordered), EMBED_BATCH):
+            batch = ordered[start : start + EMBED_BATCH]
+            vectors = self._embedder.embed_documents([texts[d] for d in batch])
+            self._store.add_vectors(dict(zip(batch, vectors, strict=True)))
+            done += len(batch)
+            if len(ordered) > EMBED_BATCH:
+                log.info("  embedded %d of %d", done, len(ordered))
+        return done
