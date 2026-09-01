@@ -163,6 +163,14 @@ The index persists in SQLite, one file per scanned tree, under `$XDG_CACHE_HOME/
 
 Measured on this repo (33 files, 104 chunks): a cold index costs ~87s with Ollama, ~51s with llama.cpp, which parallelizes bulk embedding better. A warm query costs ~0.20s.
 
+Measured on a real firmware project (10k files, 30,317 chunks): scanning and parsing the whole tree costs 14s, and embedding is the entire remaining cost at roughly one chunk per second. A whole tree is hours; index the subtrees that matter and let a search of the parent federate over them.
+
+### Indexing a large tree
+
+- **Vectors persist every 64 chunks; chunk rows land at the end of a file.** So a stopped run keeps the expensive half. Restarting a firmware index that had been killed reported `Embedding 6136 new chunks (256 reused)` — content-keyed vectors recovered exactly.
+- An index showing `chunks=0` with a positive vector count is a run in progress or one that was stopped, not a corrupt index.
+- The index holds the **verbatim source text**, so it inherits nothing but the permissions of `$XDG_DATA_HOME`. Roughly 6 KB per chunk.
+
 Embedding models are often trained with a task prefix for stored text and another for queries, so the `Embedder` port has `embed_documents` and `embed_query` rather than one method. The table lives in `adapters/embedder/prefixes.py`, keyed by model name, because the convention belongs to the model and not to the backend serving it. Measured on this repo with nomic-embed-text over 16 queries: top-1 accuracy 62% without the prefixes, 75% with.
 
 Anything that changes what a stored vector means — the prefixes, or `embed_text()` — must bump `SCHEMA_VERSION` in the SQLite adapter, which discards the old index instead of mixing it.

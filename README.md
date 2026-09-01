@@ -98,9 +98,25 @@ resident, so a query costs about 58 ms rather than a process start.
 
 ## Index
 
-The index persists in SQLite under `$XDG_CACHE_HOME/ish/`, one file per scanned
+The index persists in SQLite under `$XDG_DATA_HOME/ish/`, one file per scanned
 tree. A repeated query reuses it, so only changed files are parsed and only new
 text is embedded. A renamed file re-embeds nothing.
+
+Each index records the tree it was built from, so searching a directory also
+searches every index below it. Index the parts of a large project separately and
+search the whole from its root:
+
+```sh
+ish "warm" project/docs        # index one part
+ish "warm" project/firmware    # and another
+ish "how is exposure set" project    # searches both
+```
+
+Searching a parent never rewrites an index below it. Pass `--no-federate` to use
+only the index of the exact path.
+
+The index stores the source text it indexed. It is a plain file under your home
+directory with no encryption of its own.
 
 ## Configure
 
