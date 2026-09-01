@@ -173,19 +173,19 @@ class TestDeclarations:
     """Verify header content, which is declarations rather than bodies."""
 
     HEADER = (
-        "/* Compute a checksum. */\n"          # 1
+        "/* Compute a checksum. */\n"  # 1
         "unsigned checksum(const char *d);\n"  # 2
-        "\n"                                   # 3
-        "class Widget {\n"                     # 4
-        "public:\n"                            # 5
-        "    /// Draw the widget.\n"           # 6
-        "    void draw(Surface& s) const;\n"   # 7
-        "    int width() const;\n"             # 8
-        "    virtual ~Widget();\n"             # 9
-        "private:\n"                           # 10
-        "    int width_;\n"                    # 11
-        "    Surface* surface_;\n"             # 12
-        "};\n"                                 # 13
+        "\n"  # 3
+        "class Widget {\n"  # 4
+        "public:\n"  # 5
+        "    /// Draw the widget.\n"  # 6
+        "    void draw(Surface& s) const;\n"  # 7
+        "    int width() const;\n"  # 8
+        "    virtual ~Widget();\n"  # 9
+        "private:\n"  # 10
+        "    int width_;\n"  # 11
+        "    Surface* surface_;\n"  # 12
+        "};\n"  # 13
     )
 
     def test_a_header_is_more_than_one_chunk(self, parser) -> None:

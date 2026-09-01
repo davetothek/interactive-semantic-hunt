@@ -100,7 +100,7 @@ class TestJson:
         assert chunk.language == "json"
 
     def test_array_is_parsed(self, json_parser) -> None:
-        assert len(json_parser.parse(JSN, '[1, 2, 3]\n')) == 1
+        assert len(json_parser.parse(JSN, "[1, 2, 3]\n")) == 1
 
     def test_nested_object(self, json_parser) -> None:
         source = '{"metadata": {"description": "A thing"}}\n'

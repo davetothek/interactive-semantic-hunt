@@ -232,7 +232,9 @@ class TestConfigFile:
     """Verify that ish.toml reaches the running command."""
 
     def test_project_config_changes_behavior(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """A config-file ignore rule prunes the scan."""
@@ -250,7 +252,9 @@ class TestConfigFile:
         assert "drop" not in out
 
     def test_broken_config_exits_cleanly(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.chdir(tmp_path)

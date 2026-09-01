@@ -110,9 +110,7 @@ class TestFirstRefresh:
 class TestIncrementalRefresh:
     """Verify that a second refresh does only the outstanding work."""
 
-    def test_unchanged_tree_does_nothing(
-        self, embedder, store, tmp_path: Path
-    ) -> None:
+    def test_unchanged_tree_does_nothing(self, embedder, store, tmp_path: Path) -> None:
         (tmp_path / "a.py").write_text("alpha\n")
         index = build(embedder, store)
         index.refresh(tmp_path)
@@ -186,9 +184,7 @@ class TestOrphans:
 class TestFailures:
     """Verify that a bad file is skipped, not fatal."""
 
-    def test_unparseable_file_is_skipped(
-        self, embedder, store, tmp_path: Path
-    ) -> None:
+    def test_unparseable_file_is_skipped(self, embedder, store, tmp_path: Path) -> None:
         (tmp_path / "good.py").write_text("alpha\n")
         (tmp_path / "bad.py").write_text("BROKEN\n")
 

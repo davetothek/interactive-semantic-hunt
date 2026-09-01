@@ -6,6 +6,7 @@ code and concrete adapters.
 """
 
 import hashlib
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,8 @@ from ish.application.ports.parser import Parser
 from ish.application.scan import Scan
 from ish.application.search import Search
 from ish.settings import Settings
+
+log = logging.getLogger(__name__)
 
 
 def _llama_cpp_embedder(model: str) -> Embedder:
@@ -143,10 +146,15 @@ def model_id(settings: Settings, embedder: Embedder) -> str:
 
 
 def index_dir(settings: Settings) -> Path:
-    """Return the directory that holds the persistent indexes."""
+    """Return the directory that holds the persistent indexes.
+
+    Use the data directory rather than the cache directory. An index of
+    a large tree costs hours to build, and a cache directory may be
+    deleted at any time by the system.
+    """
     if settings.cache_dir:
         return Path(settings.cache_dir)
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "ish"
 
 
@@ -161,6 +169,29 @@ def index_path(settings: Settings, root: Path) -> Path:
     return index_dir(settings) / f"{resolved.name}-{digest}.db"
 
 
+def find_indexes(settings: Settings, path: Path) -> dict[Path, Path]:
+    """Return every stored index whose tree sits at or below *path*.
+
+    Read the tree from inside each index, because the file name carries
+    only a hash of it.
+    """
+    from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+    directory = index_dir(settings)
+    if not directory.is_dir():
+        return {}
+
+    wanted = path.resolve()
+    found: dict[Path, Path] = {}
+    for db_path in sorted(directory.glob("*.db")):
+        root = SqliteVectorStore.read_root(db_path)
+        if root is None:
+            continue
+        if root == wanted or wanted in root.parents:
+            found[root] = db_path
+    return found
+
+
 def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
     """Build the vector store for one scanned tree.
 
@@ -171,11 +202,29 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
 
         return PurePythonVectorStore()
 
+    from ish.adapters.vector_store.federated import FederatedVectorStore
     from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
-    return SqliteVectorStore(
-        index_path(settings, root), model_id=model_id(settings, embedder)
-    )
+    identity = model_id(settings, embedder)
+    resolved = root.resolve()
+    existing = find_indexes(settings, resolved) if settings.federate else {}
+
+    def open_index(path: Path, tree: Path) -> SqliteVectorStore:
+        return SqliteVectorStore(path, model_id=identity, root=tree)
+
+    # Write to the index of the named tree. Build one only when nothing
+    # below already covers the search, so asking about a parent of
+    # several indexes reads them rather than starting a new one.
+    primary = None
+    if resolved in existing or not existing:
+        primary = open_index(index_path(settings, resolved), resolved)
+
+    others = [open_index(db, tree) for tree, db in existing.items() if tree != resolved]
+    if not others:
+        return primary
+
+    log.info("Searching %d indexes under %s", len(others) + bool(primary), resolved)
+    return FederatedVectorStore(primary, others)
 
 
 def build_ignored_by(settings: Settings, root: Path):

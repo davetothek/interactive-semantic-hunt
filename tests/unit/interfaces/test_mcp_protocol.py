@@ -72,9 +72,7 @@ class TestToolCall:
     """Verify invocation and failure reporting."""
 
     def test_runs_the_handler(self) -> None:
-        result = call(
-            build(), "tools/call", {"name": "echo", "arguments": {"x": "hi"}}
-        )
+        result = call(build(), "tools/call", {"name": "echo", "arguments": {"x": "hi"}})
         assert result["result"]["content"] == [{"type": "text", "text": "got hi"}]
         assert result["result"]["isError"] is False
 
@@ -148,8 +146,7 @@ class TestTransport:
         """The framing is one JSON object per line."""
         out = io.StringIO()
         messages = "\n".join(
-            json.dumps({"jsonrpc": "2.0", "id": i, "method": "ping"})
-            for i in range(3)
+            json.dumps({"jsonrpc": "2.0", "id": i, "method": "ping"}) for i in range(3)
         )
         build().serve(io.StringIO(messages + "\n"), out)
         assert len(out.getvalue().strip().splitlines()) == 3

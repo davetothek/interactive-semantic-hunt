@@ -109,9 +109,7 @@ class TestSearchUseCase:
     ) -> None:
         assert build(embedder).run(tmp_path, "anything") == []
 
-    def test_query_embed_failure_returns_nothing(
-        self, project: Path
-    ) -> None:
+    def test_query_embed_failure_returns_nothing(self, project: Path) -> None:
         """A backend that returns no vector must not raise."""
 
         class SilentEmbedder(CountingEmbedder):
@@ -210,9 +208,11 @@ class TestResultFilters:
         return tmp_path
 
     def _search(self, embedder, mixed: Path, **kwargs) -> Search:
-        return build(embedder, keep=build_result_filter(
-            kwargs.pop("lang", ()), kwargs.pop("under", "")
-        ), **kwargs)
+        return build(
+            embedder,
+            keep=build_result_filter(kwargs.pop("lang", ()), kwargs.pop("under", "")),
+            **kwargs,
+        )
 
     def test_no_filter_returns_everything(
         self, embedder: CountingEmbedder, mixed: Path
@@ -255,9 +255,9 @@ class TestResultFilters:
     ) -> None:
         """A narrowed query must leave every file indexed."""
         store = PurePythonVectorStore()
-        build(
-            embedder, store, keep=build_result_filter((), "/docs/")
-        ).build_index(mixed)
+        build(embedder, store, keep=build_result_filter((), "/docs/")).build_index(
+            mixed
+        )
 
         assert len(store.file_stamps()) == 2
         assert len(store.chunks()) == 2
@@ -267,3 +267,32 @@ class TestResultFilters:
     ) -> None:
         with pytest.raises(ValueError, match="'under'"):
             self._search(embedder, mixed, under="(unclosed")
+
+
+class TestReadOnlyFederation:
+    """Verify a search over several indexes does not try to refresh."""
+
+    def test_build_index_returns_stored_chunks(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        from ish.adapters.vector_store.federated import FederatedVectorStore
+
+        indexed = PurePythonVectorStore()
+        build(embedder, indexed).build_index(project)
+        before = embedder.texts_embedded
+
+        federated = FederatedVectorStore(None, [indexed])
+        search = build(embedder, federated)
+        chunks = search.build_index(project)
+
+        assert chunks
+        # Nothing was parsed or embedded again.
+        assert embedder.texts_embedded == before
+
+    def test_an_empty_federation_reports_nothing(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        from ish.adapters.vector_store.federated import FederatedVectorStore
+
+        search = build(embedder, FederatedVectorStore(None, []))
+        assert search.build_index(project) is None

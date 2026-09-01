@@ -98,6 +98,13 @@ class Settings:
             metavar="REGEX",
         ),
     )
+    federate: bool = field(
+        default=True,
+        metadata=_opt(
+            "Also search stored indexes of directories below the path.",
+            action="boolean_optional",
+        ),
+    )
     git: bool = field(
         default=True,
         metadata=_opt(

@@ -247,9 +247,7 @@ class TestTaskPrefixes:
         OllamaEmbedder("nomic-embed-text").embed_query("find it")
         assert recorder.requests[0]["input"] == ["search_query: find it"]
 
-    def test_model_without_a_convention_is_untouched(
-        self, recorder: Recorder
-    ) -> None:
+    def test_model_without_a_convention_is_untouched(self, recorder: Recorder) -> None:
         OllamaEmbedder("all-minilm").embed_documents(["chunk"])
         assert recorder.requests[0]["input"] == ["chunk"]
 
