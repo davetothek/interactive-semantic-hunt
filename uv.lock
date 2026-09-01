@@ -323,6 +323,7 @@ source = { editable = "." }
 dependencies = [
     { name = "huggingface-hub" },
     { name = "llama-cpp-python" },
+    { name = "pyyaml" },
     { name = "textual" },
     { name = "tree-sitter" },
     { name = "tree-sitter-c" },
@@ -347,6 +348,7 @@ dev = [
 requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.23.0" },
     { name = "llama-cpp-python", specifier = ">=0.2.75" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "sentence-transformers", marker = "extra == 'st'" },
     { name = "textual", specifier = ">=0.70.0" },
     { name = "tree-sitter", specifier = ">=0.26.0" },
