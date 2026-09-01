@@ -20,6 +20,21 @@ from ish.domain.chunk import Chunk
 log = logging.getLogger(__name__)
 
 
+def _still_on_disk(path: Path) -> bool:
+    """Return True unless the file is known to be gone.
+
+    Treat a permission error as "cannot tell" and keep the entry, so a
+    directory that turns unreadable does not empty the index.
+    """
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def embed_text(chunk: Chunk) -> str:
     """Render a chunk as the text to embed.
 
@@ -113,16 +128,25 @@ class Index:
         stored: Mapping[Path, FileStamp],
         root: Path,
     ) -> int:
-        """Drop indexed files that are gone, limited to the scanned tree.
+        """Drop indexed files that are gone or no longer wanted.
+
+        Never drop a file merely because this scan did not reach it. An
+        unreadable directory, a race, or a narrower root all cause
+        absence without meaning deletion, and removing on absence alone
+        discards an index that is still valid.
 
         Leave entries for other trees alone, so indexing one subdirectory
         never discards another.
         """
         orphans = [
-            path for path in stored if path not in found and self._within(path, root)
+            path
+            for path in stored
+            if path not in found
+            and self._within(path, root)
+            and (not _still_on_disk(path) or not self._scanner.accepts(path))
         ]
         if orphans:
-            log.debug("Removing %d orphaned files from the index", len(orphans))
+            log.info("Removing %d files from the index", len(orphans))
             self._store.remove_files(orphans)
         return len(orphans)
 

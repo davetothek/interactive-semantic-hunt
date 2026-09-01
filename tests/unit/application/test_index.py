@@ -226,3 +226,120 @@ class TestDuplicateText:
         # Both files hold one chunk, but the text is identical.
         assert stats.chunks_indexed == 2
         assert stats.vectors_embedded == 1
+
+
+class TestPruningIsConservative:
+    """Verify that only a real removal removes an index entry.
+
+    Absence from a scan has many causes. Pruning on absence alone
+    discards an index that is still valid, so every removal must rest on
+    a positive test: the file is gone, or the scan would not index it.
+    """
+
+    def test_unreadable_directory_keeps_its_files(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        """A permission problem must not empty the index."""
+        import os
+
+        (tmp_path / "keep.py").write_text("alpha\n")
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        (locked / "inside.py").write_text("beta\n")
+
+        index = build(embedder, store)
+        index.refresh(tmp_path)
+        assert len(store.file_stamps()) == 2
+
+        os.chmod(locked, 0o000)
+        try:
+            stats = index.refresh(tmp_path)
+        finally:
+            os.chmod(locked, 0o755)
+
+        assert stats.files_removed == 0
+        assert len(store.file_stamps()) == 2
+
+    def test_deleted_file_is_still_removed(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.py").write_text("alpha\n")
+        (tmp_path / "b.py").write_text("beta\n")
+        index = build(embedder, store)
+        index.refresh(tmp_path)
+
+        (tmp_path / "a.py").unlink()
+        stats = index.refresh(tmp_path)
+
+        assert stats.files_removed == 1
+        assert set(store.file_stamps()) == {tmp_path / "b.py"}
+
+    def test_newly_ignored_file_is_removed(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        """A file the scan no longer wants must leave the index."""
+        (tmp_path / "app.py").write_text("alpha\n")
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        (build_dir / "gen.py").write_text("beta\n")
+
+        Index(
+            parsers=[LineParser()], embedder=embedder, vector_store=store
+        ).refresh(tmp_path)
+        assert len(store.file_stamps()) == 2
+
+        narrowed = Index(
+            parsers=[LineParser()],
+            embedder=embedder,
+            vector_store=store,
+            ignored_dirs=["build"],
+        )
+        stats = narrowed.refresh(tmp_path)
+
+        assert stats.files_removed == 1
+        assert set(store.file_stamps()) == {tmp_path / "app.py"}
+
+    def test_a_targeted_scan_never_prunes_a_sibling(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        """Searching one directory must not damage the rest of the index."""
+        for name in ("one", "two"):
+            directory = tmp_path / name
+            directory.mkdir()
+            (directory / f"{name}.py").write_text(f"{name}\n")
+
+        index = build(embedder, store)
+        index.refresh(tmp_path)
+        assert len(store.file_stamps()) == 2
+
+        stats = index.refresh(tmp_path / "one")
+        assert stats.files_removed == 0
+        assert len(store.file_stamps()) == 2
+
+
+class TestScanAccepts:
+    """Verify the predicate that pruning relies on."""
+
+    def test_claimed_suffix(self) -> None:
+        from ish.application.scan import Scan
+
+        scan = Scan(parsers=[LineParser()])
+        assert scan.accepts(Path("/x/a.py")) is True
+
+    def test_unclaimed_suffix(self) -> None:
+        from ish.application.scan import Scan
+
+        assert Scan(parsers=[LineParser()]).accepts(Path("/x/a.txt")) is False
+
+    def test_ignored_directory(self) -> None:
+        from ish.application.scan import Scan
+
+        scan = Scan(parsers=[LineParser()], ignored_dirs=["build"])
+        assert scan.accepts(Path("/x/build/a.py")) is False
+
+    def test_answers_without_touching_the_disk(self) -> None:
+        """The caller may ask about a file it cannot read."""
+        from ish.application.scan import Scan
+
+        scan = Scan(parsers=[LineParser()])
+        assert scan.accepts(Path("/definitely/not/here.py")) is True

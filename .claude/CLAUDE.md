@@ -155,7 +155,9 @@ The index persists in SQLite, one file per scanned tree, under `$XDG_CACHE_HOME/
 
 - **Vectors are keyed by `(content_hash, model_id)`, not by path.** A renamed file re-embeds nothing, an edited function re-embeds only itself, and switching models keeps both sets.
 - **Staleness is two-tier.** Compare `(mtime_ns, size)` first; read and hash only what differs. Never hash every file on every query.
-- **Orphans** are pruned to the scanned tree only, so indexing a subdirectory never discards its siblings.
+- **Pruning rests on a positive test, never on absence.** A file leaves the index only when it is gone from disk, or when `Scan.accepts()` says the current filter rejects it. Absence from a walk has many causes — an unreadable directory, a race, a narrower root — and removing on absence alone discards a valid index. This was a real defect: a subdirectory turning unreadable for one run silently pruned its files.
+- A permission error is treated as "cannot tell" and keeps the entry. Only `FileNotFoundError` counts as gone.
+- **Orphans are pruned to the scanned tree only**, so indexing a subdirectory never discards its siblings.
 - `remove_files` and `clear` keep vectors, since restoring a file should cost no embedding. `prune_vectors` sweeps unreferenced ones on demand.
 - Interfaces must call `Search.close()`, which releases the database.
 
