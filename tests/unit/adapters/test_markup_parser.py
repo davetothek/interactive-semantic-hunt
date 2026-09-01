@@ -112,9 +112,7 @@ class TestAsciiDoc:
     def test_language_is_stamped(self, asciidoc: MarkupParser) -> None:
         assert {c.language for c in asciidoc.parse(ADOC, self.SOURCE)} == {"asciidoc"}
 
-    def test_markdown_headings_are_not_asciidoc(
-        self, asciidoc: MarkupParser
-    ) -> None:
+    def test_markdown_headings_are_not_asciidoc(self, asciidoc: MarkupParser) -> None:
         assert asciidoc.parse(ADOC, "# Not a heading here\n") == []
 
 
@@ -123,14 +121,7 @@ class TestFencedBlocks:
 
     def test_markdown_comment_in_a_fence(self, markdown: MarkupParser) -> None:
         source = (
-            "# Real\n"
-            "\n"
-            "```python\n"
-            "# not a heading\n"
-            "## also not\n"
-            "```\n"
-            "\n"
-            "## Also real\n"
+            "# Real\n\n```python\n# not a heading\n## also not\n```\n\n## Also real\n"
         )
         symbols = [c.symbol for c in markdown.parse(MD, source)]
         assert symbols == ["Real", "Real > Also real"]

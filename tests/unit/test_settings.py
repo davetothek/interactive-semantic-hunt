@@ -69,9 +69,7 @@ class TestPrecedence:
     def test_defaults_when_nothing_is_configured(self, tmp_path) -> None:
         assert load_settings(start=tmp_path, environ={}) == Settings()
 
-    def test_project_config_overrides_user_config(
-        self, tmp_path, monkeypatch
-    ) -> None:
+    def test_project_config_overrides_user_config(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
         _write(tmp_path / "cfg" / "ish" / CONFIG_FILENAME, "limit = 11\nmodel = 'u'\n")
         project = tmp_path / "proj"
@@ -146,9 +144,7 @@ class TestBadConfig:
         with pytest.raises(ConfigError, match="Cannot parse"):
             load_settings(start=tmp_path, environ={})
 
-    def test_unknown_key_warns_and_continues(
-        self, tmp_path, capsys, caplog
-    ) -> None:
+    def test_unknown_key_warns_and_continues(self, tmp_path, capsys, caplog) -> None:
         _write(tmp_path / CONFIG_FILENAME, "limit = 3\nnot_an_option = 1\n")
         with caplog.at_level("WARNING"):
             settings = load_settings(start=tmp_path, environ={})

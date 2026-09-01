@@ -125,7 +125,7 @@ class TestSearch:
         store.add_vectors({"h": [3.0, 4.0]})
         store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
 
-        (_chunk, score), = store.search([1.0, 0.0], limit=1)
+        ((_chunk, score),) = store.search([1.0, 0.0], limit=1)
         assert score == pytest.approx(3.0 / 5.0, abs=1e-6)
 
     def test_magnitude_does_not_change_ranking(self, store: SqliteVectorStore) -> None:
@@ -146,7 +146,7 @@ class TestSearch:
     def test_zero_vector_is_stored_safely(self, store: SqliteVectorStore) -> None:
         store.add_vectors({"h": [0.0, 0.0]})
         store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
-        (_chunk, score), = store.search([1.0, 0.0], limit=1)
+        ((_chunk, score),) = store.search([1.0, 0.0], limit=1)
         assert score == 0.0
 
     def test_dimension_mismatch_is_reported(self, store: SqliteVectorStore) -> None:
@@ -162,7 +162,7 @@ class TestSearch:
         original = make_chunk("f")
         store.add_vectors({"h": [1.0, 0.0]})
         store.set_file(Path("a.py"), STAMP, [(original, "h")])
-        (restored, _score), = store.search([1.0, 0.0], limit=1)
+        ((restored, _score),) = store.search([1.0, 0.0], limit=1)
         assert restored == original
 
     def test_null_symbol_round_trips(self, store: SqliteVectorStore) -> None:
@@ -217,9 +217,7 @@ class TestMaintenance:
         assert store.chunks() == []
         assert store.missing_vectors(["h1"]) == set()
 
-    def test_prune_removes_unreferenced_vectors(
-        self, store: SqliteVectorStore
-    ) -> None:
+    def test_prune_removes_unreferenced_vectors(self, store: SqliteVectorStore) -> None:
         store.add_vectors({"kept": [1.0, 0.0], "orphan": [0.0, 1.0]})
         store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "kept")])
 
@@ -271,9 +269,7 @@ class TestSchemaVersion:
     def test_version_is_recorded(self, db_path: Path) -> None:
         SqliteVectorStore(db_path, model_id="m").close()
         db = sqlite3.connect(db_path)
-        row = db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'"
-        ).fetchone()
+        row = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         db.close()
         assert row[0] == SCHEMA_VERSION
 
@@ -281,9 +277,7 @@ class TestSchemaVersion:
 class TestConcurrentReaders:
     """Verify that MCP, nvim, and the CLI can query the same index at once."""
 
-    def test_second_connection_reads_while_first_is_open(
-        self, db_path: Path
-    ) -> None:
+    def test_second_connection_reads_while_first_is_open(self, db_path: Path) -> None:
         writer = SqliteVectorStore(db_path, model_id="m")
         writer.add_vectors({"h": [1.0, 0.0]})
         writer.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
@@ -416,9 +410,7 @@ class TestHybridSearch:
             ],
         )
 
-    def test_identifier_query_finds_its_symbol(
-        self, store: SqliteVectorStore
-    ) -> None:
+    def test_identifier_query_finds_its_symbol(self, store: SqliteVectorStore) -> None:
         """Every vector is identical, so only the lexical half can rank."""
         self._seed(store)
         results = store.search([0.0, 1.0], "prune_vectors", limit=1)
@@ -436,7 +428,7 @@ class TestHybridSearch:
     def test_score_stays_the_cosine(self, store: SqliteVectorStore) -> None:
         """A fused rank must not change what the number means."""
         self._seed(store)
-        (_chunk, score), = store.search([0.0, 1.0], "prune_vectors", limit=1)
+        ((_chunk, score),) = store.search([0.0, 1.0], "prune_vectors", limit=1)
         assert score == pytest.approx(1.0, abs=1e-6)
 
     def test_word_inside_a_name_matches(self, store: SqliteVectorStore) -> None:
@@ -445,9 +437,7 @@ class TestHybridSearch:
         found = store._lexical("cosine", limit=5)
         assert any(c.symbol == "cosine_similarity" for c in found)
 
-    def test_punctuation_cannot_break_the_match(
-        self, store: SqliteVectorStore
-    ) -> None:
+    def test_punctuation_cannot_break_the_match(self, store: SqliteVectorStore) -> None:
         """FTS5 syntax in a query must not raise."""
         self._seed(store)
         assert store.search([0.0, 1.0], 'prune_vectors AND "((', limit=1)
@@ -549,11 +539,41 @@ class TestResultFilter:
         assert len(results) == 1
         assert results[0][0].symbol == "Beta"
 
-    def test_filter_applies_to_the_lexical_half(
-        self, store: SqliteVectorStore
-    ) -> None:
+    def test_filter_applies_to_the_lexical_half(self, store: SqliteVectorStore) -> None:
         self._seed(store)
         results = store.search(
             [1.0, 0.0], "alpha_thing", limit=5, keep=lambda c: c.language == "markdown"
         )
         assert all(c.language == "markdown" for c, _ in results)
+
+
+class TestRecordedRoot:
+    """Verify each index remembers the tree it was built from.
+
+    The file name carries only a hash of the path, so without this no
+    one can tell which tree an index describes, and a search from a
+    parent cannot find the indexes below it.
+    """
+
+    def test_root_is_stored(self, db_path: Path, tmp_path: Path) -> None:
+        store = SqliteVectorStore(db_path, model_id="m", root=tmp_path)
+        store.close()
+        assert SqliteVectorStore.read_root(db_path) == tmp_path
+
+    def test_root_survives_reopening(self, db_path: Path, tmp_path: Path) -> None:
+        SqliteVectorStore(db_path, model_id="m", root=tmp_path).close()
+        again = SqliteVectorStore(db_path, model_id="m", root=tmp_path)
+        again.close()
+        assert SqliteVectorStore.read_root(db_path) == tmp_path
+
+    def test_no_root_is_recorded_when_none_is_given(self, db_path: Path) -> None:
+        SqliteVectorStore(db_path, model_id="m").close()
+        assert SqliteVectorStore.read_root(db_path) is None
+
+    def test_reading_a_missing_file(self, tmp_path: Path) -> None:
+        assert SqliteVectorStore.read_root(tmp_path / "absent.db") is None
+
+    def test_reading_a_file_that_is_not_an_index(self, tmp_path: Path) -> None:
+        junk = tmp_path / "junk.db"
+        junk.write_text("not a database")
+        assert SqliteVectorStore.read_root(junk) is None

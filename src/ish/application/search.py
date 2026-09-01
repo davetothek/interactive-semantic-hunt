@@ -75,6 +75,13 @@ class Search:
 
         Return the chunks the store now holds, or None when it holds none.
         """
+        if not getattr(self._vector_store, "writable", True):
+            # Reading several indexes at once. Refreshing would have to
+            # choose one to write to, and any choice would be wrong.
+            log.info("Searching stored indexes without refreshing")
+            chunks = self.all_chunks()
+            return chunks or None
+
         if self._reindex:
             log.info("Discarding the stored index for %s", root)
             self._vector_store.clear()

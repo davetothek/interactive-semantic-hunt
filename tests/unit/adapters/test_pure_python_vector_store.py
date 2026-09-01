@@ -102,9 +102,7 @@ class TestIndexMaintenance:
         assert store.missing_vectors(["h1"]) == set()
 
     def test_chunks_are_ordered(self, store: PurePythonVectorStore) -> None:
-        store.set_file(
-            Path("b.py"), STAMP, [(make_chunk("second", "b.py", 5), "h2")]
-        )
+        store.set_file(Path("b.py"), STAMP, [(make_chunk("second", "b.py", 5), "h2")])
         store.set_file(Path("a.py"), STAMP, [(make_chunk("first", "a.py", 1), "h1")])
         assert [c.symbol for c in store.chunks()] == ["first", "second"]
 
@@ -194,15 +192,11 @@ class TestHybridSearch:
         prose = store.search([0.0, 1.0], "read a settings file", limit=3)
         assert [c.symbol for c, _ in prose] == [c.symbol for c, _ in plain]
 
-    def test_word_inside_a_name_matches(
-        self, store: PurePythonVectorStore
-    ) -> None:
+    def test_word_inside_a_name_matches(self, store: PurePythonVectorStore) -> None:
         self._seed(store)
         assert any(c.symbol == "cosine_similarity" for c in store._lexical("cosine", 5))
 
-    def test_no_lexical_match_falls_back(
-        self, store: PurePythonVectorStore
-    ) -> None:
+    def test_no_lexical_match_falls_back(self, store: PurePythonVectorStore) -> None:
         self._seed(store)
         results = store.search([0.0, 1.0], "absent_identifier", limit=3)
         assert len(results) == 3

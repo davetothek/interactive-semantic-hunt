@@ -130,9 +130,12 @@ def _fts_query(text: str) -> str:
 class SqliteVectorStore:
     """Persist chunks and embeddings in a single SQLite file."""
 
-    def __init__(self, db_path: Path, *, model_id: str) -> None:
+    def __init__(
+        self, db_path: Path, *, model_id: str, root: Path | None = None
+    ) -> None:
         self._model_id = model_id
         self._path = db_path
+        self._root = root
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # The TUI reaches the store from a worker thread, so the connection
@@ -159,6 +162,7 @@ class SqliteVectorStore:
                 "SELECT value FROM meta WHERE key='schema_version'"
             ).fetchone()
             if row and row[0] == SCHEMA_VERSION:
+                self._record_root()
                 return
             log.info("Index schema changed. Rebuilding %s", self._path)
             for trigger in ("chunks_fts_insert", "chunks_fts_delete"):
@@ -172,6 +176,36 @@ class SqliteVectorStore:
             (SCHEMA_VERSION,),
         )
         self._db.commit()
+        self._record_root()
+
+    def _record_root(self) -> None:
+        """Store the tree this index was built from.
+
+        The file name carries only a hash of the path, so without this
+        no one can tell which tree an index describes.
+        """
+        if self._root is None:
+            return
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('root', ?)",
+                (str(self._root),),
+            )
+
+    @staticmethod
+    def read_root(db_path: Path) -> Path | None:
+        """Return the tree an index was built from, without opening it fully."""
+        try:
+            db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return None
+        try:
+            row = db.execute("SELECT value FROM meta WHERE key = 'root'").fetchone()
+        except sqlite3.Error:
+            return None
+        finally:
+            db.close()
+        return Path(row[0]) if row else None
 
     def clear(self) -> None:
         """Discard every indexed file.

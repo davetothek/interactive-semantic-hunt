@@ -127,6 +127,7 @@ def test_a_failure_listing_files_is_not_fatal(repo: Path, monkeypatch) -> None:
 
     def selective(command, **kwargs):
         if "ls-files" in command:
+
             class Failed:
                 returncode = 128
                 stdout = ""
