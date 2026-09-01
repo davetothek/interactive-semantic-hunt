@@ -49,8 +49,17 @@ class GitVisibleFiles:
         self._repo = Path(top.strip()).resolve()
 
         # Tracked files plus untracked files that no ignore rule covers.
+        # --full-name reports every path from the repository root, so a
+        # scan of a subdirectory still resolves against the same base.
         listing = self._run(
-            ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]
+            [
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "--full-name",
+                "-z",
+            ]
         )
         if listing is None:
             return None
