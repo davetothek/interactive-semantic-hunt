@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Sequence
 
+from ish.adapters.embedder.prefixes import PrefixingEmbedder
+
 log = logging.getLogger(__name__)
 
 DEFAULT_HOST = "http://localhost:11434"
@@ -31,7 +33,7 @@ def _normalize_host(host: str) -> str:
     return host
 
 
-class OllamaEmbedder:
+class OllamaEmbedder(PrefixingEmbedder):
     """Generate embeddings through a running Ollama daemon.
 
     Read ``OLLAMA_HOST`` when no host is given, matching the Ollama
@@ -50,11 +52,8 @@ class OllamaEmbedder:
         self.host = _normalize_host(chosen)
         self._batch_size = max(1, batch_size)
 
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+    def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode texts into vectors, one batch of requests at a time."""
-        if not texts:
-            return []
-
         items = list(texts)
         vectors: list[Sequence[float]] = []
         for start in range(0, len(items), self._batch_size):

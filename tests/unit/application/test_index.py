@@ -39,9 +39,12 @@ class RecordingEmbedder:
     def __init__(self) -> None:
         self.seen: list[str] = []
 
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+    def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         self.seen.extend(texts)
         return [[float(len(t))] for t in texts]
+
+    def embed_query(self, text: str) -> Sequence[float]:
+        return [float(len(text))]
 
 
 @pytest.fixture()

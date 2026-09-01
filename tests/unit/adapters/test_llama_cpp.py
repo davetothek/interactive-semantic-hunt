@@ -64,7 +64,7 @@ class TestLlamaCppEmbedder:
         _, mock_instance = mock_llama_cpp
         embedder = LlamaCppEmbedder()
 
-        result = embedder.embed([])
+        result = embedder.embed_documents([])
 
         assert result == []
         mock_instance.create_embedding.assert_not_called()
@@ -85,7 +85,9 @@ class TestLlamaCppEmbedder:
             "usage": {"prompt_tokens": 12, "total_tokens": 12},
         }
 
-        result = embedder.embed(["hello", "world"])
+        result = embedder.embed_documents(["hello", "world"])
 
-        mock_instance.create_embedding.assert_called_once_with(["hello", "world"])
+        mock_instance.create_embedding.assert_called_once_with(
+            ["search_document: hello", "search_document: world"]
+        )
         assert result == [[0.1, 0.2], [0.8, 0.9]]

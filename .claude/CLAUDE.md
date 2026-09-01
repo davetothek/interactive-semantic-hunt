@@ -150,6 +150,10 @@ The index persists in SQLite, one file per scanned tree, under `$XDG_CACHE_HOME/
 
 Measured on this repo (33 files, 104 chunks): a cold index costs ~87s with Ollama, ~51s with llama.cpp, which parallelizes bulk embedding better. A warm query costs ~0.20s.
 
+Embedding models are often trained with a task prefix for stored text and another for queries, so the `Embedder` port has `embed_documents` and `embed_query` rather than one method. The table lives in `adapters/embedder/prefixes.py`, keyed by model name, because the convention belongs to the model and not to the backend serving it. Measured on this repo with nomic-embed-text over 16 queries: top-1 accuracy 62% without the prefixes, 75% with.
+
+Anything that changes what a stored vector means — the prefixes, or `embed_text()` — must bump `SCHEMA_VERSION` in the SQLite adapter, which discards the old index instead of mixing it.
+
 The default backend is Ollama, reached over HTTP with the standard library. Do not add a client package for it: importing the `ollama` package cost 176ms, which was 71% of a warm query, while the request itself takes ~38ms.
 
 ## Filesystem discovery

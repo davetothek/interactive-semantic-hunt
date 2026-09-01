@@ -168,8 +168,11 @@ class _StubEmbedder:
     def __init__(self, model_name: str = "stub") -> None:
         self.model_name = model_name
 
-    def embed(self, texts):
+    def embed_documents(self, texts):
         return [[1.0] for _ in texts]
+
+    def embed_query(self, text):
+        return [1.0]
 
 
 class TestBackendDefaults:
