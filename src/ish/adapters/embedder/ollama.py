@@ -22,7 +22,8 @@ DEFAULT_MODEL = "nomic-embed-text"
 # Send this many texts per request. One request for a whole repository
 # would hold the daemon for minutes and risk the timeout.
 DEFAULT_BATCH_SIZE = 64
-TIMEOUT_SECONDS = 120
+# A batch of large definitions can take minutes on a busy daemon.
+TIMEOUT_SECONDS = 600
 
 
 def _normalize_host(host: str) -> str:
