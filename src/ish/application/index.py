@@ -75,8 +75,15 @@ class Index:
         embedder: Embedder,
         vector_store: VectorStore,
         ignored_dirs: Sequence[str] = (),
+        include: Sequence[str] = (),
+        exclude: Sequence[str] = (),
     ) -> None:
-        self._scanner = Scan(parsers=parsers, ignored_dirs=ignored_dirs)
+        self._scanner = Scan(
+            parsers=parsers,
+            ignored_dirs=ignored_dirs,
+            include=include,
+            exclude=exclude,
+        )
         self._embedder = embedder
         self._store = vector_store
 

@@ -210,6 +210,12 @@ The reported score stays the cosine similarity, so the number means the same thi
 
 The scan recursively finds files whose suffix a registered parser claims and ignores at minimum: `.git/`, `.venv/`, `venv/`, `__pycache__/`. Directory symlinks are not followed.
 
+`include` and `exclude` hold regular expressions, searched against the POSIX path, so `/vendor/` matches at any depth. `exclude` beats `include`, because the safer rule should win a disagreement. A malformed pattern names the option it came from and stops the run.
+
+**Every rule about what to index belongs in `Scan.accepts()` and nowhere else.** Discovery and index pruning both ask that one predicate, so a filter added in only one of them would make pruning delete files it should keep. `test_accepts_agrees_with_discovery` pins this.
+
+Regular expressions rather than globs, deliberately: one matching system keeps `accepts()` a single cheap predicate, and two systems would be two places to keep in step with pruning.
+
 ## Writing style
 
 This project uses STE-flavored Simplified Technical English for prose. See `.claude/skills/ste-writing/SKILL.md` for the rules. Apply them to documentation, commit messages, comments, and error strings. Do not apply them to code or identifiers.

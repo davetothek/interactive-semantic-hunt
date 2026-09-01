@@ -23,6 +23,8 @@ class Search:
         embedder: Embedder,
         vector_store: VectorStore,
         ignored_dirs: Sequence[str] = (),
+        include: Sequence[str] = (),
+        exclude: Sequence[str] = (),
         reindex: bool = False,
         hybrid: bool = True,
     ) -> None:
@@ -35,6 +37,8 @@ class Search:
             embedder=embedder,
             vector_store=vector_store,
             ignored_dirs=ignored_dirs,
+            include=include,
+            exclude=exclude,
         )
 
     def close(self) -> None:

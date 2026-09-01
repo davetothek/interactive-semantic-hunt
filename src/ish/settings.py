@@ -67,6 +67,22 @@ class Settings:
         default=DEFAULT_IGNORE,
         metadata=_opt("Directory names to skip.", nargs="+", metavar="DIR"),
     )
+    include: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Index only paths matching these regular expressions.",
+            nargs="+",
+            metavar="REGEX",
+        ),
+    )
+    exclude: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Never index a path matching these regular expressions.",
+            nargs="+",
+            metavar="REGEX",
+        ),
+    )
     languages: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

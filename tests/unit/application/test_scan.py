@@ -356,3 +356,94 @@ class TestConfigurableIgnores:
         scanner.run(tmp_path)
 
         assert [p.name for p, _ in fake_parser.calls] == ["app.py"]
+
+
+class TestPathFilters:
+    """Verify the include and exclude regular expressions."""
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        (tmp_path / "app.py").write_text("pass\n")
+        (tmp_path / "app_test.py").write_text("pass\n")
+        vendor = tmp_path / "vendor" / "lib"
+        vendor.mkdir(parents=True)
+        (vendor / "third.py").write_text("pass\n")
+        generated = tmp_path / "gen"
+        generated.mkdir()
+        (generated / "api_pb2.py").write_text("pass\n")
+        return tmp_path
+
+    def _names(self, tree: Path, **kwargs) -> list[str]:
+        scanner = Scan(parsers=[FakeParser()], **kwargs)
+        return sorted(p.name for p in scanner.discover(tree))
+
+    def test_no_filter_takes_everything(self, tree: Path) -> None:
+        assert self._names(tree) == [
+            "api_pb2.py",
+            "app.py",
+            "app_test.py",
+            "third.py",
+        ]
+
+    def test_exclude_a_directory(self, tree: Path) -> None:
+        found = self._names(tree, exclude=["/vendor/"])
+        assert "third.py" not in found
+        assert "app.py" in found
+
+    def test_exclude_a_suffix_pattern(self, tree: Path) -> None:
+        found = self._names(tree, exclude=[r"_pb2\.py$"])
+        assert "api_pb2.py" not in found
+
+    def test_several_excludes_all_apply(self, tree: Path) -> None:
+        found = self._names(tree, exclude=["/vendor/", r"_test\.py$"])
+        assert found == ["api_pb2.py", "app.py"]
+
+    def test_include_restricts_to_matches(self, tree: Path) -> None:
+        assert self._names(tree, include=[r"/gen/"]) == ["api_pb2.py"]
+
+    def test_include_accepts_any_of_the_patterns(self, tree: Path) -> None:
+        found = self._names(tree, include=[r"/gen/", r"app\.py$"])
+        assert found == ["api_pb2.py", "app.py"]
+
+    def test_exclude_beats_include(self, tree: Path) -> None:
+        """The safer rule wins, so a mistake keeps a file out."""
+        found = self._names(tree, include=[r"\.py$"], exclude=["/vendor/"])
+        assert "third.py" not in found
+
+    def test_regex_alternation(self, tree: Path) -> None:
+        """A case a glob cannot express."""
+        found = self._names(tree, exclude=[r"(_test|_pb2)\.py$"])
+        assert found == ["app.py", "third.py"]
+
+    def test_a_single_file_root_is_filtered_too(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], exclude=[r"_test\.py$"])
+        assert scanner.discover(tree / "app_test.py") == []
+
+    def test_accepts_agrees_with_discovery(self, tree: Path) -> None:
+        """Pruning relies on this, so the two must never disagree."""
+        scanner = Scan(parsers=[FakeParser()], exclude=["/vendor/"])
+        found = set(scanner.discover(tree))
+        for path in tree.rglob("*.py"):
+            assert scanner.accepts(path) == (path in found), path
+
+    def test_invalid_regex_names_the_option(self) -> None:
+        with pytest.raises(ValueError, match="'exclude'"):
+            Scan(parsers=[FakeParser()], exclude=["(unclosed"])
+
+    def test_invalid_include_regex(self) -> None:
+        with pytest.raises(ValueError, match="'include'"):
+            Scan(parsers=[FakeParser()], include=["*bad"])
+
+
+class TestFilteredPruning:
+    """Verify that a newly excluded file leaves the index."""
+
+    def test_excluded_file_is_no_longer_accepted(self, tmp_path: Path) -> None:
+        (tmp_path / "keep.py").write_text("pass\n")
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        (vendor / "drop.py").write_text("pass\n")
+
+        scanner = Scan(parsers=[FakeParser()], exclude=["/vendor/"])
+        assert scanner.accepts(tmp_path / "keep.py") is True
+        assert scanner.accepts(vendor / "drop.py") is False

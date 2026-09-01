@@ -166,7 +166,12 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
 
 def build_scan(settings: Settings) -> Scan:
     """Wire the scan use case."""
-    return Scan(parsers=build_parsers(settings), ignored_dirs=settings.ignore)
+    return Scan(
+        parsers=build_parsers(settings),
+        ignored_dirs=settings.ignore,
+        include=settings.include,
+        exclude=settings.exclude,
+    )
 
 
 def build_search(settings: Settings, root: Path) -> Search:
@@ -177,6 +182,8 @@ def build_search(settings: Settings, root: Path) -> Search:
         embedder=embedder,
         vector_store=build_vector_store(settings, root, embedder),
         ignored_dirs=settings.ignore,
+        include=settings.include,
+        exclude=settings.exclude,
         reindex=settings.reindex,
         hybrid=not settings.no_hybrid,
     )
