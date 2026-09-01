@@ -36,6 +36,10 @@ _NAME_TYPES = frozenset(
 # Fields to follow when hunting for the name of a declaration.
 _NAME_FIELDS = ("name", "declarator")
 
+# Node type that marks a declaration as declaring a function rather than
+# a variable. `void draw();` has one, `int width_;` does not.
+_FUNCTION_DECLARATOR = "function_declarator"
+
 
 class TreeSitterParser:
     """Extract chunks from source using a Tree-sitter grammar."""
@@ -49,6 +53,8 @@ class TreeSitterParser:
         kinds: Mapping[str, str],
         containers: frozenset[str],
         needs_body: frozenset[str] = frozenset(),
+        needs_function: frozenset[str] = frozenset(),
+        member_kinds: Mapping[str, str] | None = None,
         separator: str = "::",
     ) -> None:
         self.language = language
@@ -56,6 +62,8 @@ class TreeSitterParser:
         self._kinds = dict(kinds)
         self._containers = containers
         self._needs_body = needs_body
+        self._needs_function = needs_function
+        self._member_kinds = dict(member_kinds or {})
         self._separator = separator
         self._grammar = grammar
         self._parser: Any = None
@@ -76,6 +84,7 @@ class TreeSitterParser:
 
         chunks: list[Chunk] = []
         self._visit(tree.root_node, path, lines, data, [], chunks)
+        chunks = _drop_redundant_declarations(chunks)
 
         if not chunks and tree.root_node.has_error:
             raise ParseError(f"No definition could be read from {path}")
@@ -108,6 +117,15 @@ class TreeSitterParser:
                 and child.child_by_field_name("body") is None
             ):
                 continue
+
+            # A declaration is worth a chunk only when it declares a
+            # function. A data member carries nothing to search for.
+            if child.type in self._needs_function and not _declares_function(child):
+                continue
+
+            # Inside a class, a definition is a method rather than a function.
+            if trail and child.type in self._member_kinds:
+                kind = self._member_kinds[child.type]
 
             name = self._name_of(child, data)
             symbol = self._separator.join([*trail, name]) if name else None
@@ -168,6 +186,29 @@ class TreeSitterParser:
         return None
 
 
+def _declares_function(node: Any) -> bool:
+    """Return True when *node* declares a function rather than a variable."""
+    if node.type == _FUNCTION_DECLARATOR:
+        return True
+    return any(_declares_function(child) for child in node.children)
+
+
+def _drop_redundant_declarations(chunks: list[Chunk]) -> list[Chunk]:
+    """Remove a declaration that the same file also defines.
+
+    A source file often repeats its prototype above the definition. Keep
+    the definition, which carries the body a search should find.
+    """
+    defined = {
+        chunk.symbol for chunk in chunks if chunk.kind != "declaration" and chunk.symbol
+    }
+    return [
+        chunk
+        for chunk in chunks
+        if chunk.kind != "declaration" or chunk.symbol not in defined
+    ]
+
+
 def cpp_parser() -> TreeSitterParser:
     """Build the C and C++ parser.
 
@@ -188,7 +229,12 @@ def cpp_parser() -> TreeSitterParser:
             "union_specifier": "union",
             "enum_specifier": "enum",
             "namespace_definition": "namespace",
+            # A header is mostly declarations, so they are its content.
+            "declaration": "declaration",
+            "field_declaration": "declaration",
         },
+        member_kinds={"function_definition": "method"},
+        needs_function=frozenset({"declaration", "field_declaration"}),
         containers=frozenset(
             {"class_specifier", "struct_specifier", "namespace_definition"}
         ),
