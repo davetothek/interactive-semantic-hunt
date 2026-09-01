@@ -24,10 +24,12 @@ class Search:
         vector_store: VectorStore,
         ignored_dirs: Sequence[str] = (),
         reindex: bool = False,
+        hybrid: bool = True,
     ) -> None:
         self._embedder = embedder
         self._vector_store = vector_store
         self._reindex = reindex
+        self._hybrid = hybrid
         self._index = Index(
             parsers=parsers,
             embedder=embedder,
@@ -74,7 +76,9 @@ class Search:
             return []
 
         log.info("Searching vector store...")
-        return self._vector_store.search(query_vector, limit=limit)
+        return self._vector_store.search(
+            query_vector, query if self._hybrid else "", limit=limit
+        )
 
     def run(
         self, root: Path, query: str, limit: int = 5
