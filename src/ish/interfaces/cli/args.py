@@ -13,7 +13,11 @@ from ish import bootstrap
 from ish.settings import Settings, load_settings
 
 # Options whose accepted values come from a registry rather than a literal.
-_DYNAMIC_CHOICES = {"embedder": lambda: sorted(bootstrap.EMBEDDERS)}
+_DYNAMIC_CHOICES = {
+    "embedder": lambda: sorted(bootstrap.EMBEDDERS),
+    "languages": lambda: sorted(bootstrap.PARSERS),
+    "lang": lambda: sorted(bootstrap.PARSERS),
+}
 
 
 def _is_path_syntax(value: str) -> bool:
@@ -46,6 +50,10 @@ def add_settings_options(parser: argparse.ArgumentParser) -> None:
             flags.append(f"--{f.name.replace('_', '-')}")
 
         kwargs = dict(meta.get("cli", {}))
+        # The settings module names this action rather than importing a
+        # parser, so translate it here.
+        if kwargs.get("action") == "boolean_optional":
+            kwargs["action"] = argparse.BooleanOptionalAction
         if f.name in _DYNAMIC_CHOICES:
             kwargs["choices"] = _DYNAMIC_CHOICES[f.name]()
 

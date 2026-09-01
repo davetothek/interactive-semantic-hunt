@@ -7,7 +7,7 @@ files that no longer exist.
 
 import hashlib
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -77,12 +77,14 @@ class Index:
         ignored_dirs: Sequence[str] = (),
         include: Sequence[str] = (),
         exclude: Sequence[str] = (),
+        ignored_by: Callable[[Path], bool] | None = None,
     ) -> None:
         self._scanner = Scan(
             parsers=parsers,
             ignored_dirs=ignored_dirs,
             include=include,
             exclude=exclude,
+            ignored_by=ignored_by,
         )
         self._embedder = embedder
         self._store = vector_store

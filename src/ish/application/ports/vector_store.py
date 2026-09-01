@@ -6,7 +6,7 @@ re-embedding unchanged work.
 """
 
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -135,12 +135,16 @@ class VectorStore(Protocol):
         query_vector: Sequence[float],
         query_text: str = "",
         limit: int = 5,
+        keep: Callable[[Chunk], bool] | None = None,
     ) -> Sequence[tuple[Chunk, float]]:
         """Find the *limit* best chunks for a query.
 
         Rank by vector similarity alone when *query_text* is empty.
         Otherwise also rank the text lexically and fuse the two orders,
         which recovers exact identifiers that a vector alone can miss.
+
+        Apply *keep* before the limit, so a filtered search still
+        returns a full page of results.
 
         Return (Chunk, similarity_score) tuples in rank order. The score
         stays the cosine similarity, so it means the same thing whether

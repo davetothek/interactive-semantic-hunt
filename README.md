@@ -71,6 +71,9 @@ nvim $(ish -i src/)
 | `--ignore DIR ...` | Directory names to skip |
 | `--include REGEX ...` | Index only paths matching these patterns |
 | `--exclude REGEX ...` | Never index paths matching these patterns |
+| `--git`, `--no-git` | Skip files git ignores (default: on) |
+| `--lang LANG ...` | Show results only from these languages |
+| `--under REGEX` | Show results only from matching paths |
 | `--model NAME` | Override the backend model |
 | `--reindex` | Discard the stored index and build it again |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
@@ -116,6 +119,18 @@ exclude = ["/vendor/", "_pb2\\.py$", "(_test|_spec)\\.py$"]
 
 `include` and `exclude` take regular expressions rather than globs, so `/vendor/`
 matches at any depth and alternation works. `exclude` wins over `include`.
+
+`--git` is on by default, so anything a `.gitignore` covers stays out of the
+index. Pass `--no-git` to index it anyway.
+
+`--lang` and `--under` narrow what a search *returns*. They never change what is
+indexed, so a narrowed query cannot shrink the index:
+
+```sh
+ish "how is ranking done" --lang python
+ish "installation steps" --lang markdown asciidoc
+ish "parse a header" --under '/include/'
+```
 
 User-level defaults go in `~/.config/ish/ish.toml`. Later sources win:
 

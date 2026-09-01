@@ -83,6 +83,28 @@ class Settings:
             metavar="REGEX",
         ),
     )
+    lang: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Return results only from these languages.",
+            nargs="+",
+            metavar="LANG",
+        ),
+    )
+    under: str = field(
+        default="",
+        metadata=_opt(
+            "Return results only from paths matching this expression.",
+            metavar="REGEX",
+        ),
+    )
+    git: bool = field(
+        default=True,
+        metadata=_opt(
+            "Skip files that git ignores.",
+            action="boolean_optional",
+        ),
+    )
     languages: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

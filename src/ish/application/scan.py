@@ -2,7 +2,7 @@
 
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from ish.application.ports.parser import ParseError, Parser
@@ -44,10 +44,14 @@ class Scan:
         ignored_dirs: Sequence[str] = (),
         include: Sequence[str] = (),
         exclude: Sequence[str] = (),
+        ignored_by: Callable[[Path], bool] | None = None,
     ) -> None:
         self._ignored_dirs = frozenset(ignored_dirs) or DEFAULT_IGNORED_DIRS
         self._include = _compile(include, "include")
         self._exclude = _compile(exclude, "exclude")
+        # A predicate supplied by the caller, so the application never
+        # learns how a version control system is asked.
+        self._ignored_by = ignored_by
         self._by_suffix: dict[str, Parser] = {}
         for parser in parsers:
             for suffix in parser.suffixes:
@@ -95,7 +99,9 @@ class Scan:
         text = path.as_posix()
         if self._include and not any(p.search(text) for p in self._include):
             return False
-        return not any(p.search(text) for p in self._exclude)
+        if any(p.search(text) for p in self._exclude):
+            return False
+        return not (self._ignored_by is not None and self._ignored_by(path))
 
     def parse_file(self, path: Path) -> Sequence[Chunk] | None:
         """Read and parse one discovered file.

@@ -7,7 +7,7 @@ no trace on disk.
 
 import math
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 
 from ish.application.ports.vector_store import (
@@ -109,6 +109,7 @@ class PurePythonVectorStore:
         query_vector: Sequence[float],
         query_text: str = "",
         limit: int = 5,
+        keep: Callable[[Chunk], bool] | None = None,
     ) -> Sequence[tuple[Chunk, float]]:
         """Rank chunks by vector similarity, fused with a lexical order."""
         results: list[tuple[Chunk, float]] = []
@@ -120,10 +121,14 @@ class PurePythonVectorStore:
                 results.append((chunk, cosine_similarity(query_vector, vector)))
 
         results.sort(key=lambda pair: pair[1], reverse=True)
+        if keep is not None:
+            results = [pair for pair in results if keep(pair[0])]
         if not query_text or not is_code_like(query_text):
             return results[:limit]
 
         lexical = self._lexical(query_text, limit=max(limit * 4, 20))
+        if keep is not None:
+            lexical = [chunk for chunk in lexical if keep(chunk)]
         if not lexical:
             return results[:limit]
 
