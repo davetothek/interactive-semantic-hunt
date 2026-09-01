@@ -148,7 +148,9 @@ The index persists in SQLite, one file per scanned tree, under `$XDG_CACHE_HOME/
 - `remove_files` and `clear` keep vectors, since restoring a file should cost no embedding. `prune_vectors` sweeps unreferenced ones on demand.
 - Interfaces must call `Search.close()`, which releases the database.
 
-Measured on this repo: a cold index costs ~51s, a warm query ~1.1s. Model load dominates a warm query, so latency work belongs in a resident backend, not in the store.
+Measured on this repo (33 files, 104 chunks): a cold index costs ~87s with Ollama, ~51s with llama.cpp, which parallelizes bulk embedding better. A warm query costs ~0.20s.
+
+The default backend is Ollama, reached over HTTP with the standard library. Do not add a client package for it: importing the `ollama` package cost 176ms, which was 71% of a warm query, while the request itself takes ~38ms.
 
 ## Filesystem discovery
 
