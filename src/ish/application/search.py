@@ -69,12 +69,12 @@ class Search:
     def search(self, query: str, limit: int = 5) -> Sequence[tuple[Chunk, float]]:
         """Query the vector store with the semantic query."""
         log.info("Embedding search query...")
-        query_embeddings = self._embedder.embed([query])
-        if not query_embeddings:
+        query_vector = self._embedder.embed_query(query)
+        if not query_vector:
             return []
 
         log.info("Searching vector store...")
-        return self._vector_store.search(query_embeddings[0], limit=limit)
+        return self._vector_store.search(query_vector, limit=limit)
 
     def run(
         self, root: Path, query: str, limit: int = 5

@@ -2,8 +2,10 @@
 
 from collections.abc import Sequence
 
+from ish.adapters.embedder.prefixes import PrefixingEmbedder
 
-class LlamaCppEmbedder:
+
+class LlamaCppEmbedder(PrefixingEmbedder):
     """Generate embeddings using a local GGUF model via llama.cpp.
 
     Automatically downloads `nomic-embed-text` from Hugging Face if not present.
@@ -35,11 +37,8 @@ class LlamaCppEmbedder:
         # 2. Instantiate the engine. verbose=False hides the massive C++ startup logs.
         self._model = Llama(model_path=model_path, embedding=True, verbose=False)
 
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+    def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode texts into vectors via llama.cpp."""
-        if not texts:
-            return []
-
         text_list = list(texts)
 
         # create_embedding accepts a single string or a list of strings

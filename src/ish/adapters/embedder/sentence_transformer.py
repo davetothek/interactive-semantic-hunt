@@ -2,8 +2,10 @@
 
 from collections.abc import Sequence
 
+from ish.adapters.embedder.prefixes import PrefixingEmbedder
 
-class SentenceTransformerEmbedder:
+
+class SentenceTransformerEmbedder(PrefixingEmbedder):
     """Generate embeddings using the sentence-transformers library.
 
     Downloads the specified model from the Hugging Face Hub on first run
@@ -32,11 +34,8 @@ class SentenceTransformerEmbedder:
 
             self._model = SentenceTransformer(model_name)
 
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+    def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode texts into vectors and return them as pure Python floats."""
-        if not texts:
-            return []
-
         # .encode() can accept a single string or list of strings.
         # Since we use Sequence, we ensure it's converted to a list.
         text_list = list(texts)

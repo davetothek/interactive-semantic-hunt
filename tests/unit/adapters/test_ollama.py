@@ -90,21 +90,24 @@ class TestEmbed:
     """Verify the request shape and the returned vectors."""
 
     def test_empty_input_skips_the_daemon(self, recorder: Recorder) -> None:
-        assert OllamaEmbedder().embed([]) == []
+        assert OllamaEmbedder().embed_documents([]) == []
         assert recorder.requests == []
 
     def test_sends_model_and_input(self, recorder: Recorder) -> None:
-        OllamaEmbedder("mxbai-embed-large").embed(["a", "bb"])
+        OllamaEmbedder("mxbai-embed-large").embed_documents(["a", "bb"])
         assert recorder.requests == [
             {"model": "mxbai-embed-large", "input": ["a", "bb"]}
         ]
 
     def test_posts_to_the_embed_endpoint(self, recorder: Recorder) -> None:
-        OllamaEmbedder(host="http://h:1").embed(["a"])
+        OllamaEmbedder(host="http://h:1").embed_documents(["a"])
         assert recorder.urls == ["http://h:1/api/embed"]
 
     def test_returns_the_vectors(self, recorder: Recorder) -> None:
-        assert OllamaEmbedder().embed(["a", "bb"]) == [[1.0], [2.0]]
+        assert OllamaEmbedder("all-minilm").embed_documents(["a", "bb"]) == [
+            [1.0],
+            [2.0],
+        ]
 
     def test_order_is_preserved_across_batches(
         self, monkeypatch: pytest.MonkeyPatch
@@ -113,7 +116,7 @@ class TestEmbed:
         monkeypatch.setattr(urllib.request, "urlopen", rec)
         texts = [f"{'x' * n}" for n in range(1, 6)]
 
-        result = OllamaEmbedder(batch_size=2).embed(texts)
+        result = OllamaEmbedder("all-minilm", batch_size=2).embed_documents(texts)
 
         assert [v[0] for v in result] == [1.0, 2.0, 3.0, 4.0, 5.0]
 
@@ -122,12 +125,12 @@ class TestEmbed:
         rec = Recorder()
         monkeypatch.setattr(urllib.request, "urlopen", rec)
 
-        OllamaEmbedder(batch_size=2).embed(["a", "b", "c", "d", "e"])
+        OllamaEmbedder(batch_size=2).embed_documents(["a", "b", "c", "d", "e"])
 
         assert [len(r["input"]) for r in rec.requests] == [2, 2, 1]
 
     def test_batch_size_is_at_least_one(self, recorder: Recorder) -> None:
-        OllamaEmbedder(batch_size=0).embed(["a", "b"])
+        OllamaEmbedder(batch_size=0).embed_documents(["a", "b"])
         assert [len(r["input"]) for r in recorder.requests] == [1, 1]
 
 
@@ -145,7 +148,7 @@ class TestFailures:
             monkeypatch, urllib.error.URLError(ConnectionRefusedError("refused"))
         )
         with pytest.raises(RuntimeError) as exc_info:
-            OllamaEmbedder().embed(["a"])
+            OllamaEmbedder().embed_documents(["a"])
 
         message = str(exc_info.value)
         assert "ollama serve" in message
@@ -161,7 +164,7 @@ class TestFailures:
             ),
         )
         with pytest.raises(RuntimeError, match="ollama pull nomic-embed-text"):
-            OllamaEmbedder().embed(["a"])
+            OllamaEmbedder().embed_documents(["a"])
 
     def test_generation_model_is_not_a_missing_model(
         self, monkeypatch: pytest.MonkeyPatch
@@ -178,7 +181,7 @@ class TestFailures:
             ),
         )
         with pytest.raises(RuntimeError) as exc_info:
-            OllamaEmbedder("qwen2.5-coder:7b").embed(["a"])
+            OllamaEmbedder("qwen2.5-coder:7b").embed_documents(["a"])
 
         message = str(exc_info.value)
         assert "is an embedding model" in message
@@ -190,7 +193,7 @@ class TestFailures:
 
         monkeypatch.setattr(urllib.request, "urlopen", garbage)
         with pytest.raises(RuntimeError, match="not JSON"):
-            OllamaEmbedder().embed(["a"])
+            OllamaEmbedder().embed_documents(["a"])
 
     def test_wrong_vector_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A generation model returns no embeddings. Say so plainly."""
@@ -198,7 +201,7 @@ class TestFailures:
         monkeypatch.setattr(urllib.request, "urlopen", rec)
 
         with pytest.raises(RuntimeError, match="is an embedding model"):
-            OllamaEmbedder().embed(["a", "b"])
+            OllamaEmbedder().embed_documents(["a", "b"])
 
     def test_missing_embeddings_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def empty(request, timeout=None):  # noqa: ARG001
@@ -206,7 +209,7 @@ class TestFailures:
 
         monkeypatch.setattr(urllib.request, "urlopen", empty)
         with pytest.raises(RuntimeError, match="returned 0 vectors"):
-            OllamaEmbedder().embed(["a"])
+            OllamaEmbedder().embed_documents(["a"])
 
 
 def _response_raw(data: bytes):
@@ -227,5 +230,28 @@ def test_satisfies_the_embedder_port() -> None:
 
 
 def test_returns_a_sequence(recorder: Recorder) -> None:
-    result: Sequence[Sequence[float]] = OllamaEmbedder().embed(["a"])
+    result: Sequence[Sequence[float]] = OllamaEmbedder("all-minilm").embed_documents(
+        ["a"]
+    )
     assert list(result) == [[1.0]]
+
+
+class TestTaskPrefixes:
+    """Verify the model's prefixes reach the request body."""
+
+    def test_document_prefix_is_applied(self, recorder: Recorder) -> None:
+        OllamaEmbedder("nomic-embed-text").embed_documents(["chunk"])
+        assert recorder.requests[0]["input"] == ["search_document: chunk"]
+
+    def test_query_prefix_is_applied(self, recorder: Recorder) -> None:
+        OllamaEmbedder("nomic-embed-text").embed_query("find it")
+        assert recorder.requests[0]["input"] == ["search_query: find it"]
+
+    def test_model_without_a_convention_is_untouched(
+        self, recorder: Recorder
+    ) -> None:
+        OllamaEmbedder("all-minilm").embed_documents(["chunk"])
+        assert recorder.requests[0]["input"] == ["chunk"]
+
+    def test_query_returns_one_vector(self, recorder: Recorder) -> None:
+        assert OllamaEmbedder("all-minilm").embed_query("ab") == [2.0]

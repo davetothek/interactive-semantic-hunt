@@ -49,7 +49,7 @@ class TestSentenceTransformerEmbedder:
         embedder = SentenceTransformerEmbedder()
         mock_instance = mock_st.return_value
 
-        result = embedder.embed([])
+        result = embedder.embed_documents([])
 
         assert result == []
         mock_instance.encode.assert_not_called()
@@ -63,7 +63,7 @@ class TestSentenceTransformerEmbedder:
         fake_embeddings = FakeNumpyArray([[0.1, 0.2], [0.3, 0.4]])
         mock_instance.encode.return_value = fake_embeddings
 
-        result = embedder.embed(["hello", "world"])
+        result = embedder.embed_documents(["hello", "world"])
 
         # Verify it passed the list of strings and requested numpy
         mock_instance.encode.assert_called_once_with(

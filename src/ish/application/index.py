@@ -169,6 +169,6 @@ class Index:
             len(ordered),
             len(texts) - len(ordered),
         )
-        vectors = self._embedder.embed([texts[digest] for digest in ordered])
+        vectors = self._embedder.embed_documents([texts[digest] for digest in ordered])
         self._store.add_vectors(dict(zip(ordered, vectors, strict=True)))
         return len(ordered)

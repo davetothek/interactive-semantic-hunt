@@ -42,9 +42,13 @@ class CountingEmbedder:
     def texts_embedded(self) -> int:
         return sum(len(batch) for batch in self.batches)
 
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+    def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         self.batches.append(list(texts))
         return [[float(len(t)), float(t.count("a"))] for t in texts]
+
+    def embed_query(self, text: str) -> Sequence[float]:
+        self.batches.append([text])
+        return [float(len(text)), float(text.count("a"))]
 
 
 @pytest.fixture()
@@ -109,9 +113,8 @@ class TestSearchUseCase:
         """A backend that returns no vector must not raise."""
 
         class SilentEmbedder(CountingEmbedder):
-            def embed(self, texts):
-                super().embed(texts)
-                return [] if texts == ["q"] else [[1.0, 0.0]] * len(texts)
+            def embed_query(self, text):
+                return []
 
         search = build(SilentEmbedder())
         search.build_index(project)

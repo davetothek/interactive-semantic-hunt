@@ -22,7 +22,10 @@ from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1"
+# Bump when the schema changes, and also when anything changes the meaning
+# of a stored vector, such as the task prefixes the embedder applies. An
+# index built by an older version is discarded rather than mixed.
+SCHEMA_VERSION = "2"
 
 _SCHEMA = """
 CREATE TABLE meta (
