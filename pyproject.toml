@@ -12,12 +12,10 @@ dependencies = [
     "huggingface-hub>=0.23.0",
     "llama-cpp-python>=0.2.75",
     "textual>=0.70.0",
-    "diskcache>=5.6.0",
 ]
 
 [project.optional-dependencies]
 st = ["sentence-transformers"]
-ollama = ["ollama"]
 
 
 [dependency-groups]

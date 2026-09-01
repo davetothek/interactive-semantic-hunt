@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 CONFIG_FILENAME = "ish.toml"
 ENV_PREFIX = "ISH_"
 
-DEFAULT_EMBEDDER = "llama.cpp"
+DEFAULT_EMBEDDER = "ollama"
 DEFAULT_IGNORE = (".git", ".venv", "venv", "__pycache__")
 
 

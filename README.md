@@ -10,13 +10,21 @@ against your query. Everything runs on your machine.
 uv sync
 ```
 
-The default embedding backend is llama.cpp. It downloads a GGUF model on first use.
-Two other backends are optional:
+The default embedding backend is Ollama, which keeps the model resident so no
+run pays a model load. Start it once and pull the embedding model:
 
 ```sh
-uv sync --extra st      # sentence-transformers
-uv sync --extra ollama  # Ollama daemon
+ollama serve
+ollama pull nomic-embed-text
 ```
+
+Set `OLLAMA_HOST` to reach a daemon elsewhere.
+
+Two other backends need no daemon:
+
+- `--embedder llama.cpp` downloads a GGUF model and loads it per run. Slower per
+  query, faster for a first index of a large tree.
+- `--embedder st` uses sentence-transformers. Install it with `uv sync --extra st`.
 
 ## Use
 
@@ -51,14 +59,22 @@ nvim $(ish -i src/)
 | Flag | Purpose |
 |---|---|
 | `-i`, `--interactive` | Run the TUI picker |
-| `--embedder {llama.cpp,ollama,st}` | Select the embedding backend |
+| `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
 | `--color {auto,always,never}` | Control log color |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip |
 | `--model NAME` | Override the backend model |
+| `--reindex` | Discard the stored index and build it again |
+| `--no-cache` | Index in memory only, leaving nothing on disk |
 
 Logs go to stderr, so you can pipe stdout safely.
+
+## Index
+
+The index persists in SQLite under `$XDG_CACHE_HOME/ish/`, one file per scanned
+tree. A repeated query reuses it, so only changed files are parsed and only new
+text is embedded. A renamed file re-embeds nothing.
 
 ## Configure
 

@@ -157,11 +157,11 @@ class TestVectorStoreWiring:
     def test_model_id_tracks_the_adapter(self) -> None:
         from dataclasses import replace
 
-        settings = replace(Settings(), embedder="ollama")
-        assert bootstrap.model_id(settings, _StubEmbedder("nomic")) == "ollama:nomic"
+        settings = replace(Settings(), embedder="llama.cpp")
+        assert bootstrap.model_id(settings, _StubEmbedder("g")) == "llama.cpp:g"
 
     def test_model_id_without_a_named_model(self) -> None:
-        assert bootstrap.model_id(Settings(), _StubEmbedder("")) == "llama.cpp:default"
+        assert bootstrap.model_id(Settings(), _StubEmbedder("")) == "ollama:default"
 
 
 class _StubEmbedder:
@@ -170,3 +170,38 @@ class _StubEmbedder:
 
     def embed(self, texts):
         return [[1.0] for _ in texts]
+
+
+class TestBackendDefaults:
+    """Verify each factory falls back to its own default model."""
+
+    def test_llama_cpp_without_a_model(self, monkeypatch) -> None:
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        monkeypatch.setattr("ish.adapters.embedder.llama_cpp.LlamaCppEmbedder", fake)
+        bootstrap.EMBEDDERS["llama.cpp"]("")
+        fake.assert_called_once_with()
+
+    def test_ollama_without_a_model(self, monkeypatch) -> None:
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        monkeypatch.setattr("ish.adapters.embedder.ollama.OllamaEmbedder", fake)
+        bootstrap.EMBEDDERS["ollama"]("")
+        fake.assert_called_once_with()
+
+    def test_sentence_transformer_without_a_model(self, monkeypatch) -> None:
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        monkeypatch.setattr(
+            "ish.adapters.embedder.sentence_transformer.SentenceTransformerEmbedder",
+            fake,
+        )
+        bootstrap.EMBEDDERS["st"]("")
+        fake.assert_called_once_with()
+
+    def test_ollama_is_the_default_backend(self) -> None:
+        """The default must need no model load per process."""
+        assert Settings().embedder == "ollama"
