@@ -6,12 +6,18 @@ renamed file or an untouched definition never needs embedding again.
 
 Store every vector at unit length. Cosine similarity is then a dot
 product, which halves the work in the search loop.
+
+The TUI indexes on a worker thread and searches on another, so the
+connection is opened for cross-thread use and every statement runs under
+one lock. SQLite itself serializes writers; the lock is what keeps a
+single connection safe to share.
 """
 
 import array
 import logging
 import math
 import sqlite3
+import threading
 from collections.abc import Collection, Mapping, Sequence
 from operator import mul
 from pathlib import Path
@@ -87,7 +93,10 @@ class SqliteVectorStore:
         self._path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._db = sqlite3.connect(db_path)
+        # The TUI reaches the store from a worker thread, so the connection
+        # may not stay bound to the thread that opened it.
+        self._lock = threading.RLock()
+        self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.execute("PRAGMA foreign_keys=ON")
@@ -125,12 +134,13 @@ class SqliteVectorStore:
 
         Keep the vectors. Re-indexing then costs parsing, not embedding.
         """
-        with self._db:
+        with self._lock, self._db:
             self._db.execute("DELETE FROM files")
 
     def close(self) -> None:
         """Close the database connection."""
-        self._db.close()
+        with self._lock:
+            self._db.close()
 
     def __enter__(self) -> SqliteVectorStore:
         return self
@@ -144,7 +154,10 @@ class SqliteVectorStore:
 
     def file_stamps(self) -> Mapping[Path, FileStamp]:
         """Return the stamp held for every indexed file."""
-        rows = self._db.execute("SELECT path, mtime_ns, size FROM files")
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT path, mtime_ns, size FROM files"
+            ).fetchall()
         return {
             Path(path): FileStamp(mtime_ns=mtime_ns, size=size)
             for path, mtime_ns, size in rows
@@ -158,15 +171,17 @@ class SqliteVectorStore:
 
         present: set[str] = set()
         ordered = list(wanted)
+        lock = self._lock
         # Stay well inside the SQLite variable limit for a large index.
         for start in range(0, len(ordered), 500):
             batch = ordered[start : start + 500]
             marks = ",".join("?" * len(batch))
-            rows = self._db.execute(
-                f"SELECT content_hash FROM vectors "  # noqa: S608
-                f"WHERE model_id = ? AND content_hash IN ({marks})",
-                [self._model_id, *batch],
-            )
+            with lock:
+                rows = self._db.execute(
+                    f"SELECT content_hash FROM vectors "  # noqa: S608
+                    f"WHERE model_id = ? AND content_hash IN ({marks})",
+                    [self._model_id, *batch],
+                ).fetchall()
             present.update(row[0] for row in rows)
         return wanted - present
 
@@ -174,22 +189,23 @@ class SqliteVectorStore:
         """Store vectors by content hash, at unit length."""
         if not vectors:
             return
-        self._db.executemany(
-            "INSERT OR REPLACE INTO vectors (content_hash, model_id, dim, data) "
-            "VALUES (?, ?, ?, ?)",
-            [
-                (digest, self._model_id, len(vector), _pack(vector))
-                for digest, vector in vectors.items()
-            ],
-        )
-        self._db.commit()
+        rows = [
+            (digest, self._model_id, len(vector), _pack(vector))
+            for digest, vector in vectors.items()
+        ]
+        with self._lock, self._db:
+            self._db.executemany(
+                "INSERT OR REPLACE INTO vectors "
+                "(content_hash, model_id, dim, data) VALUES (?, ?, ?, ?)",
+                rows,
+            )
 
     def set_file(
         self, path: Path, stamp: FileStamp, chunks: Sequence[tuple[Chunk, str]]
     ) -> None:
         """Replace everything held for *path*."""
         text = str(path)
-        with self._db:
+        with self._lock, self._db:
             self._db.execute("DELETE FROM chunks WHERE path = ?", (text,))
             self._db.execute(
                 "INSERT OR REPLACE INTO files (path, mtime_ns, size) VALUES (?, ?, ?)",
@@ -222,14 +238,14 @@ class SqliteVectorStore:
         """
         if not paths:
             return
-        with self._db:
+        with self._lock, self._db:
             self._db.executemany(
                 "DELETE FROM files WHERE path = ?", [(str(p),) for p in paths]
             )
 
     def prune_vectors(self) -> int:
         """Delete vectors no chunk references. Return how many went."""
-        with self._db:
+        with self._lock, self._db:
             cursor = self._db.execute(
                 "DELETE FROM vectors WHERE content_hash NOT IN "
                 "(SELECT content_hash FROM chunks)"
@@ -242,10 +258,11 @@ class SqliteVectorStore:
 
     def chunks(self) -> Sequence[Chunk]:
         """Return every chunk the store holds, ordered by path then line."""
-        rows = self._db.execute(
-            "SELECT path, text, kind, language, symbol, start_line, end_line "
-            "FROM chunks ORDER BY path, start_line"
-        )
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT path, text, kind, language, symbol, start_line, end_line "
+                "FROM chunks ORDER BY path, start_line"
+            ).fetchall()
         return [self._to_chunk(row) for row in rows]
 
     @staticmethod
@@ -271,14 +288,15 @@ class SqliteVectorStore:
             return []
         query = array.array("f", [value / norm for value in query_vector])
 
-        rows = self._db.execute(
-            "SELECT c.path, c.text, c.kind, c.language, c.symbol, "
-            "       c.start_line, c.end_line, v.data, v.dim "
-            "FROM chunks c "
-            "JOIN vectors v ON v.content_hash = c.content_hash "
-            "WHERE v.model_id = ?",
-            (self._model_id,),
-        )
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT c.path, c.text, c.kind, c.language, c.symbol, "
+                "       c.start_line, c.end_line, v.data, v.dim "
+                "FROM chunks c "
+                "JOIN vectors v ON v.content_hash = c.content_hash "
+                "WHERE v.model_id = ?",
+                (self._model_id,),
+            ).fetchall()
 
         scored: list[tuple[Chunk, float]] = []
         for row in rows:

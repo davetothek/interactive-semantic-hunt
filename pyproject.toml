@@ -64,7 +64,6 @@ addopts = "--cov=ish --cov-report=term-missing --cov-fail-under=90"
 source = ["ish"]
 omit = [
     "*/interfaces/python/*",
-    "*/interfaces/tui/*",
 ]
 
 [tool.coverage.report]

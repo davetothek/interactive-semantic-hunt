@@ -48,7 +48,9 @@ ish "parse a python file" src/
 [0.71] src/ish/adapters/parser/python.py:14-31  method  PythonParser.parse
 ```
 
-Run the interactive picker and open the selection in your editor:
+Run the interactive picker and open the selection in your editor. Type to
+search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `escape`
+to quit:
 
 ```sh
 nvim $(ish -i src/)
