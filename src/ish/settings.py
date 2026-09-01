@@ -90,8 +90,22 @@ class Settings:
     cache_dir: str = field(
         default="",
         metadata=_opt(
-            "Embedding cache directory. Empty uses the platform cache.",
+            "Index directory. Empty uses the platform cache.",
             metavar="DIR",
+        ),
+    )
+    no_cache: bool = field(
+        default=False,
+        metadata=_opt(
+            "Index in memory only, leaving nothing on disk.",
+            action="store_true",
+        ),
+    )
+    reindex: bool = field(
+        default=False,
+        metadata=_opt(
+            "Discard the stored index and build it again.",
+            action="store_true",
         ),
     )
 

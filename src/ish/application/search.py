@@ -1,13 +1,13 @@
-"""Implement the search use case — discover, parse, embed, store, query."""
+"""Implement the search use case — refresh the index, then query it."""
 
 import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+from ish.application.index import Index
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import VectorStore
-from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
@@ -23,34 +23,48 @@ class Search:
         embedder: Embedder,
         vector_store: VectorStore,
         ignored_dirs: Sequence[str] = (),
+        reindex: bool = False,
     ) -> None:
         self._embedder = embedder
         self._vector_store = vector_store
-        # Reuse the scan orchestration for the first step
-        self._scanner = Scan(parsers=parsers, ignored_dirs=ignored_dirs)
+        self._reindex = reindex
+        self._index = Index(
+            parsers=parsers,
+            embedder=embedder,
+            vector_store=vector_store,
+            ignored_dirs=ignored_dirs,
+        )
+
+    def close(self) -> None:
+        """Release the store."""
+        self._vector_store.close()
 
     def build_index(self, root: Path) -> Sequence[Chunk] | None:
-        """Scan the directory and embed all chunks into the vector store.
+        """Bring the index in step with *root*.
 
-        Returns the chunks if indexed, None otherwise.
+        Return the chunks the store now holds, or None when it holds none.
         """
-        log.info("Scanning for source files to build search index...")
-        chunks = self._scanner.run(root)
+        if self._reindex:
+            log.info("Discarding the stored index for %s", root)
+            self._vector_store.clear()
+            self._reindex = False
 
-        chunks = list(chunks)
+        stats = self._index.refresh(root)
+        log.info(
+            "Index ready: %d files, %d chunks written, %d vectors embedded",
+            stats.files_seen,
+            stats.chunks_indexed,
+            stats.vectors_embedded,
+        )
+        chunks = self.all_chunks()
         if not chunks:
             log.warning("No chunks found to index.")
             return None
-
-        log.info("Generating embeddings for %d chunks...", len(chunks))
-        # Format the text with the symbol name to give the embedding model more context
-        texts_to_embed = [f"{c.kind} {c.symbol}:\n{c.text}" for c in chunks]
-        embeddings = self._embedder.embed(texts_to_embed)
-
-        log.info("Storing embeddings in vector store...")
-        self._vector_store.add(chunks, embeddings)
-        log.info("Index built successfully.")
         return chunks
+
+    def all_chunks(self) -> list[Chunk]:
+        """Return every chunk the store holds, for a plain listing."""
+        return list(self._vector_store.chunks())
 
     def search(self, query: str, limit: int = 5) -> Sequence[tuple[Chunk, float]]:
         """Query the vector store with the semantic query."""

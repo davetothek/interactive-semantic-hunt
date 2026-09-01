@@ -1,12 +1,30 @@
 """Test the Pure Python vector store adapter."""
 
+from pathlib import Path
+
 import pytest
 
 from ish.adapters.vector_store.pure_python import (
     PurePythonVectorStore,
     cosine_similarity,
 )
+from ish.application.ports.vector_store import FileStamp
 from ish.domain.chunk import Chunk
+
+STAMP = FileStamp(mtime_ns=1, size=1)
+
+
+def make_chunk(name: str, path: str = "foo.py", line: int = 1) -> Chunk:
+    """Build a dummy chunk for testing."""
+    return Chunk(
+        path=Path(path),
+        text="pass",
+        kind="function",
+        language="python",
+        symbol=name,
+        start_line=line,
+        end_line=line + 1,
+    )
 
 
 class TestCosineSimilarity:
@@ -32,76 +50,103 @@ class TestCosineSimilarity:
             cosine_similarity([1.0, 0.0, 0.0], [1.0, 0.0])
 
 
-class TestPurePythonVectorStore:
-    """Verify storing and searching behavior."""
+@pytest.fixture()
+def store() -> PurePythonVectorStore:
+    return PurePythonVectorStore()
 
-    def _make_chunk(self, name: str) -> Chunk:
-        """Helper to create dummy chunks for testing."""
-        from pathlib import Path
 
-        return Chunk(
-            kind="function",
-            language="python",
-            symbol=name,
-            path=Path("foo.py"),
-            start_line=1,
-            end_line=2,
-            text="pass",
+class TestIndexMaintenance:
+    """Verify the store tracks files, stamps, and vectors."""
+
+    def test_starts_empty(self, store: PurePythonVectorStore) -> None:
+        assert store.file_stamps() == {}
+        assert store.chunks() == []
+
+    def test_set_file_records_stamp_and_chunks(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h1")])
+        assert store.file_stamps() == {Path("a.py"): STAMP}
+        assert [c.symbol for c in store.chunks()] == ["f"]
+
+    def test_set_file_replaces_previous_chunks(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        """Re-indexing a file must not leave the old definitions behind."""
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("old"), "h1")])
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("new"), "h2")])
+        assert [c.symbol for c in store.chunks()] == ["new"]
+
+    def test_missing_vectors_reports_absent_hashes(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        store.add_vectors({"h1": [1.0]})
+        assert store.missing_vectors(["h1", "h2"]) == {"h2"}
+
+    def test_missing_vectors_of_nothing(self, store: PurePythonVectorStore) -> None:
+        assert store.missing_vectors([]) == set()
+
+    def test_remove_files_drops_chunks(self, store: PurePythonVectorStore) -> None:
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h1")])
+        store.remove_files([Path("a.py")])
+        assert store.file_stamps() == {}
+        assert store.chunks() == []
+
+    def test_clear_drops_files_but_keeps_vectors(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        store.add_vectors({"h1": [1.0, 0.0]})
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h1")])
+        store.clear()
+        assert store.file_stamps() == {}
+        assert store.missing_vectors(["h1"]) == set()
+
+    def test_chunks_are_ordered(self, store: PurePythonVectorStore) -> None:
+        store.set_file(
+            Path("b.py"), STAMP, [(make_chunk("second", "b.py", 5), "h2")]
         )
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("first", "a.py", 1), "h1")])
+        assert [c.symbol for c in store.chunks()] == ["first", "second"]
 
-    def test_add_mismatched_lengths(self) -> None:
-        """Confirm it guards against bad input lengths."""
-        store = PurePythonVectorStore()
-        chunk = self._make_chunk("foo")
+    def test_close_is_safe(self, store: PurePythonVectorStore) -> None:
+        store.close()
 
-        with pytest.raises(ValueError, match="Got 1 chunks but 0 vectors"):
-            store.add([chunk], [])
 
-    def test_search_empty_store(self) -> None:
-        """Confirm searching an empty store returns empty results."""
-        store = PurePythonVectorStore()
-        results = store.search([1.0, 0.0])
-        assert results == []
+class TestSearch:
+    """Verify ranking behavior."""
 
-    def test_search_ranking(self) -> None:
-        """Confirm search returns chunks sorted by cosine similarity."""
-        store = PurePythonVectorStore()
+    def test_search_empty_store(self, store: PurePythonVectorStore) -> None:
+        assert store.search([1.0, 0.0]) == []
 
-        c1 = self._make_chunk("perfect_match")
-        c2 = self._make_chunk("orthogonal_match")
-        c3 = self._make_chunk("opposite_match")
-
-        # Add chunks with known vectors
-        store.add(
-            [c1, c2, c3],
-            [
-                [1.0, 0.0],  # Will be score 1.0 against [1.0, 0.0]
-                [0.0, 1.0],  # Will be score 0.0
-                [-1.0, 0.0],  # Will be score -1.0
-            ],
+    def test_ranks_by_similarity(self, store: PurePythonVectorStore) -> None:
+        store.add_vectors({"near": [1.0, 0.0], "far": [0.0, 1.0]})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk("near"), "near"), (make_chunk("far"), "far")],
         )
+        results = store.search([1.0, 0.0], limit=2)
+        assert [c.symbol for c, _ in results] == ["near", "far"]
+        assert results[0][1] > results[1][1]
 
-        results = store.search([1.0, 0.0])
+    def test_respects_limit(self, store: PurePythonVectorStore) -> None:
+        store.add_vectors({f"h{i}": [float(i), 1.0] for i in range(5)})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk(f"s{i}"), f"h{i}") for i in range(5)],
+        )
+        assert len(store.search([1.0, 1.0], limit=2)) == 2
 
-        assert len(results) == 3
-        # Should be ordered by score descending
-        assert results[0][0].symbol == "perfect_match"
-        assert results[0][1] == 1.0
-
-        assert results[1][0].symbol == "orthogonal_match"
-        assert results[1][1] == 0.0
-
-        assert results[2][0].symbol == "opposite_match"
-        assert results[2][1] == -1.0
-
-    def test_search_limit(self) -> None:
-        """Confirm search respects the limit argument."""
-        store = PurePythonVectorStore()
-
-        chunks = [self._make_chunk(f"f{i}") for i in range(10)]
-        vectors = [[1.0, 0.0] for _ in range(10)]
-
-        store.add(chunks, vectors)
-
-        results = store.search([1.0, 0.0], limit=3)
-        assert len(results) == 3
+    def test_chunk_without_a_vector_is_skipped(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        """A chunk whose embedding failed must not break the search."""
+        store.add_vectors({"has": [1.0, 0.0]})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk("has"), "has"), (make_chunk("none"), "absent")],
+        )
+        results = store.search([1.0, 0.0], limit=5)
+        assert [c.symbol for c, _ in results] == ["has"]

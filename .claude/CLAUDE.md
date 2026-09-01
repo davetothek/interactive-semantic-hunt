@@ -58,10 +58,12 @@ interfaces → application → domain
 | Port | `src/ish/application/ports/embedder.py` | `Embedder` Protocol |
 | Port | `src/ish/application/ports/vector_store.py` | `VectorStore` Protocol |
 | Application | `src/ish/application/scan.py` | Scan use case (orchestration) |
-| Application | `src/ish/application/search.py` | Search use case (scan, embed, query) |
+| Application | `src/ish/application/index.py` | Index use case (staleness, orphans, embedding) |
+| Application | `src/ish/application/search.py` | Search use case (refresh, then query) |
 | Adapter | `src/ish/adapters/parser/python.py` | Python AST parser |
 | Adapter | `src/ish/adapters/embedder/` | Embedding backends and disk cache |
-| Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store |
+| Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
+| Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Interface | `src/ish/interfaces/format.py` | Shared CLI/TUI output formatting |
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
@@ -135,6 +137,18 @@ defaults < ~/.config/ish/ish.toml < ./ish.toml (searched upward) < ISH_* env < C
 - An unknown key warns and is skipped. A malformed or unreadable file raises `ConfigError` and exits 1.
 
 `src/ish/__init__.py` must stay free of layer imports — `tests/unit/test_package.py` enforces this in a fresh interpreter.
+
+## Indexing
+
+The index persists in SQLite, one file per scanned tree, under `$XDG_CACHE_HOME/ish/`.
+
+- **Vectors are keyed by `(content_hash, model_id)`, not by path.** A renamed file re-embeds nothing, an edited function re-embeds only itself, and switching models keeps both sets.
+- **Staleness is two-tier.** Compare `(mtime_ns, size)` first; read and hash only what differs. Never hash every file on every query.
+- **Orphans** are pruned to the scanned tree only, so indexing a subdirectory never discards its siblings.
+- `remove_files` and `clear` keep vectors, since restoring a file should cost no embedding. `prune_vectors` sweeps unreferenced ones on demand.
+- Interfaces must call `Search.close()`, which releases the database.
+
+Measured on this repo: a cold index costs ~51s, a warm query ~1.1s. Model load dominates a warm query, so latency work belongs in a resident backend, not in the store.
 
 ## Filesystem discovery
 
