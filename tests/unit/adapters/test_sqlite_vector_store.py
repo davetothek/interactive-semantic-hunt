@@ -318,3 +318,68 @@ class TestPacking:
 
 def test_missing_vectors_of_nothing(store: SqliteVectorStore) -> None:
     assert store.missing_vectors([]) == set()
+
+
+class TestThreadSafety:
+    """Verify the store works from a thread other than the one that opened it.
+
+    The TUI indexes on a worker thread and searches on another, so a
+    connection bound to its creating thread breaks the whole interface.
+    """
+
+    def test_used_from_another_thread(self, store: SqliteVectorStore) -> None:
+        import threading
+
+        failures: list[BaseException] = []
+
+        def work() -> None:
+            try:
+                store.add_vectors({"h": [1.0, 0.0]})
+                store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
+                assert store.chunks()
+                assert store.search([1.0, 0.0], limit=1)
+                assert store.file_stamps()
+                assert store.missing_vectors(["h"]) == set()
+            except BaseException as exc:  # noqa: BLE001
+                failures.append(exc)
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        thread.join()
+
+        assert not failures, f"store failed off-thread: {failures[0]}"
+
+    def test_concurrent_readers_and_writer(self, store: SqliteVectorStore) -> None:
+        """Indexing and searching overlap in the TUI."""
+        import threading
+
+        store.add_vectors({f"h{i}": [1.0, 0.0] for i in range(20)})
+        errors: list[BaseException] = []
+        stop = threading.Event()
+
+        def writer() -> None:
+            try:
+                for i in range(20):
+                    store.set_file(
+                        Path(f"f{i}.py"), STAMP, [(make_chunk(f"s{i}"), f"h{i}")]
+                    )
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+            finally:
+                stop.set()
+
+        def reader() -> None:
+            try:
+                while not stop.is_set():
+                    store.search([1.0, 0.0], limit=3)
+                    store.chunks()
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not errors, f"concurrent access failed: {errors[0]}"

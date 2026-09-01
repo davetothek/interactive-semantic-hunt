@@ -156,6 +156,16 @@ Anything that changes what a stored vector means — the prefixes, or `embed_tex
 
 The default backend is Ollama, reached over HTTP with the standard library. Do not add a client package for it: importing the `ollama` package cost 176ms, which was 71% of a warm query, while the request itself takes ~38ms.
 
+## TUI
+
+`ish -i` is the primary interface. Test it with Textual's pilot in `tests/unit/interfaces/test_tui_app.py`, which drives a real mounted DOM headless. It is not excluded from coverage.
+
+- The query field keeps focus at all times. `up`/`down` and `ctrl+p`/`ctrl+n` move the result highlight through app bindings, and `enter` chooses the highlighted result. Never move focus to the list to navigate it.
+- `ENABLE_COMMAND_PALETTE` is off, because Textual binds `ctrl+p` to the palette and would shadow the previous-result key.
+- Indexing runs on a worker thread and searching on another, so **any store the TUI touches must be safe to use off the thread that opened it**. The SQLite adapter opens with `check_same_thread=False` and guards every statement with one lock. A single-threaded test suite will not catch a regression here; `TestThreadSafety` exists for that.
+
+Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s including the 200 ms debounce.
+
 ## Filesystem discovery
 
 The scan recursively finds files whose suffix a registered parser claims and ignores at minimum: `.git/`, `.venv/`, `venv/`, `__pycache__/`. Directory symlinks are not followed.

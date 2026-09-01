@@ -43,8 +43,18 @@ class IshApp(App[tuple[Chunk, float] | None]):
     }
     """
 
+    # Textual binds ctrl+p to its command palette, which shadows the
+    # fzf-style "previous result" key and adds nothing to a picker.
+    ENABLE_COMMAND_PALETTE = False
+
+    # Keep the query field focused while these keys drive the result list,
+    # so the user never has to leave the input to choose a result.
     BINDINGS = [
         ("escape", "quit", "Quit"),
+        ("down", "move(1)", "Next"),
+        ("up", "move(-1)", "Previous"),
+        ("ctrl+n", "move(1)", "Next"),
+        ("ctrl+p", "move(-1)", "Previous"),
     ]
 
     def __init__(
@@ -176,6 +186,23 @@ class IshApp(App[tuple[Chunk, float] | None]):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Return the selected chunk and exit."""
-        if event.option_index is not None and self._current_results:
-            selected = self._current_results[event.option_index]
-            self.exit(selected)
+        self._choose(event.option_index)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Choose the highlighted result when the user presses enter."""
+        self._choose(self.query_one(OptionList).highlighted)
+
+    def action_move(self, delta: int) -> None:
+        """Move the highlight without taking focus from the query field."""
+        option_list = self.query_one(OptionList)
+        if not option_list.option_count:
+            return
+        current = option_list.highlighted or 0
+        target = max(0, min(option_list.option_count - 1, current + delta))
+        option_list.highlighted = target
+        self._update_preview(target)
+
+    def _choose(self, index: int | None) -> None:
+        """Exit with the result at *index*, if there is one."""
+        if index is not None and 0 <= index < len(self._current_results):
+            self.exit(self._current_results[index])
