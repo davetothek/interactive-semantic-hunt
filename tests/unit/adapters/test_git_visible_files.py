@@ -137,3 +137,33 @@ def test_a_failure_listing_files_is_not_fatal(repo: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(subprocess, "run", selective)
     assert GitVisibleFiles(repo).ignores(repo / "build" / "gen.py") is False
+
+
+class TestScanningASubdirectory:
+    """Verify the answers hold when the scan root is below the repository.
+
+    `git ls-files` reports paths relative to the working directory, so a
+    subdirectory scan resolved every path against the wrong base and
+    reported the whole tree as ignored.
+    """
+
+    @pytest.fixture()
+    def nested(self, repo: Path) -> Path:
+        package = repo / "pkg"
+        package.mkdir()
+        (package / "real.py").write_text("pass\n")
+        (package / "junk.log").write_text("noise\n")
+        git(repo, "add", "pkg/real.py")
+        git(repo, "commit", "-qm", "nested")
+        return package
+
+    def test_tracked_file_below_the_root_is_visible(self, nested: Path) -> None:
+        assert GitVisibleFiles(nested).ignores(nested / "real.py") is False
+
+    def test_ignored_file_below_the_root_is_ignored(self, nested: Path) -> None:
+        assert GitVisibleFiles(nested).ignores(nested / "junk.log") is True
+
+    def test_a_subdirectory_scan_sees_its_files(self, nested: Path) -> None:
+        """The whole point: the scan must not report everything ignored."""
+        visible = GitVisibleFiles(nested)
+        assert visible.ignores(nested / "real.py") is False
