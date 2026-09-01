@@ -92,6 +92,26 @@ _VERBOSITY_MAP: dict[int, int] = {
 }
 
 
+class _StderrHandler(logging.StreamHandler):
+    """Write to whatever ``sys.stderr`` is when the record arrives.
+
+    A handler that captures the stream at construction keeps writing to
+    the original one after it is replaced, which loses output whenever
+    stderr is redirected.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(sys.stderr)
+
+    @property
+    def stream(self):  # type: ignore[override]
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, value: object) -> None:
+        """Ignore the stream the base class tries to pin."""
+
+
 def resolve_color(mode: str) -> bool:
     """Decide whether to color log output.
 
@@ -112,7 +132,7 @@ def setup_logging(
     # Reset the delta reference so each invocation measures from its own start.
     _DeltaFormatter._first = None
 
-    handler = logging.StreamHandler(sys.stderr)
+    handler = _StderrHandler()
     handler.setFormatter(_DeltaFormatter(use_color=color))
 
     root = logging.getLogger("ish")

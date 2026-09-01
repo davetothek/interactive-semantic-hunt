@@ -7,12 +7,11 @@ files that no longer exist.
 
 import hashlib
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from ish.application.ports.embedder import Embedder
-from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import FileStamp, VectorStore
 from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
@@ -71,21 +70,11 @@ class Index:
     def __init__(
         self,
         *,
-        parsers: Sequence[Parser],
+        scan: Scan,
         embedder: Embedder,
         vector_store: VectorStore,
-        ignored_dirs: Sequence[str] = (),
-        include: Sequence[str] = (),
-        exclude: Sequence[str] = (),
-        ignored_by: Callable[[Path], bool] | None = None,
     ) -> None:
-        self._scanner = Scan(
-            parsers=parsers,
-            ignored_dirs=ignored_dirs,
-            include=include,
-            exclude=exclude,
-            ignored_by=ignored_by,
-        )
+        self._scanner = scan
         self._embedder = embedder
         self._store = vector_store
 

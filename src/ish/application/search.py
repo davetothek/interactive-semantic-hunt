@@ -7,8 +7,8 @@ from pathlib import Path
 
 from ish.application.index import Index
 from ish.application.ports.embedder import Embedder
-from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import VectorStore
+from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
@@ -48,31 +48,22 @@ class Search:
     def __init__(
         self,
         *,
-        parsers: Sequence[Parser],
+        scan: Scan,
         embedder: Embedder,
         vector_store: VectorStore,
-        ignored_dirs: Sequence[str] = (),
-        include: Sequence[str] = (),
-        exclude: Sequence[str] = (),
-        ignored_by: Callable[[Path], bool] | None = None,
         reindex: bool = False,
         hybrid: bool = True,
-        lang: Sequence[str] = (),
-        under: str = "",
+        keep: Callable[[Chunk], bool] | None = None,
     ) -> None:
         self._embedder = embedder
         self._vector_store = vector_store
         self._reindex = reindex
         self._hybrid = hybrid
-        self._keep = build_result_filter(lang, under)
+        self._keep = keep
         self._index = Index(
-            parsers=parsers,
+            scan=scan,
             embedder=embedder,
             vector_store=vector_store,
-            ignored_dirs=ignored_dirs,
-            include=include,
-            exclude=exclude,
-            ignored_by=ignored_by,
         )
 
     def close(self) -> None:

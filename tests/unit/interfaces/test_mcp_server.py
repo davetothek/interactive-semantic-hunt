@@ -253,3 +253,27 @@ class TestInterrupt:
 
         monkeypatch.setattr(module.Server, "serve", interrupted)
         assert module.main([]) == 0
+
+
+class TestListingRespectsTheResultFilter:
+    """Verify the listing tool narrows the same way a search does."""
+
+    def test_language_filter_applies(self, project: Path, tmp_path_factory) -> None:
+        from dataclasses import replace
+
+        (project / "guide.md").write_text("# Guide\n\nText.\n")
+
+        settings = replace(
+            Settings(),
+            no_cache=True,
+            cache_dir=str(tmp_path_factory.mktemp("idx")),
+            lang=("markdown",),
+        )
+        tools = IshTools(settings, project)
+        try:
+            out = tools.list_chunks({"path": str(project)})
+        finally:
+            tools.close()
+
+        assert "Guide" in out
+        assert "load_config" not in out
