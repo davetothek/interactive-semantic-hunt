@@ -12,7 +12,7 @@ from textual.widgets.option_list import Option
 
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
-from ish.interfaces.format import format_selection
+from ish.interfaces.format import format_selection, symbol_of
 
 
 class IshApp(App[tuple[Chunk, float] | None]):
@@ -120,7 +120,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         option_list.clear_options()
 
         for chunk, score in results:
-            locator = f"{format_selection(chunk)}  {chunk.symbol}"
+            locator = f"{format_selection(chunk)}  {symbol_of(chunk)}"
             label = f"[{score:.2f}] {locator}" if show_scores else locator
             option_list.add_option(Option(label))
 

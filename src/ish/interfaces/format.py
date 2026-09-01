@@ -17,8 +17,13 @@ def format_chunk_line(chunk: Chunk) -> str:
     """Format one chunk in the plain scan output format."""
     return (
         f"{display_path(chunk.path)}:{chunk.start_line}-{chunk.end_line}  "
-        f"{chunk.kind}  {chunk.symbol}"
+        f"{chunk.kind}  {symbol_of(chunk)}"
     )
+
+
+def symbol_of(chunk: Chunk) -> str:
+    """Return the chunk's name, or a marker when it has none."""
+    return chunk.symbol or "<anonymous>"
 
 
 def format_result_line(chunk: Chunk, score: float) -> str:

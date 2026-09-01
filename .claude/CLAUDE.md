@@ -61,6 +61,8 @@ interfaces → application → domain
 | Application | `src/ish/application/index.py` | Index use case (staleness, orphans, embedding) |
 | Application | `src/ish/application/search.py` | Search use case (refresh, then query) |
 | Adapter | `src/ish/adapters/parser/python.py` | Python AST parser |
+| Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
+| Adapter | `src/ish/adapters/parser/tree_sitter.py` | Tree-sitter parser, C and C++ flavor |
 | Adapter | `src/ish/adapters/embedder/` | Embedding backends and disk cache |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
@@ -119,6 +121,12 @@ src/foo.py:35-42  method    ConfigLoader.load
 
 - `EMBEDDERS` — embedding backends by CLI name. Register new backends here; the `--embedder` choices derive from this dict.
 - `PARSERS` — source parsers by language name. Register new parsers (Tree-sitter, AsciiDoc, ...) here; file discovery derives its suffix set from each parser's `suffixes`, and the `languages` option selects which are built.
+
+Registered languages: `python`, `markdown`, `asciidoc`, `cpp`.
+
+- **Markdown and AsciiDoc share one parser.** They differ only in the heading marker and the suffixes, so `MarkupParser` is built twice with different arguments. A section runs to the next heading, its symbol is the heading path, and fenced blocks are skipped so `# comment` in a code sample is not a heading.
+- **C and C++ share one parser**, registered as `cpp`, which owns `.h`. The C++ grammar reads nearly all C, and splitting them would leave every header ambiguous. A type is only a definition when it has a body, so `struct Node *next` does not become a second chunk. An attached doc comment travels with the definition, for the same reason decorators do.
+- Tree-sitter is error tolerant. A partly broken file returns whatever parsed; `ParseError` is raised only when nothing did.
 
 Adding a language is one new module under `adapters/parser/` plus one `PARSERS` entry. It must not require a change to `Scan`, the `Parser` port, or any interface. A parser declares `language` (its identity, stamped onto every chunk it emits) and `suffixes`. Two parsers claiming one suffix is a hard error; resolve it with the `languages` option.
 

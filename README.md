@@ -4,6 +4,9 @@ Semantic search for code, inspired by `fzf`. Point `ish` at a directory. It pars
 each source file into named chunks, embeds them with a local model, and ranks them
 against your query. Everything runs on your machine.
 
+Languages: Python, C and C++, Markdown, and AsciiDoc. Documentation is indexed
+beside the code it describes, so one query searches both.
+
 ## Install
 
 ```sh

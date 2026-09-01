@@ -12,6 +12,9 @@ dependencies = [
     "huggingface-hub>=0.23.0",
     "llama-cpp-python>=0.2.75",
     "textual>=0.70.0",
+    "tree-sitter>=0.26.0",
+    "tree-sitter-c>=0.24.2",
+    "tree-sitter-cpp>=0.23.4",
 ]
 
 [project.optional-dependencies]
