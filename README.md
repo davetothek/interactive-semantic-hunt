@@ -72,6 +72,22 @@ nvim $(ish -i src/)
 
 Logs go to stderr, so you can pipe stdout safely.
 
+## Use from an agent
+
+`ish-mcp` serves the same search over the Model Context Protocol, so an agent
+can query the index directly. Add it to a project with `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "ish": { "command": "uv", "args": ["run", "ish-mcp"] }
+  }
+}
+```
+
+It offers `search_code`, `list_chunks`, and `index_status`. The server stays
+resident, so a query costs about 58 ms rather than a process start.
+
 ## Index
 
 The index persists in SQLite under `$XDG_CACHE_HOME/ish/`, one file per scanned

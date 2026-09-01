@@ -68,6 +68,8 @@ interfaces → application → domain
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |
+| Interface | `src/ish/interfaces/mcp/protocol.py` | MCP stdio JSON-RPC transport |
+| Interface | `src/ish/interfaces/mcp/server.py` | MCP tools (`ish-mcp`) |
 | Interface | `src/ish/interfaces/python/api.py` | Python API (future) |
 
 
@@ -165,6 +167,17 @@ The default backend is Ollama, reached over HTTP with the standard library. Do n
 - Indexing runs on a worker thread and searching on another, so **any store the TUI touches must be safe to use off the thread that opened it**. The SQLite adapter opens with `check_same_thread=False` and guards every statement with one lock. A single-threaded test suite will not catch a regression here; `TestThreadSafety` exists for that.
 
 Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s including the 200 ms debounce.
+
+## MCP
+
+`ish-mcp` speaks the Model Context Protocol on stdio. It is the third interface, wired through `bootstrap` exactly like the CLI and TUI, and it offers `search_code`, `list_chunks`, and `index_status`.
+
+- **Nothing may write to stdout except a protocol message.** stdout is the transport; logging goes to stderr. A test asserts every emitted line parses as JSON.
+- The protocol layer is hand-written on the standard library. MCP over stdio is newline-delimited JSON-RPC 2.0, which is small enough not to justify a dependency that pulls in pydantic and starlette.
+- The server is long-lived, so it holds one `Search` per scanned root and keeps the index warm. That is the whole latency advantage: a query costs a search, not a process start.
+- A tool failure is reported through `isError`, not a JSON-RPC error, so the host can show the model what went wrong.
+
+Measured: ~58 ms per `search_code` call, against ~190 ms for the same query through the CLI.
 
 ## Filesystem discovery
 
