@@ -58,6 +58,16 @@ class Scan:
         log.info("Scan complete: extracted %d chunks", len(chunks))
         return chunks
 
+    def accepts(self, path: Path) -> bool:
+        """Return True when this scan would index *path*.
+
+        Answer without touching the filesystem, so a caller can ask
+        about a file it cannot currently read.
+        """
+        if path.suffix not in self._by_suffix:
+            return False
+        return not any(part in self._ignored_dirs for part in path.parts)
+
     def parse_file(self, path: Path) -> Sequence[Chunk] | None:
         """Read and parse one discovered file.
 
