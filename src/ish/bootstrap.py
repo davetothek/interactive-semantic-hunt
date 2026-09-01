@@ -187,17 +187,14 @@ def build_scan(settings: Settings, root: Path) -> Scan:
 
 def build_search(settings: Settings, root: Path) -> Search:
     """Wire the full search use case for one scanned tree."""
+    from ish.application.search import build_result_filter
+
     embedder = build_embedder(settings)
     return Search(
-        parsers=build_parsers(settings),
+        scan=build_scan(settings, root),
         embedder=embedder,
         vector_store=build_vector_store(settings, root, embedder),
-        ignored_dirs=settings.ignore,
-        include=settings.include,
-        exclude=settings.exclude,
-        ignored_by=build_ignored_by(settings, root),
         reindex=settings.reindex,
         hybrid=not settings.no_hybrid,
-        lang=settings.lang,
-        under=settings.under,
+        keep=build_result_filter(settings.lang, settings.under),
     )

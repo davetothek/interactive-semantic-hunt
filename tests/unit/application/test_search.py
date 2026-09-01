@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from ish.adapters.vector_store.pure_python import PurePythonVectorStore
-from ish.application.search import Search
+from ish.application.scan import Scan
+from ish.application.search import Search, build_result_filter
 from ish.domain.chunk import Chunk
 
 
@@ -62,11 +63,12 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def build(embedder: CountingEmbedder, store=None) -> Search:
+def build(embedder: CountingEmbedder, store=None, **options) -> Search:
     return Search(
-        parsers=[WordParser()],
+        scan=Scan(parsers=[WordParser()]),
         embedder=embedder,
         vector_store=store or PurePythonVectorStore(),
+        **options,
     )
 
 
@@ -185,12 +187,7 @@ class TestIncrementalBehavior:
         build(embedder, store).build_index(project)
         before = embedder.texts_embedded
 
-        forced = Search(
-            parsers=[WordParser()],
-            embedder=embedder,
-            vector_store=store,
-            reindex=True,
-        )
+        forced = build(embedder, store, reindex=True)
         chunks = forced.build_index(project)
 
         assert chunks is not None
@@ -213,12 +210,9 @@ class TestResultFilters:
         return tmp_path
 
     def _search(self, embedder, mixed: Path, **kwargs) -> Search:
-        return Search(
-            parsers=[WordParser()],
-            embedder=embedder,
-            vector_store=PurePythonVectorStore(),
-            **kwargs,
-        )
+        return build(embedder, keep=build_result_filter(
+            kwargs.pop("lang", ()), kwargs.pop("under", "")
+        ), **kwargs)
 
     def test_no_filter_returns_everything(
         self, embedder: CountingEmbedder, mixed: Path
@@ -261,11 +255,8 @@ class TestResultFilters:
     ) -> None:
         """A narrowed query must leave every file indexed."""
         store = PurePythonVectorStore()
-        Search(
-            parsers=[WordParser()],
-            embedder=embedder,
-            vector_store=store,
-            under="/docs/",
+        build(
+            embedder, store, keep=build_result_filter((), "/docs/")
         ).build_index(mixed)
 
         assert len(store.file_stamps()) == 2

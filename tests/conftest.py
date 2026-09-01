@@ -6,6 +6,18 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def configured_logging():
+    """Send ish log records to stderr for every test.
+
+    A test that asserts on a warning must not depend on some earlier
+    test having configured logging first.
+    """
+    from ish.interfaces.cli.log import setup_logging
+
+    setup_logging(verbosity=0, color=False)
+
+
+@pytest.fixture(autouse=True)
 def isolated_config(tmp_path_factory, monkeypatch):
     """Keep every test free of the developer's own ish configuration.
 

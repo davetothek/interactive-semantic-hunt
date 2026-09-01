@@ -8,6 +8,7 @@ import pytest
 from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 from ish.application.index import Index, IndexStats, content_hash, embed_text
 from ish.application.ports.parser import ParseError
+from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
 
 
@@ -57,8 +58,12 @@ def store() -> PurePythonVectorStore:
     return PurePythonVectorStore()
 
 
-def build(embedder, store) -> Index:
-    return Index(parsers=[LineParser()], embedder=embedder, vector_store=store)
+def build(embedder, store, **scan_options) -> Index:
+    return Index(
+        scan=Scan(parsers=[LineParser()], **scan_options),
+        embedder=embedder,
+        vector_store=store,
+    )
 
 
 class TestEmbedText:
@@ -283,17 +288,10 @@ class TestPruningIsConservative:
         build_dir.mkdir()
         (build_dir / "gen.py").write_text("beta\n")
 
-        Index(
-            parsers=[LineParser()], embedder=embedder, vector_store=store
-        ).refresh(tmp_path)
+        build(embedder, store).refresh(tmp_path)
         assert len(store.file_stamps()) == 2
 
-        narrowed = Index(
-            parsers=[LineParser()],
-            embedder=embedder,
-            vector_store=store,
-            ignored_dirs=["build"],
-        )
+        narrowed = build(embedder, store, ignored_dirs=["build"])
         stats = narrowed.refresh(tmp_path)
 
         assert stats.files_removed == 1

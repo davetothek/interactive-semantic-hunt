@@ -92,3 +92,15 @@ def test_resolve_color_modes(monkeypatch):
     assert resolve_color("auto") is True
     monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
     assert resolve_color("auto") is False
+
+
+def test_handler_follows_a_replaced_stderr(capsys):
+    """A handler pinned to the original stream would lose the record."""
+    import logging
+
+    from ish.interfaces.cli.log import setup_logging
+
+    setup_logging(verbosity=0, color=False)
+    logging.getLogger("ish.test").warning("visible message")
+
+    assert "visible message" in capsys.readouterr().err
