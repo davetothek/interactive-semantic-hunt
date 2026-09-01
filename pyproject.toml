@@ -29,6 +29,7 @@ dev = [
 
 [project.scripts]
 ish = "ish.interfaces.cli.main:main"
+ish-mcp = "ish.interfaces.mcp.server:main"
 
 [tool.uv]
 package = true
