@@ -150,3 +150,62 @@ class TestSearch:
         )
         results = store.search([1.0, 0.0], limit=5)
         assert [c.symbol for c, _ in results] == ["has"]
+
+
+class TestHybridSearch:
+    """Verify the in-memory store offers the same hybrid contract."""
+
+    def _seed(self, store: PurePythonVectorStore) -> None:
+        """All vectors identical, so only the lexical half can order them."""
+        names = ["prune_vectors", "load_config", "cosine_similarity"]
+        store.add_vectors({n: [0.0, 1.0] for n in names})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [
+                (
+                    Chunk(
+                        path=Path("a.py"),
+                        text=f"def {n}(): pass",
+                        kind="function",
+                        language="python",
+                        symbol=n,
+                        start_line=i,
+                        end_line=i,
+                    ),
+                    n,
+                )
+                for i, n in enumerate(names, 1)
+            ],
+        )
+
+    def test_identifier_query_finds_its_symbol(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        self._seed(store)
+        results = store.search([0.0, 1.0], "prune_vectors", limit=1)
+        assert results[0][0].symbol == "prune_vectors"
+
+    def test_prose_query_keeps_the_vector_order(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        self._seed(store)
+        plain = store.search([0.0, 1.0], "", limit=3)
+        prose = store.search([0.0, 1.0], "read a settings file", limit=3)
+        assert [c.symbol for c, _ in prose] == [c.symbol for c, _ in plain]
+
+    def test_word_inside_a_name_matches(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        self._seed(store)
+        assert any(c.symbol == "cosine_similarity" for c in store._lexical("cosine", 5))
+
+    def test_no_lexical_match_falls_back(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        self._seed(store)
+        results = store.search([0.0, 1.0], "absent_identifier", limit=3)
+        assert len(results) == 3
+
+    def test_lexical_of_nothing(self, store: PurePythonVectorStore) -> None:
+        assert store._lexical("", limit=5) == []

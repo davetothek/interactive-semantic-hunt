@@ -16,6 +16,7 @@ single connection safe to share.
 import array
 import logging
 import math
+import re
 import sqlite3
 import threading
 from collections.abc import Collection, Mapping, Sequence
@@ -23,7 +24,14 @@ from operator import mul
 from pathlib import Path
 from typing import Any
 
-from ish.application.ports.vector_store import FileStamp
+from ish.application.ports.vector_store import (
+    LEXICAL_WEIGHT,
+    SEMANTIC_WEIGHT,
+    FileStamp,
+    fuse_rankings,
+    is_code_like,
+    split_identifier,
+)
 from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
@@ -31,7 +39,9 @@ log = logging.getLogger(__name__)
 # Bump when the schema changes, and also when anything changes the meaning
 # of a stored vector, such as the task prefixes the embedder applies. An
 # index built by an older version is discarded rather than mixed.
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
+
+_WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 
 _SCHEMA = """
 CREATE TABLE meta (
@@ -52,6 +62,7 @@ CREATE TABLE chunks (
     kind         TEXT NOT NULL,
     language     TEXT NOT NULL,
     symbol       TEXT,
+    terms        TEXT NOT NULL,
     start_line   INTEGER NOT NULL,
     end_line     INTEGER NOT NULL,
     text         TEXT NOT NULL
@@ -59,6 +70,27 @@ CREATE TABLE chunks (
 
 CREATE INDEX chunks_by_path ON chunks(path);
 CREATE INDEX chunks_by_hash ON chunks(content_hash);
+
+-- Lexical half of the search. Keep the content in chunks and mirror it
+-- here, so an exact identifier is findable when a vector misses it.
+-- porter stems prose; unicode61 splits on the underscore, so a snake
+-- case name matches both whole and in parts.
+CREATE VIRTUAL TABLE chunks_fts USING fts5(
+    symbol, terms, text,
+    content='chunks',
+    content_rowid='id',
+    tokenize='porter unicode61'
+);
+
+CREATE TRIGGER chunks_fts_insert AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, symbol, terms, text)
+    VALUES (new.id, new.symbol, new.terms, new.text);
+END;
+
+CREATE TRIGGER chunks_fts_delete AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, symbol, terms, text)
+    VALUES ('delete', old.id, old.symbol, old.terms, old.text);
+END;
 
 CREATE TABLE vectors (
     content_hash TEXT NOT NULL,
@@ -83,6 +115,16 @@ def _unpack(blob: bytes) -> array.array:
     values = array.array("f")
     values.frombytes(blob)
     return values
+
+
+def _fts_query(text: str) -> str:
+    """Turn user text into a safe FTS5 match expression.
+
+    Quote every word and join them with OR, so punctuation in the query
+    cannot be read as FTS5 syntax and any single word can still match.
+    """
+    words = _WORD_RE.findall(text)
+    return " OR ".join(f'"{word}"' for word in words)
 
 
 class SqliteVectorStore:
@@ -119,7 +161,9 @@ class SqliteVectorStore:
             if row and row[0] == SCHEMA_VERSION:
                 return
             log.info("Index schema changed. Rebuilding %s", self._path)
-            for table in ("vectors", "chunks", "files", "meta"):
+            for trigger in ("chunks_fts_insert", "chunks_fts_delete"):
+                self._db.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+            for table in ("chunks_fts", "vectors", "chunks", "files", "meta"):
                 self._db.execute(f"DROP TABLE IF EXISTS {table}")
 
         self._db.executescript(_SCHEMA)
@@ -155,9 +199,7 @@ class SqliteVectorStore:
     def file_stamps(self) -> Mapping[Path, FileStamp]:
         """Return the stamp held for every indexed file."""
         with self._lock:
-            rows = self._db.execute(
-                "SELECT path, mtime_ns, size FROM files"
-            ).fetchall()
+            rows = self._db.execute("SELECT path, mtime_ns, size FROM files").fetchall()
         return {
             Path(path): FileStamp(mtime_ns=mtime_ns, size=size)
             for path, mtime_ns, size in rows
@@ -213,8 +255,9 @@ class SqliteVectorStore:
             )
             self._db.executemany(
                 "INSERT INTO chunks "
-                "(path, content_hash, kind, language, symbol, start_line, end_line, "
-                "text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(path, content_hash, kind, language, symbol, terms, "
+                "start_line, end_line, text) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         text,
@@ -222,6 +265,7 @@ class SqliteVectorStore:
                         chunk.kind,
                         chunk.language,
                         chunk.symbol,
+                        split_identifier(chunk.symbol or ""),
                         chunk.start_line,
                         chunk.end_line,
                         chunk.text,
@@ -280,9 +324,55 @@ class SqliteVectorStore:
         )
 
     def search(
-        self, query_vector: Sequence[float], limit: int = 5
+        self,
+        query_vector: Sequence[float],
+        query_text: str = "",
+        limit: int = 5,
     ) -> Sequence[tuple[Chunk, float]]:
-        """Find the *limit* most similar chunks to the *query_vector*."""
+        """Rank chunks by vector similarity, fused with a lexical order."""
+        scored = self._semantic(query_vector)
+        if not query_text or not is_code_like(query_text):
+            return scored[:limit]
+
+        lexical = self._lexical(query_text, limit=max(limit * 4, 20))
+        if not lexical:
+            return scored[:limit]
+
+        # Fuse over a wider slice than the caller asked for, so a chunk
+        # ranked well only by the lexical half can still surface.
+        candidates = [chunk for chunk, _ in scored[: max(limit * 4, 20)]]
+        by_chunk = dict(scored)
+        fused = fuse_rankings(
+            [(candidates, SEMANTIC_WEIGHT), (lexical, LEXICAL_WEIGHT)], limit
+        )
+        return [(chunk, by_chunk.get(chunk, 0.0)) for chunk in fused]
+
+    def _lexical(self, query_text: str, limit: int) -> list[Chunk]:
+        """Return chunks matching *query_text*, best first, by BM25."""
+        match = _fts_query(query_text)
+        if not match:
+            return []
+
+        try:
+            with self._lock:
+                rows = self._db.execute(
+                    "SELECT c.path, c.text, c.kind, c.language, c.symbol, "
+                    "       c.start_line, c.end_line "
+                    "FROM chunks_fts f JOIN chunks c ON c.id = f.rowid "
+                    "WHERE chunks_fts MATCH ? "
+                    "ORDER BY bm25(chunks_fts, 4.0, 2.0, 1.0) "
+                    "LIMIT ?",
+                    (match, limit),
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            # A malformed match expression must not fail the whole query.
+            log.debug("Lexical search skipped: %s", exc)
+            return []
+
+        return [self._to_chunk(row) for row in rows]
+
+    def _semantic(self, query_vector: Sequence[float]) -> list[tuple[Chunk, float]]:
+        """Score every stored chunk against the query vector."""
         norm = math.sqrt(sum(value * value for value in query_vector))
         if norm == 0.0:
             return []
@@ -310,4 +400,4 @@ class SqliteVectorStore:
             scored.append((self._to_chunk(row), score))
 
         scored.sort(key=lambda pair: pair[1], reverse=True)
-        return scored[:limit]
+        return scored

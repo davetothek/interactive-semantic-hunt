@@ -6,11 +6,27 @@ no trace on disk.
 """
 
 import math
+import re
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
-from ish.application.ports.vector_store import FileStamp
+from ish.application.ports.vector_store import (
+    LEXICAL_WEIGHT,
+    SEMANTIC_WEIGHT,
+    FileStamp,
+    fuse_rankings,
+    is_code_like,
+    split_identifier,
+)
 from ish.domain.chunk import Chunk
+
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _words(text: str) -> set[str]:
+    """Split text into lowercase words, names included."""
+    joined = f"{text} {split_identifier(text)}"
+    return {word.lower() for word in _WORD_RE.findall(joined)}
 
 
 def cosine_similarity(v1: Sequence[float], v2: Sequence[float]) -> float:
@@ -89,9 +105,12 @@ class PurePythonVectorStore:
         return found
 
     def search(
-        self, query_vector: Sequence[float], limit: int = 5
+        self,
+        query_vector: Sequence[float],
+        query_text: str = "",
+        limit: int = 5,
     ) -> Sequence[tuple[Chunk, float]]:
-        """Find the *limit* most similar chunks to the *query_vector*."""
+        """Rank chunks by vector similarity, fused with a lexical order."""
         results: list[tuple[Chunk, float]] = []
         for entries in self._chunks.values():
             for chunk, digest in entries:
@@ -101,4 +120,33 @@ class PurePythonVectorStore:
                 results.append((chunk, cosine_similarity(query_vector, vector)))
 
         results.sort(key=lambda pair: pair[1], reverse=True)
-        return results[:limit]
+        if not query_text or not is_code_like(query_text):
+            return results[:limit]
+
+        lexical = self._lexical(query_text, limit=max(limit * 4, 20))
+        if not lexical:
+            return results[:limit]
+
+        candidates = [chunk for chunk, _ in results[: max(limit * 4, 20)]]
+        by_chunk = dict(results)
+        fused = fuse_rankings(
+            [(candidates, SEMANTIC_WEIGHT), (lexical, LEXICAL_WEIGHT)], limit
+        )
+        return [(chunk, by_chunk.get(chunk, 0.0)) for chunk in fused]
+
+    def _lexical(self, query_text: str, limit: int) -> list[Chunk]:
+        """Rank chunks by how many query words they contain."""
+        wanted = _words(query_text)
+        if not wanted:
+            return []
+
+        scored: list[tuple[int, Chunk]] = []
+        for entries in self._chunks.values():
+            for chunk, _digest in entries:
+                haystack = _words(f"{chunk.symbol or ''} {chunk.text}")
+                overlap = len(wanted & haystack)
+                if overlap:
+                    scored.append((overlap, chunk))
+
+        scored.sort(key=lambda pair: -pair[0])
+        return [chunk for _score, chunk in scored[:limit]]

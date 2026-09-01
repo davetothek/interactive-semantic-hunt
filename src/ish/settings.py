@@ -94,6 +94,13 @@ class Settings:
             metavar="DIR",
         ),
     )
+    no_hybrid: bool = field(
+        default=False,
+        metadata=_opt(
+            "Rank by vector similarity alone, with no lexical matching.",
+            action="store_true",
+        ),
+    )
     no_cache: bool = field(
         default=False,
         metadata=_opt(

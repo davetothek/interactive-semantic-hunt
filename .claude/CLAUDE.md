@@ -179,6 +179,22 @@ Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s inc
 
 Measured: ~58 ms per `search_code` call, against ~190 ms for the same query through the CLI.
 
+## Ranking
+
+Search fuses two rankings with weighted Reciprocal Rank Fusion: the vector order, and a BM25 order from an FTS5 table kept in step with `chunks` by triggers.
+
+**The lexical half runs only when `is_code_like(query)` says the query names something** — an underscore, an all-capital word, or mixed case. This gate is not a nicety. Measured on this repo over 20 queries:
+
+| ranking | conceptual | identifier | combined |
+|---|---|---|---|
+| vector only | 90% / MRR .925 | 90% / MRR .910 | 90% / MRR .918 |
+| hybrid, always on | 80% / MRR .883 | 90% / MRR .950 | 85% / MRR .917 |
+| hybrid, gated (shipped) | 90% / MRR .925 | 90% / MRR .950 | 90% / MRR .938 |
+
+Fusing a lexical order into a plain description **costs 10 points of top-1 accuracy**, because the vector ranking is already the better signal there. Weighting alone did not recover it; a 3:1 sweep still lost 5 points. Do not remove the gate, and re-run the benchmark before changing `SEMANTIC_WEIGHT`.
+
+The reported score stays the cosine similarity, so the number means the same thing whether or not the lexical half ran. `--no-hybrid` turns the lexical half off entirely.
+
 ## Filesystem discovery
 
 The scan recursively finds files whose suffix a registered parser claims and ignores at minimum: `.git/`, `.venv/`, `venv/`, `__pycache__/`. Directory symlinks are not followed.

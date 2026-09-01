@@ -383,3 +383,122 @@ class TestThreadSafety:
             t.join(timeout=30)
 
         assert not errors, f"concurrent access failed: {errors[0]}"
+
+
+class TestHybridSearch:
+    """Verify the lexical half and how it fuses with the vector half."""
+
+    def _seed(self, store: SqliteVectorStore) -> None:
+        """Store three chunks whose vectors all point away from the query."""
+        entries = {
+            "prune_vectors": "def prune_vectors(self): delete unreferenced rows",
+            "load_config": "def load_config(): read the settings file",
+            "cosine_similarity": "def cosine_similarity(a, b): dot over norms",
+        }
+        store.add_vectors({name: [0.0, 1.0] for name in entries})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [
+                (
+                    Chunk(
+                        path=Path("a.py"),
+                        text=body,
+                        kind="function",
+                        language="python",
+                        symbol=name,
+                        start_line=n,
+                        end_line=n,
+                    ),
+                    name,
+                )
+                for n, (name, body) in enumerate(entries.items(), 1)
+            ],
+        )
+
+    def test_identifier_query_finds_its_symbol(
+        self, store: SqliteVectorStore
+    ) -> None:
+        """Every vector is identical, so only the lexical half can rank."""
+        self._seed(store)
+        results = store.search([0.0, 1.0], "prune_vectors", limit=1)
+        assert results[0][0].symbol == "prune_vectors"
+
+    def test_prose_query_does_not_use_the_lexical_half(
+        self, store: SqliteVectorStore
+    ) -> None:
+        """The gate stays closed, so ordering is the vector ordering."""
+        self._seed(store)
+        plain = store.search([0.0, 1.0], "", limit=3)
+        prose = store.search([0.0, 1.0], "read the settings file", limit=3)
+        assert [c.symbol for c, _ in prose] == [c.symbol for c, _ in plain]
+
+    def test_score_stays_the_cosine(self, store: SqliteVectorStore) -> None:
+        """A fused rank must not change what the number means."""
+        self._seed(store)
+        (_chunk, score), = store.search([0.0, 1.0], "prune_vectors", limit=1)
+        assert score == pytest.approx(1.0, abs=1e-6)
+
+    def test_word_inside_a_name_matches(self, store: SqliteVectorStore) -> None:
+        """The split terms column makes part of an identifier findable."""
+        self._seed(store)
+        found = store._lexical("cosine", limit=5)
+        assert any(c.symbol == "cosine_similarity" for c in found)
+
+    def test_punctuation_cannot_break_the_match(
+        self, store: SqliteVectorStore
+    ) -> None:
+        """FTS5 syntax in a query must not raise."""
+        self._seed(store)
+        assert store.search([0.0, 1.0], 'prune_vectors AND "((', limit=1)
+
+    def test_lexical_of_nothing(self, store: SqliteVectorStore) -> None:
+        assert store._lexical("", limit=5) == []
+        assert store._lexical("!!!", limit=5) == []
+
+    def test_removed_file_leaves_the_lexical_index(
+        self, store: SqliteVectorStore
+    ) -> None:
+        """The delete trigger must keep FTS in step with the chunks."""
+        self._seed(store)
+        store.remove_files([Path("a.py")])
+        assert store._lexical("prune_vectors", limit=5) == []
+
+    def test_replaced_file_leaves_no_stale_lexical_rows(
+        self, store: SqliteVectorStore
+    ) -> None:
+        self._seed(store)
+        store.add_vectors({"fresh": [0.0, 1.0]})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk("fresh_symbol"), "fresh")],
+        )
+        assert store._lexical("prune_vectors", limit=5) == []
+        assert store._lexical("fresh_symbol", limit=5)
+
+
+def test_lexical_degrades_when_the_index_is_unusable(
+    store: SqliteVectorStore,
+) -> None:
+    """An FTS5 failure must fall back to vector ranking, not fail the query."""
+    store.add_vectors({"h": [1.0, 0.0]})
+    store.set_file(Path("a.py"), STAMP, [(make_chunk("prune_vectors"), "h")])
+
+    # Simulate a damaged index by removing the lexical table underneath.
+    store._db.execute("DROP TABLE chunks_fts")
+
+    assert store._lexical("prune_vectors", limit=5) == []
+    # The vector half still answers.
+    assert store.search([1.0, 0.0], "prune_vectors", limit=1)
+
+
+def test_code_query_with_no_lexical_hit_uses_the_vector_order(
+    store: SqliteVectorStore,
+) -> None:
+    """An identifier absent from the index must not empty the results."""
+    store.add_vectors({"h": [1.0, 0.0]})
+    store.set_file(Path("a.py"), STAMP, [(make_chunk("present"), "h")])
+
+    results = store.search([1.0, 0.0], "absent_identifier", limit=3)
+    assert [c.symbol for c, _ in results] == ["present"]
