@@ -89,9 +89,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         search_input.focus()
 
         self.query_one("#preview-pane", Static).update("Index built. Ready to search!")
-        self._populate_results(
-            [(c, 0.0) for c in self._all_chunks], show_scores=False
-        )
+        self._populate_results([(c, 0.0) for c in self._all_chunks], show_scores=False)
 
     def _on_index_error(self, error: str) -> None:
         """Called if background indexing fails."""

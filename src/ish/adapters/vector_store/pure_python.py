@@ -1,8 +1,15 @@
-"""Pure Python adapter for the VectorStore protocol."""
+"""Pure Python adapter for the VectorStore protocol.
+
+Hold everything in memory. Nothing survives the process, so every run
+re-indexes from scratch. Use it for tests and for a run that must leave
+no trace on disk.
+"""
 
 import math
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
+from pathlib import Path
 
+from ish.application.ports.vector_store import FileStamp
 from ish.domain.chunk import Chunk
 
 
@@ -24,35 +31,74 @@ def cosine_similarity(v1: Sequence[float], v2: Sequence[float]) -> float:
 
 
 class PurePythonVectorStore:
-    """In-memory exact nearest-neighbor search using Pure Python math.
+    """In-memory exact nearest-neighbor search using pure Python math.
 
-    Highly efficient for MVP-sized repositories (e.g. < 10,000 chunks)
-    with zero external dependencies.
+    Exact for MVP-sized repositories with no external dependency.
     """
 
     def __init__(self) -> None:
-        self._data: list[tuple[Chunk, Sequence[float]]] = []
+        self._stamps: dict[Path, FileStamp] = {}
+        self._chunks: dict[Path, list[tuple[Chunk, str]]] = {}
+        self._vectors: dict[str, Sequence[float]] = {}
 
-    def add(self, chunks: Sequence[Chunk], vectors: Sequence[Sequence[float]]) -> None:
-        """Store the given chunks and their corresponding vectors."""
-        if len(chunks) != len(vectors):
-            raise ValueError(f"Got {len(chunks)} chunks but {len(vectors)} vectors")
+    # ------------------------------------------------------------------
+    # Index maintenance
+    # ------------------------------------------------------------------
 
-        for chunk, vector in zip(chunks, vectors, strict=True):
-            self._data.append((chunk, vector))
+    def file_stamps(self) -> Mapping[Path, FileStamp]:
+        """Return the stamp held for every indexed file."""
+        return dict(self._stamps)
+
+    def missing_vectors(self, hashes: Collection[str]) -> set[str]:
+        """Return the subset of *hashes* that has no stored vector."""
+        return {digest for digest in hashes if digest not in self._vectors}
+
+    def add_vectors(self, vectors: Mapping[str, Sequence[float]]) -> None:
+        """Store vectors by content hash."""
+        self._vectors.update(vectors)
+
+    def set_file(
+        self, path: Path, stamp: FileStamp, chunks: Sequence[tuple[Chunk, str]]
+    ) -> None:
+        """Replace everything held for *path*."""
+        self._stamps[path] = stamp
+        self._chunks[path] = list(chunks)
+
+    def remove_files(self, paths: Collection[Path]) -> None:
+        """Drop everything held for *paths*."""
+        for path in paths:
+            self._stamps.pop(path, None)
+            self._chunks.pop(path, None)
+
+    def clear(self) -> None:
+        """Discard every indexed file. Keep the vectors, which are reusable."""
+        self._stamps.clear()
+        self._chunks.clear()
+
+    def close(self) -> None:
+        """Release nothing. The store lives only in memory."""
+
+    # ------------------------------------------------------------------
+    # Query
+    # ------------------------------------------------------------------
+
+    def chunks(self) -> Sequence[Chunk]:
+        """Return every chunk the store holds, ordered by path then line."""
+        found = [chunk for entries in self._chunks.values() for chunk, _ in entries]
+        found.sort(key=lambda c: (str(c.path), c.start_line))
+        return found
 
     def search(
         self, query_vector: Sequence[float], limit: int = 5
     ) -> Sequence[tuple[Chunk, float]]:
         """Find the *limit* most similar chunks to the *query_vector*."""
-        if not self._data:
-            return []
-
         results: list[tuple[Chunk, float]] = []
-        for chunk, vector in self._data:
-            score = cosine_similarity(query_vector, vector)
-            results.append((chunk, score))
+        for entries in self._chunks.values():
+            for chunk, digest in entries:
+                vector = self._vectors.get(digest)
+                if vector is None:
+                    continue
+                results.append((chunk, cosine_similarity(query_vector, vector)))
 
-        # Sort descending (highest similarity first)
-        results.sort(key=lambda x: x[1], reverse=True)
+        results.sort(key=lambda pair: pair[1], reverse=True)
         return results[:limit]

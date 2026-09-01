@@ -5,7 +5,10 @@ this module. It is the only module allowed to import both application
 code and concrete adapters.
 """
 
+import hashlib
+import os
 from collections.abc import Callable
+from pathlib import Path
 
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
@@ -82,9 +85,7 @@ def build_parsers(settings: Settings) -> list[Parser]:
 
 
 def build_embedder(settings: Settings) -> Embedder:
-    """Construct the selected embedding backend, wrapped in a disk cache."""
-    from ish.adapters.embedder.cached import CachedEmbedder
-
+    """Construct the selected embedding backend."""
     try:
         factory = EMBEDDERS[settings.embedder]
     except KeyError:
@@ -93,7 +94,53 @@ def build_embedder(settings: Settings) -> Embedder:
             f"Unknown embedder {settings.embedder!r}. Valid backends: {valid}"
         ) from None
 
-    return CachedEmbedder(factory(settings.model), cache_dir=settings.cache_dir or None)
+    return factory(settings.model)
+
+
+def model_id(settings: Settings, embedder: Embedder) -> str:
+    """Identify the model that produced a vector.
+
+    Read the identity the adapter reports, so changing a backend default
+    invalidates the vectors it produced.
+    """
+    name = getattr(embedder, "model_name", "") or "default"
+    return f"{settings.embedder}:{name}"
+
+
+def index_dir(settings: Settings) -> Path:
+    """Return the directory that holds the persistent indexes."""
+    if settings.cache_dir:
+        return Path(settings.cache_dir)
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "ish"
+
+
+def index_path(settings: Settings, root: Path) -> Path:
+    """Return the index file for one scanned tree.
+
+    Name it after the tree so separate projects never share an index, and
+    keep the basename readable for anyone inspecting the cache.
+    """
+    resolved = root.resolve()
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
+    return index_dir(settings) / f"{resolved.name}-{digest}.db"
+
+
+def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
+    """Build the vector store for one scanned tree.
+
+    Persist to disk unless the caller asked for a run that leaves none.
+    """
+    if settings.no_cache:
+        from ish.adapters.vector_store.pure_python import PurePythonVectorStore
+
+        return PurePythonVectorStore()
+
+    from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+    return SqliteVectorStore(
+        index_path(settings, root), model_id=model_id(settings, embedder)
+    )
 
 
 def build_scan(settings: Settings) -> Scan:
@@ -101,13 +148,13 @@ def build_scan(settings: Settings) -> Scan:
     return Scan(parsers=build_parsers(settings), ignored_dirs=settings.ignore)
 
 
-def build_search(settings: Settings) -> Search:
-    """Wire the full search use case for the selected embedder."""
-    from ish.adapters.vector_store.pure_python import PurePythonVectorStore
-
+def build_search(settings: Settings, root: Path) -> Search:
+    """Wire the full search use case for one scanned tree."""
+    embedder = build_embedder(settings)
     return Search(
         parsers=build_parsers(settings),
-        embedder=build_embedder(settings),
-        vector_store=PurePythonVectorStore(),
+        embedder=embedder,
+        vector_store=build_vector_store(settings, root, embedder),
         ignored_dirs=settings.ignore,
+        reindex=settings.reindex,
     )

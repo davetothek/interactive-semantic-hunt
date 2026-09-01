@@ -20,10 +20,13 @@ log = logging.getLogger("ish.cli")
 
 def _run_query(args: CliArgs) -> int:
     """Search for the query and print the ranked results."""
-    search_use_case = bootstrap.build_search(args.settings)
-    results = search_use_case.run(args.path, args.query, limit=args.settings.limit)
-    for chunk, score in results:
-        sys.stdout.write(f"{format_result_line(chunk, score)}\n")
+    search_use_case = bootstrap.build_search(args.settings, args.path)
+    try:
+        results = search_use_case.run(args.path, args.query, limit=args.settings.limit)
+        for chunk, score in results:
+            sys.stdout.write(f"{format_result_line(chunk, score)}\n")
+    finally:
+        search_use_case.close()
     return 0
 
 
@@ -35,9 +38,12 @@ def _run_tui(args: CliArgs) -> int:
     """
     from ish.interfaces.tui.app import IshApp
 
-    search_use_case = bootstrap.build_search(args.settings)
-    app = IshApp(search_use_case, args.path, limit=args.settings.tui_limit)
-    selected = app.run()
+    search_use_case = bootstrap.build_search(args.settings, args.path)
+    try:
+        app = IshApp(search_use_case, args.path, limit=args.settings.tui_limit)
+        selected = app.run()
+    finally:
+        search_use_case.close()
 
     if selected:
         chunk, _score = selected

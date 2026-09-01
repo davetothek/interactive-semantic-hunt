@@ -47,32 +47,41 @@ class Scan:
         the next file.
         """
         chunks: list[Chunk] = []
-        files = self._discover(root)
+        files = self.discover(root)
         log.info("Found %d source files to scan under %s", len(files), root)
 
         for source_file in files:
-            log.debug("Parsing %s", source_file)
-            try:
-                source = source_file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                log.warning("Cannot read %s: %s", source_file, exc)
-                continue
-            parser = self._by_suffix[source_file.suffix]
-            try:
-                chunks.extend(parser.parse(source_file, source))
-            except ParseError as exc:
-                log.warning("Cannot parse %s: %s", source_file, exc)
-                continue
+            parsed = self.parse_file(source_file)
+            if parsed is not None:
+                chunks.extend(parsed)
 
         log.info("Scan complete: extracted %d chunks", len(chunks))
         return chunks
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    def parse_file(self, path: Path) -> Sequence[Chunk] | None:
+        """Read and parse one discovered file.
 
-    def _discover(self, root: Path) -> list[Path]:
-        """Recursively find parseable files, skipping ignored directories."""
+        Return None when the file cannot be read or parsed, after
+        reporting the reason. The caller skips it and continues.
+        """
+        log.debug("Parsing %s", path)
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            log.warning("Cannot read %s: %s", path, exc)
+            return None
+
+        try:
+            return self._by_suffix[path.suffix].parse(path, source)
+        except ParseError as exc:
+            log.warning("Cannot parse %s: %s", path, exc)
+            return None
+
+    def discover(self, root: Path) -> list[Path]:
+        """Recursively find parseable files, skipping ignored directories.
+
+        Return the discovered paths sorted, so results stay stable.
+        """
         if root.is_file():
             return [root] if root.suffix in self._by_suffix else []
 

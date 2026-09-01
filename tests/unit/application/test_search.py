@@ -1,121 +1,194 @@
-"""Test the Search orchestration use case."""
+"""Test the Search orchestration use case against real collaborators."""
 
+from collections.abc import Sequence
 from pathlib import Path
-from unittest.mock import MagicMock
 
+import pytest
+
+from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 
 
-class TestSearchUseCase:
-    """Verify the orchestration logic of the Search use case."""
+class WordParser:
+    """Emit one chunk per line, so a file's chunks are easy to predict."""
 
-    def _make_chunk(self, symbol: str) -> Chunk:
-        return Chunk(
-            kind="function",
-            language="python",
-            symbol=symbol,
-            path=Path("foo.py"),
-            start_line=1,
-            end_line=2,
-            text="def foo(): pass",
-        )
+    language = "python"
+    suffixes = frozenset({".py"})
 
-    def test_search_orchestration(self, monkeypatch) -> None:
-        """Confirm it calls all ports in the correct sequence."""
-        mock_parser = MagicMock()
-        mock_embedder = MagicMock()
-        mock_store = MagicMock()
-
-        # We also want to mock Scan so we don't hit the filesystem
-        mock_scan_class = MagicMock()
-        mock_scan_instance = MagicMock()
-        mock_scan_class.return_value = mock_scan_instance
-        monkeypatch.setattr("ish.application.search.Scan", mock_scan_class)
-
-        # Setup mock returns
-        c1 = self._make_chunk("foo")
-        mock_scan_instance.run.return_value = [c1]
-
-        # embed() is called twice: once for the chunk, once for the query
-        mock_embedder.embed.side_effect = [
-            [[0.1, 0.2]],  # Return for the chunk
-            [[0.9, 0.9]],  # Return for the query
+    def parse(self, path: Path, source: str) -> Sequence[Chunk]:
+        return [
+            Chunk(
+                path=path,
+                text=line,
+                kind="function",
+                language="python",
+                symbol=line.strip(),
+                start_line=n,
+                end_line=n,
+            )
+            for n, line in enumerate(source.splitlines(), 1)
+            if line.strip()
         ]
 
-        mock_store.search.return_value = [(c1, 0.85)]
 
-        # Run the use case
-        search = Search(
-            parsers=[mock_parser],
-            embedder=mock_embedder,
-            vector_store=mock_store,
+class CountingEmbedder:
+    """Return a deterministic vector and record every batch it was given."""
+
+    def __init__(self) -> None:
+        self.batches: list[list[str]] = []
+
+    @property
+    def texts_embedded(self) -> int:
+        return sum(len(batch) for batch in self.batches)
+
+    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        self.batches.append(list(texts))
+        return [[float(len(t)), float(t.count("a"))] for t in texts]
+
+
+@pytest.fixture()
+def embedder() -> CountingEmbedder:
+    return CountingEmbedder()
+
+
+@pytest.fixture()
+def project(tmp_path: Path) -> Path:
+    (tmp_path / "a.py").write_text("alpha\nbeta\n")
+    return tmp_path
+
+
+def build(embedder: CountingEmbedder, store=None) -> Search:
+    return Search(
+        parsers=[WordParser()],
+        embedder=embedder,
+        vector_store=store or PurePythonVectorStore(),
+    )
+
+
+class TestSearchUseCase:
+    """Verify indexing and querying."""
+
+    def test_indexes_every_chunk(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        search = build(embedder)
+        chunks = search.build_index(project)
+        assert chunks is not None
+        assert {c.symbol for c in chunks} == {"alpha", "beta"}
+
+    def test_empty_tree_returns_none(
+        self, embedder: CountingEmbedder, tmp_path: Path
+    ) -> None:
+        assert build(embedder).build_index(tmp_path) is None
+        assert embedder.texts_embedded == 0
+
+    def test_query_returns_ranked_results(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        search = build(embedder)
+        search.build_index(project)
+        results = search.search("alpha", limit=2)
+        assert results
+        assert all(isinstance(score, float) for _, score in results)
+
+    def test_run_indexes_then_queries(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        results = build(embedder).run(project, "alpha", limit=1)
+        assert len(results) == 1
+
+    def test_run_on_empty_tree(
+        self, embedder: CountingEmbedder, tmp_path: Path
+    ) -> None:
+        assert build(embedder).run(tmp_path, "anything") == []
+
+    def test_query_embed_failure_returns_nothing(
+        self, project: Path
+    ) -> None:
+        """A backend that returns no vector must not raise."""
+
+        class SilentEmbedder(CountingEmbedder):
+            def embed(self, texts):
+                super().embed(texts)
+                return [] if texts == ["q"] else [[1.0, 0.0]] * len(texts)
+
+        search = build(SilentEmbedder())
+        search.build_index(project)
+        assert search.search("q") == []
+
+    def test_close_releases_the_store(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        search = build(embedder)
+        search.build_index(project)
+        search.close()
+
+
+class TestIncrementalBehavior:
+    """Verify that a second run reuses the first run's work."""
+
+    def test_unchanged_tree_embeds_nothing_again(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        store = PurePythonVectorStore()
+        build(embedder, store).build_index(project)
+        first = embedder.texts_embedded
+
+        build(embedder, store).build_index(project)
+        assert embedder.texts_embedded == first
+
+    def test_edited_file_embeds_only_the_new_chunk(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        store = PurePythonVectorStore()
+        build(embedder, store).build_index(project)
+        before = embedder.texts_embedded
+
+        (project / "a.py").write_text("alpha\ngamma\n")
+        build(embedder, store).build_index(project)
+
+        # "alpha" is unchanged, so only "gamma" needs a vector.
+        assert embedder.texts_embedded == before + 1
+
+    def test_deleted_file_is_dropped(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        store = PurePythonVectorStore()
+        build(embedder, store).build_index(project)
+        (project / "a.py").unlink()
+
+        assert build(embedder, store).build_index(project) is None
+        assert store.file_stamps() == {}
+
+    def test_renamed_file_reuses_vectors(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        """Content-keyed vectors survive a move."""
+        store = PurePythonVectorStore()
+        build(embedder, store).build_index(project)
+        before = embedder.texts_embedded
+
+        (project / "a.py").rename(project / "b.py")
+        build(embedder, store).build_index(project)
+
+        assert embedder.texts_embedded == before
+        assert set(store.file_stamps()) == {project / "b.py"}
+
+    def test_reindex_rebuilds_without_re_embedding(
+        self, embedder: CountingEmbedder, project: Path
+    ) -> None:
+        store = PurePythonVectorStore()
+        build(embedder, store).build_index(project)
+        before = embedder.texts_embedded
+
+        forced = Search(
+            parsers=[WordParser()],
+            embedder=embedder,
+            vector_store=store,
+            reindex=True,
         )
-        results = search.run(Path("dummy"), "my query", limit=3)
+        chunks = forced.build_index(project)
 
-        # Verify Scan was initialized with the parser and run with the path
-        mock_scan_class.assert_called_once_with(parsers=[mock_parser], ignored_dirs=())
-        mock_scan_instance.run.assert_called_once_with(Path("dummy"))
-
-        # Verify the chunk was formatted and embedded
-        assert mock_embedder.embed.call_count == 2
-        mock_embedder.embed.assert_any_call(["function foo:\ndef foo(): pass"])
-        mock_embedder.embed.assert_any_call(["my query"])
-
-        # Verify the store was populated and queried
-        mock_store.add.assert_called_once_with([c1], [[0.1, 0.2]])
-        mock_store.search.assert_called_once_with([0.9, 0.9], limit=3)
-
-        # Verify the final result
-        assert results == [(c1, 0.85)]
-
-    def test_search_no_chunks(self, monkeypatch) -> None:
-        """Confirm it aborts early if no chunks are found."""
-        mock_parser = MagicMock()
-        mock_embedder = MagicMock()
-        mock_store = MagicMock()
-
-        mock_scan_class = MagicMock()
-        mock_scan_instance = MagicMock()
-        mock_scan_class.return_value = mock_scan_instance
-        monkeypatch.setattr("ish.application.search.Scan", mock_scan_class)
-
-        # Scanner returns empty list
-        mock_scan_instance.run.return_value = []
-
-        search = Search(
-            parsers=[mock_parser],
-            embedder=mock_embedder,
-            vector_store=mock_store,
-        )
-        results = search.run(Path("dummy"), "my query")
-
-        assert results == []
-        mock_embedder.embed.assert_not_called()
-        mock_store.add.assert_not_called()
-
-    def test_search_query_embed_fails(self, monkeypatch) -> None:
-        """Confirm it handles when the query fails to embed (returns empty)."""
-        mock_parser = MagicMock()
-        mock_embedder = MagicMock()
-        mock_store = MagicMock()
-
-        mock_scan_class = MagicMock()
-        mock_scan_instance = MagicMock()
-        mock_scan_class.return_value = mock_scan_instance
-        monkeypatch.setattr("ish.application.search.Scan", mock_scan_class)
-
-        mock_scan_instance.run.return_value = [self._make_chunk("foo")]
-
-        # embed() returns vectors for the chunk, but empty for the query
-        mock_embedder.embed.side_effect = [[[0.1, 0.2]], []]
-
-        search = Search(
-            parsers=[mock_parser],
-            embedder=mock_embedder,
-            vector_store=mock_store,
-        )
-        results = search.run(Path("dummy"), "my query")
-
-        assert results == []
-        mock_store.search.assert_not_called()
+        assert chunks is not None
+        assert embedder.texts_embedded == before
