@@ -59,10 +59,31 @@ def _python_parser() -> Parser:
     return PythonParser()
 
 
+def _markdown_parser() -> Parser:
+    from ish.adapters.parser.markup import MarkupParser
+
+    return MarkupParser.markdown()
+
+
+def _asciidoc_parser() -> Parser:
+    from ish.adapters.parser.markup import MarkupParser
+
+    return MarkupParser.asciidoc()
+
+
+def _cpp_parser() -> Parser:
+    from ish.adapters.parser.tree_sitter import cpp_parser
+
+    return cpp_parser()
+
+
 # Source parsers by language name. Each factory imports lazily so an unused
 # grammar adds no startup cost. Register new parsers here only.
 PARSERS: dict[str, Callable[[], Parser]] = {
     "python": _python_parser,
+    "markdown": _markdown_parser,
+    "asciidoc": _asciidoc_parser,
+    "cpp": _cpp_parser,
 }
 
 
