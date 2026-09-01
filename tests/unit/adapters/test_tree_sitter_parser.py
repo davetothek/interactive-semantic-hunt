@@ -49,9 +49,9 @@ class TestFunctions:
     def test_pointer_return(self, parser) -> None:
         assert symbols(parser, "char *dup(const char *s) { return 0; }\n") == ["dup"]
 
-    def test_declaration_without_a_body_is_skipped(self, parser) -> None:
-        """A prototype carries no implementation to search."""
-        assert symbols(parser, "int later(int a);\n") == []
+    def test_prototype_is_chunked(self, parser) -> None:
+        """A header is mostly declarations, so they are its content."""
+        assert symbols(parser, "int later(int a);\n") == ["later"]
 
     def test_line_numbers(self, parser) -> None:
         chunks = parser.parse(SRC, "\n\nint f(void) {\n  return 1;\n}\n")
@@ -167,3 +167,91 @@ class TestUnicode:
         chunk = parser.parse(SRC, source)[0]
         assert chunk.symbol == "after"
         assert chunk.start_line == 1
+
+
+class TestDeclarations:
+    """Verify header content, which is declarations rather than bodies."""
+
+    HEADER = (
+        "/* Compute a checksum. */\n"          # 1
+        "unsigned checksum(const char *d);\n"  # 2
+        "\n"                                   # 3
+        "class Widget {\n"                     # 4
+        "public:\n"                            # 5
+        "    /// Draw the widget.\n"           # 6
+        "    void draw(Surface& s) const;\n"   # 7
+        "    int width() const;\n"             # 8
+        "    virtual ~Widget();\n"             # 9
+        "private:\n"                           # 10
+        "    int width_;\n"                    # 11
+        "    Surface* surface_;\n"             # 12
+        "};\n"                                 # 13
+    )
+
+    def test_a_header_is_more_than_one_chunk(self, parser) -> None:
+        """The whole class as a single blob is not searchable enough."""
+        assert len(parser.parse(Path("w.h"), self.HEADER)) == 5
+
+    def test_free_function_declaration(self, parser) -> None:
+        assert "checksum" in symbols(parser, self.HEADER, Path("w.h"))
+
+    def test_method_declarations_are_qualified(self, parser) -> None:
+        found = symbols(parser, self.HEADER, Path("w.h"))
+        assert "Widget::draw" in found
+        assert "Widget::width" in found
+
+    def test_destructor_is_found(self, parser) -> None:
+        assert "Widget::~Widget" in symbols(parser, self.HEADER, Path("w.h"))
+
+    def test_data_members_are_not_chunked(self, parser) -> None:
+        """A field carries nothing to search for."""
+        found = symbols(parser, self.HEADER, Path("w.h"))
+        assert "Widget::width_" not in found
+        assert "Widget::surface_" not in found
+
+    def test_declaration_keeps_its_doc_comment(self, parser) -> None:
+        chunks = parser.parse(Path("w.h"), self.HEADER)
+        draw = next(c for c in chunks if c.symbol == "Widget::draw")
+        assert draw.start_line == 6
+        assert "Draw the widget" in draw.text
+
+    def test_declaration_kind(self, parser) -> None:
+        chunks = parser.parse(Path("w.h"), self.HEADER)
+        draw = next(c for c in chunks if c.symbol == "Widget::draw")
+        assert draw.kind == "declaration"
+
+    def test_a_variable_is_not_a_declaration_chunk(self, parser) -> None:
+        assert symbols(parser, "static int counter = 0;\n") == []
+
+
+class TestRedundantDeclarations:
+    """Verify that a file does not list a function twice."""
+
+    def test_prototype_yields_to_its_definition(self, parser) -> None:
+        source = "int gcd(int a, int b);\n\nint gcd(int a, int b) { return a; }\n"
+        chunks = parser.parse(Path("m.c"), source)
+        assert [c.symbol for c in chunks] == ["gcd"]
+        assert chunks[0].kind == "function"
+
+    def test_an_undefined_prototype_survives(self, parser) -> None:
+        source = "void defined(void) {}\nvoid only_declared(void);\n"
+        assert symbols(parser, source, Path("m.c")) == ["defined", "only_declared"]
+
+    def test_declaration_in_a_header_is_kept(self, parser) -> None:
+        """Nothing defines it here, so it is the only record of the API."""
+        assert symbols(parser, "void api(void);\n", Path("a.h")) == ["api"]
+
+
+class TestMethodKind:
+    """Verify that a definition inside a class reads as a method."""
+
+    SOURCE = "class A {\npublic:\n  void run() { }\n  bool done() const;\n};\n"
+
+    def test_inline_definition_is_a_method(self, parser) -> None:
+        chunks = parser.parse(Path("a.hpp"), self.SOURCE)
+        run = next(c for c in chunks if c.symbol == "A::run")
+        assert run.kind == "method"
+
+    def test_free_function_stays_a_function(self, parser) -> None:
+        chunks = parser.parse(SRC, "void loose(void) {}\n")
+        assert chunks[0].kind == "function"
