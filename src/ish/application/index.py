@@ -18,9 +18,12 @@ from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
-# Store vectors this many at a time. A first index of a large tree runs
-# for minutes, so keep the work already done when a request fails.
-EMBED_BATCH = 256
+# Store vectors this many at a time, matching one request to the backend
+# so every round trip is persisted. A first index of a large tree runs
+# for many minutes, and a coarser batch loses more when it is stopped:
+# indexing a real project at one document per second wrote nothing at
+# all before the first batch of 256 completed.
+EMBED_BATCH = 64
 
 
 def _still_on_disk(path: Path) -> bool:
