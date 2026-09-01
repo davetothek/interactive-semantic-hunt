@@ -174,6 +174,7 @@ def test_interactive_tui(
     # Simulate user selecting a chunk
     c1 = Chunk(
         kind="function",
+        language="python",
         symbol="dummy",
         path=Path("dummy.py"),
         start_line=10,

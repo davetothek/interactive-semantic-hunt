@@ -67,6 +67,14 @@ class Settings:
         default=DEFAULT_IGNORE,
         metadata=_opt("Directory names to skip.", nargs="+", metavar="DIR"),
     )
+    languages: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Languages to parse. Empty enables every registered parser.",
+            nargs="+",
+            metavar="LANG",
+        ),
+    )
     color: str = field(
         default="auto",
         metadata=_opt("Control log color.", choices=["auto", "always", "never"]),

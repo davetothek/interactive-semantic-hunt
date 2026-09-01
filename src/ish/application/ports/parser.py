@@ -25,6 +25,9 @@ class Parser(Protocol):
     Any concrete parser adapter must satisfy this interface.
     """
 
+    language: str
+    """Name of the language this parser reads. Identifies the parser."""
+
     suffixes: frozenset[str]
     """File suffixes this parser accepts, with the leading dot."""
 

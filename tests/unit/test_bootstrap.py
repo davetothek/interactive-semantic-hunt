@@ -62,3 +62,42 @@ class TestModelOverride:
         )
         bootstrap.EMBEDDERS["st"]("all-mpnet-base-v2")
         fake.assert_called_once_with(model_name="all-mpnet-base-v2")
+
+
+class TestLanguageSelection:
+    """Verify that the languages option chooses which parsers are built."""
+
+    def test_empty_enables_every_parser(self) -> None:
+        from dataclasses import replace
+
+        built = bootstrap.build_parsers(replace(Settings(), languages=()))
+        assert {p.language for p in built} == set(bootstrap.PARSERS)
+
+    def test_named_language_is_the_only_one_built(self) -> None:
+        from dataclasses import replace
+
+        built = bootstrap.build_parsers(replace(Settings(), languages=("python",)))
+        assert [p.language for p in built] == ["python"]
+
+    def test_unknown_language_is_reported(self) -> None:
+        from dataclasses import replace
+
+        with pytest.raises(ValueError, match="Unknown language"):
+            bootstrap.build_parsers(replace(Settings(), languages=("cobol",)))
+
+    def test_every_registered_parser_satisfies_the_port(self) -> None:
+        """Guard the registry itself, so a new entry cannot be malformed."""
+        for name, factory in bootstrap.PARSERS.items():
+            parser = factory()
+            assert isinstance(parser, Parser), name
+            assert parser.language == name, name
+            assert parser.suffixes, name
+            assert all(s.startswith(".") for s in parser.suffixes), name
+
+    def test_registered_parsers_claim_distinct_suffixes(self) -> None:
+        """The default registry must build without a suffix conflict."""
+        seen: dict[str, str] = {}
+        for name, factory in bootstrap.PARSERS.items():
+            for suffix in factory().suffixes:
+                assert suffix not in seen, f"{name} and {seen[suffix]} share {suffix}"
+                seen[suffix] = name

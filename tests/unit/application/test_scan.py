@@ -13,6 +13,7 @@ from ish.domain.chunk import Chunk
 class FakeParser:
     """Return one chunk per file, recording every call for assertions."""
 
+    language = "python"
     suffixes = frozenset({".py"})
 
     def __init__(self) -> None:
@@ -26,6 +27,7 @@ class FakeParser:
                 path=path,
                 text=source,
                 kind="module",
+                language="python",
                 symbol=None,
                 start_line=1,
                 end_line=source.count("\n") or 1,
@@ -215,6 +217,7 @@ class TestParserRouting:
     class AdocParser(FakeParser):
         """Claim ``.adoc`` files."""
 
+        language = "asciidoc"
         suffixes = frozenset({".adoc"})
 
     def test_routes_by_suffix(self, tmp_path: Path) -> None:
@@ -231,9 +234,21 @@ class TestParserRouting:
         assert [p.name for p, _ in adoc_parser.calls] == ["spec.adoc"]
         assert len(chunks) == 2
 
-    def test_duplicate_suffix_rejected(self) -> None:
-        with pytest.raises(ValueError, match="'.py'"):
-            Scan(parsers=[FakeParser(), FakeParser()])
+    def test_duplicate_suffix_names_both_languages(self) -> None:
+        """The error must say which parsers clash and how to resolve it."""
+
+        class Header(FakeParser):
+            language = "cpp"
+            suffixes = frozenset({".py"})
+
+        with pytest.raises(ValueError) as exc_info:
+            Scan(parsers=[FakeParser(), Header()])
+
+        message = str(exc_info.value)
+        assert "'python'" in message
+        assert "'cpp'" in message
+        assert "'.py'" in message
+        assert "languages" in message
 
 
 class TestSymlinkedDirectory:
