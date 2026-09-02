@@ -115,8 +115,10 @@ ish "how is exposure set" project    # searches both
 Searching a parent never rewrites an index below it. Pass `--no-federate` to use
 only the index of the exact path.
 
-The index stores the source text it indexed. It is a plain file under your home
-directory with no encryption of its own.
+The index records where each chunk is — its path, line range, kind, and name —
+together with the embedding vector. It does not store the source, so it is not a
+second readable copy of your code. Previews are read from the file, which also
+means they always show the current content.
 
 ## Configure
 

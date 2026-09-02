@@ -4,6 +4,11 @@ Hold chunks and their embeddings in one file, so a repeated query reuses
 the work of the last one. Key vectors by content hash and model, so a
 renamed file or an untouched definition never needs embedding again.
 
+Store where a chunk is, never what it says. An index that held the
+source would be a second readable copy of it, outside whatever protects
+the repository, and outliving it. Read the text from the file when a
+preview needs it.
+
 Store every vector at unit length. Cosine similarity is then a dot
 product, which halves the work in the search loop.
 
@@ -39,7 +44,7 @@ log = logging.getLogger(__name__)
 # Bump when the schema changes, and also when anything changes the meaning
 # of a stored vector, such as the task prefixes the embedder applies. An
 # index built by an older version is discarded rather than mixed.
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 
@@ -64,8 +69,7 @@ CREATE TABLE chunks (
     symbol       TEXT,
     terms        TEXT NOT NULL,
     start_line   INTEGER NOT NULL,
-    end_line     INTEGER NOT NULL,
-    text         TEXT NOT NULL
+    end_line     INTEGER NOT NULL
 );
 
 CREATE INDEX chunks_by_path ON chunks(path);
@@ -75,21 +79,24 @@ CREATE INDEX chunks_by_hash ON chunks(content_hash);
 -- here, so an exact identifier is findable when a vector misses it.
 -- porter stems prose; unicode61 splits on the underscore, so a snake
 -- case name matches both whole and in parts.
+-- Lexical matching over the names only. The body is not stored, and
+-- the lexical half runs only for a query that names something, which
+-- matches on these columns anyway.
 CREATE VIRTUAL TABLE chunks_fts USING fts5(
-    symbol, terms, text,
+    symbol, terms,
     content='chunks',
     content_rowid='id',
     tokenize='porter unicode61'
 );
 
 CREATE TRIGGER chunks_fts_insert AFTER INSERT ON chunks BEGIN
-    INSERT INTO chunks_fts(rowid, symbol, terms, text)
-    VALUES (new.id, new.symbol, new.terms, new.text);
+    INSERT INTO chunks_fts(rowid, symbol, terms)
+    VALUES (new.id, new.symbol, new.terms);
 END;
 
 CREATE TRIGGER chunks_fts_delete AFTER DELETE ON chunks BEGIN
-    INSERT INTO chunks_fts(chunks_fts, rowid, symbol, terms, text)
-    VALUES ('delete', old.id, old.symbol, old.terms, old.text);
+    INSERT INTO chunks_fts(chunks_fts, rowid, symbol, terms)
+    VALUES ('delete', old.id, old.symbol, old.terms);
 END;
 
 CREATE TABLE vectors (
@@ -169,6 +176,11 @@ class SqliteVectorStore:
                 self._db.execute(f"DROP TRIGGER IF EXISTS {trigger}")
             for table in ("chunks_fts", "vectors", "chunks", "files", "meta"):
                 self._db.execute(f"DROP TABLE IF EXISTS {table}")
+            self._db.commit()
+            # Dropping a table frees its pages but leaves what they held.
+            # An index built before the source stopped being stored would
+            # keep that source readable on disk for ever.
+            self._db.execute("VACUUM")
 
         self._db.executescript(_SCHEMA)
         self._db.execute(
@@ -290,8 +302,8 @@ class SqliteVectorStore:
             self._db.executemany(
                 "INSERT INTO chunks "
                 "(path, content_hash, kind, language, symbol, terms, "
-                "start_line, end_line, text) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "start_line, end_line) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         text,
@@ -302,7 +314,6 @@ class SqliteVectorStore:
                         split_identifier(chunk.symbol or ""),
                         chunk.start_line,
                         chunk.end_line,
-                        chunk.text,
                     )
                     for chunk, digest in chunks
                 ],
@@ -338,18 +349,22 @@ class SqliteVectorStore:
         """Return every chunk the store holds, ordered by path then line."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT path, text, kind, language, symbol, start_line, end_line "
+                "SELECT path, kind, language, symbol, start_line, end_line "
                 "FROM chunks ORDER BY path, start_line"
             ).fetchall()
         return [self._to_chunk(row) for row in rows]
 
     @staticmethod
     def _to_chunk(row: Sequence[Any]) -> Chunk:
-        """Build a Chunk from the stored column order."""
-        path, text, kind, language, symbol, start, end = row[:7]
+        """Build a Chunk from the stored column order.
+
+        Leave the text empty. The index holds no source, so a caller
+        that needs it reads the file.
+        """
+        path, kind, language, symbol, start, end = row[:6]
         return Chunk(
             path=Path(str(path)),
-            text=str(text),
+            text="",
             kind=str(kind),
             language=str(language),
             symbol=None if symbol is None else str(symbol),
@@ -395,11 +410,11 @@ class SqliteVectorStore:
         try:
             with self._lock:
                 rows = self._db.execute(
-                    "SELECT c.path, c.text, c.kind, c.language, c.symbol, "
+                    "SELECT c.path, c.kind, c.language, c.symbol, "
                     "       c.start_line, c.end_line "
                     "FROM chunks_fts f JOIN chunks c ON c.id = f.rowid "
                     "WHERE chunks_fts MATCH ? "
-                    "ORDER BY bm25(chunks_fts, 4.0, 2.0, 1.0) "
+                    "ORDER BY bm25(chunks_fts, 2.0, 1.0) "
                     "LIMIT ?",
                     (match, limit),
                 ).fetchall()
@@ -419,7 +434,7 @@ class SqliteVectorStore:
 
         with self._lock:
             rows = self._db.execute(
-                "SELECT c.path, c.text, c.kind, c.language, c.symbol, "
+                "SELECT c.path, c.kind, c.language, c.symbol, "
                 "       c.start_line, c.end_line, v.data, v.dim "
                 "FROM chunks c "
                 "JOIN vectors v ON v.content_hash = c.content_hash "
@@ -429,7 +444,7 @@ class SqliteVectorStore:
 
         scored: list[tuple[Chunk, float]] = []
         for row in rows:
-            blob, dim = row[7], row[8]
+            blob, dim = row[6], row[7]
             if dim != len(query):
                 raise ValueError(
                     f"The index holds {dim}-dimension vectors but the query has "
