@@ -15,8 +15,8 @@ from ish.settings import Settings, load_settings
 # Options whose accepted values come from a registry rather than a literal.
 _DYNAMIC_CHOICES = {
     "embedder": lambda: sorted(bootstrap.EMBEDDERS),
-    "languages": lambda: sorted(bootstrap.PARSERS),
-    "lang": lambda: sorted(bootstrap.PARSERS),
+    "languages": lambda: sorted(bootstrap.all_parsers(Settings())),
+    "lang": lambda: sorted(bootstrap.all_parsers(Settings())),
 }
 
 

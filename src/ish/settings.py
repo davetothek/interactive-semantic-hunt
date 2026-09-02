@@ -111,6 +111,13 @@ class Settings:
             action="boolean_optional",
         ),
     )
+    plugins: bool = field(
+        default=True,
+        metadata=_opt(
+            "Load parsers from the user configuration directory.",
+            action="boolean_optional",
+        ),
+    )
     git: bool = field(
         default=True,
         metadata=_opt(
