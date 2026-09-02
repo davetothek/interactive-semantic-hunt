@@ -629,3 +629,57 @@ class TestMigrationErasesOldContent:
         rebuilt.close()
 
         assert secret not in db_path.read_bytes()
+
+
+class TestTopKScoring:
+    """Verify scoring the index as a matrix and reading only the winners.
+
+    Fetching every row's details and building a chunk for each cost far
+    more than the arithmetic did, so only the best are materialized.
+    """
+
+    def _many(self, store: SqliteVectorStore, count: int) -> None:
+        store.add_vectors(
+            {f"h{i}": [1.0, float(i) / count] for i in range(count)}
+        )
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk(f"s{i}", line=i + 1), f"h{i}") for i in range(count)],
+        )
+
+    def test_the_best_comes_first(self, store: SqliteVectorStore) -> None:
+        self._many(store, 50)
+        results = store.search([1.0, 1.0], limit=3)
+        assert [c.symbol for c, _ in results] == ["s49", "s48", "s47"]
+
+    def test_only_the_limit_is_returned(self, store: SqliteVectorStore) -> None:
+        self._many(store, 50)
+        assert len(store.search([1.0, 1.0], limit=5)) == 5
+
+    def test_asking_for_more_than_exists(self, store: SqliteVectorStore) -> None:
+        self._many(store, 4)
+        assert len(store.search([1.0, 1.0], limit=99)) == 4
+
+    def test_scores_are_still_cosine(self, store: SqliteVectorStore) -> None:
+        store.add_vectors({"h": [3.0, 4.0]})
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
+        ((_chunk, score),) = store.search([1.0, 0.0], limit=1)
+        assert score == pytest.approx(0.6, abs=1e-6)
+
+    def test_order_is_stable_for_equal_scores(
+        self, store: SqliteVectorStore
+    ) -> None:
+        store.add_vectors({f"h{i}": [1.0, 0.0] for i in range(5)})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk(f"s{i}", line=i + 1), f"h{i}") for i in range(5)],
+        )
+        first = [c.symbol for c, _ in store.search([1.0, 0.0], limit=5)]
+        second = [c.symbol for c, _ in store.search([1.0, 0.0], limit=5)]
+        assert first == second
+
+    def test_a_zero_limit_returns_nothing(self, store: SqliteVectorStore) -> None:
+        self._many(store, 5)
+        assert store._semantic([1.0, 0.0], 0) == []
