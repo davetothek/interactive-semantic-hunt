@@ -56,8 +56,7 @@ class FakeSearch:
         chosen = [
             c
             for c in self._chunks
-            if query.lower() in (c.symbol or "").lower()
-            and (keep is None or keep(c))
+            if query.lower() in (c.symbol or "").lower() and (keep is None or keep(c))
         ]
         return [(c, 0.91) for c in chosen[:limit]]
 
