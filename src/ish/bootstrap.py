@@ -8,8 +8,9 @@ code and concrete adapters.
 import hashlib
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
@@ -294,23 +295,40 @@ def build_search(settings: Settings, root: Path) -> Search:
     )
 
 
-def refresh_indexes(settings: Settings, root: Path, on_progress=None) -> list[Path]:
+def refresh_indexes(
+    settings: Settings,
+    root: Path,
+    on_progress=None,
+    overrides: Mapping[str, Any] | None = None,
+) -> list[Path]:
     """Bring every stored index at or below *root* up to date.
 
     A search of a parent reads the indexes beneath it and writes to
     none, because choosing one to write to would be wrong. Refreshing
     therefore means visiting each tree in turn. Return the trees
     refreshed, in order.
+
+    Read the configuration beside each tree rather than the one beside
+    the parent. An index-scope option decides what belongs in an index,
+    so refreshing a tree under the parent's options would prune
+    everything those options reject: a tree that git ignores, kept by a
+    ``git = false`` of its own, would lose every chunk it holds.
     """
     from dataclasses import replace
 
+    from ish.settings import load_settings
+
     resolved = root.resolve()
     trees = sorted(find_indexes(settings, resolved)) or [resolved]
-    # Each tree writes to its own index, so federation must be off.
-    one_tree = replace(settings, federate=False, refresh=False)
     for tree in trees:
         log.info("Refreshing the index for %s", tree)
-        search = build_search(one_tree, tree)
+        # Each tree writes to its own index, so federation must be off.
+        per_tree = replace(
+            load_settings(overrides or {}, start=tree),
+            federate=False,
+            refresh=False,
+        )
+        search = build_search(per_tree, tree)
         try:
             search.build_index(tree, on_progress)
         finally:

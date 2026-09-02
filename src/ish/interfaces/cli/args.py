@@ -6,8 +6,10 @@ and ``ish.toml`` always accept the same option set.
 
 import argparse
 import os
-from dataclasses import dataclass, fields
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 from ish import bootstrap
 from ish.settings import Settings, load_settings
@@ -83,6 +85,9 @@ class CliArgs:
     query: str
     interactive: bool
     settings: Settings
+    # The flags as given, so a tree below can resolve its own
+    # configuration and still let a flag override it.
+    overrides: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_args(cls, argv: list[str] | None = None) -> CliArgs:
@@ -151,6 +156,7 @@ class CliArgs:
             query=query_val,
             interactive=args.interactive,
             settings=load_settings(overrides, start=_search_root(path)),
+            overrides=overrides,
         )
 
 

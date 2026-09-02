@@ -1,5 +1,6 @@
 """Test the composition root."""
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -8,7 +9,13 @@ import pytest
 from ish import bootstrap
 from ish.application.ports.parser import Parser
 from ish.application.scan import Scan
-from ish.settings import Settings
+from ish.settings import (
+    CONFIG_BASENAME,
+    CONFIG_DIRNAME,
+    CONFIG_FILENAME,
+    Settings,
+    load_settings,
+)
 
 
 def test_default_embedder_is_registered() -> None:
@@ -429,3 +436,114 @@ class TestRefreshIndexes:
         bootstrap.refresh_indexes(settings, nested / "a")
         found = bootstrap.find_indexes(settings, nested)
         assert list(found) == [nested / "a"]
+
+
+class TestRefreshReadsEachTreeConfig:
+    """Verify a refresh honours the configuration beside each tree.
+
+    An index-scope option decides what belongs in an index. Refreshing a
+    tree under its parent's options would prune everything those options
+    reject, which would empty an index that a local setting keeps alive.
+    """
+
+    @pytest.fixture()
+    def offline(self, monkeypatch):
+        class Fake:
+            model_id = "fake"
+
+            def embed_documents(self, texts):
+                return [[float(len(t)), 1.0] for t in texts]
+
+            def embed_query(self, text):
+                return [float(len(text)), 1.0]
+
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: Fake())
+
+    @pytest.fixture()
+    def nested(self, tmp_path: Path, monkeypatch) -> Path:
+        """Build a child that git hides, kept by a config of its own.
+
+        This is the shape that matters: a working copy of another version
+        control system inside a git repository, which git reports nothing
+        for.
+        """
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        root = tmp_path / "proj"
+        child = root / "child"
+        child.mkdir(parents=True)
+        (child / "mod.py").write_text("def kept():\n    pass\n")
+        # Git shows tracked files and untracked ones no rule covers, so
+        # the child has to be ignored for the parent to reject it.
+        (root / ".gitignore").write_text("child/\n")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (child / CONFIG_DIRNAME).mkdir()
+        (child / CONFIG_DIRNAME / CONFIG_BASENAME).write_text("git = false\n")
+        return root
+
+    def _index_child(self, root: Path) -> int:
+        child = root / "child"
+        settings = replace(load_settings(start=child, environ={}), federate=False)
+        search = bootstrap.build_search(settings, child)
+        try:
+            search.build_index(child)
+            return len(search.all_chunks())
+        finally:
+            search.close()
+
+    def test_git_hides_the_child_from_the_parent(self, nested: Path) -> None:
+        """Confirm the setup: the parent's options reject every file."""
+        parent = load_settings(start=nested, environ={})
+        scan = bootstrap.build_scan(parent, nested)
+        assert not scan.accepts(nested / "child" / "mod.py")
+
+    def test_the_child_index_survives_a_refresh_from_the_parent(
+        self, nested: Path, offline
+    ) -> None:
+        assert self._index_child(nested) > 0
+
+        parent = load_settings(start=nested, environ={})
+        bootstrap.refresh_indexes(parent, nested)
+
+        search = bootstrap.build_search(
+            replace(parent, federate=False), nested / "child"
+        )
+        try:
+            assert search.all_chunks(), "the refresh pruned the child index"
+        finally:
+            search.close()
+
+    def test_a_flag_still_overrides_the_local_file(self, nested: Path, offline) -> None:
+        """A flag beats a config file, for the tree as for the parent."""
+        self._index_child(nested)
+        parent = load_settings(start=nested, environ={})
+        bootstrap.refresh_indexes(parent, nested, overrides={"git": True})
+
+        search = bootstrap.build_search(
+            replace(parent, federate=False), nested / "child"
+        )
+        try:
+            assert not search.all_chunks()
+        finally:
+            search.close()
+
+
+class TestConfigLocation:
+    """Verify where a project configuration is read from."""
+
+    def test_the_directory_form_is_preferred(self, tmp_path: Path) -> None:
+        (tmp_path / CONFIG_DIRNAME).mkdir()
+        (tmp_path / CONFIG_DIRNAME / CONFIG_BASENAME).write_text("limit = 5\n")
+        (tmp_path / CONFIG_FILENAME).write_text("limit = 9\n")
+        assert load_settings(start=tmp_path, environ={}).limit == 5
+
+    def test_the_flat_form_still_works(self, tmp_path: Path) -> None:
+        (tmp_path / CONFIG_FILENAME).write_text("limit = 9\n")
+        assert load_settings(start=tmp_path, environ={}).limit == 9
+
+    def test_found_by_walking_upward(self, tmp_path: Path) -> None:
+        (tmp_path / CONFIG_DIRNAME).mkdir()
+        (tmp_path / CONFIG_DIRNAME / CONFIG_BASENAME).write_text("limit = 7\n")
+        deep = tmp_path / "a" / "b"
+        deep.mkdir(parents=True)
+        assert load_settings(start=deep, environ={}).limit == 7

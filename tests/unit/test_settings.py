@@ -7,6 +7,7 @@ import pytest
 
 from ish.interfaces.cli.args import add_settings_options
 from ish.settings import (
+    CONFIG_BASENAME,
     CONFIG_FILENAME,
     ConfigError,
     Settings,
@@ -183,11 +184,25 @@ class TestUnreadableConfig:
     """Verify that an unreadable config file is reported, not skipped."""
 
     def test_unreadable_user_config(self, tmp_path, monkeypatch) -> None:
+        """A file that cannot be read is an error, not an absence."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
-        (tmp_path / "cfg" / "ish" / CONFIG_FILENAME).mkdir(parents=True)
+        config = tmp_path / "cfg" / "ish" / CONFIG_BASENAME
+        config.parent.mkdir(parents=True)
+        config.write_text("limit = 3\n")
+        config.chmod(0o000)
+        try:
+            with pytest.raises(ConfigError, match="Cannot read"):
+                load_settings(start=tmp_path, environ={})
+        finally:
+            config.chmod(0o600)
 
-        with pytest.raises(ConfigError, match="Cannot read"):
-            load_settings(start=tmp_path, environ={})
+    def test_a_directory_of_that_name_is_not_a_config(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Skip it, the way a project config of that shape is skipped."""
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        (tmp_path / "cfg" / "ish" / CONFIG_BASENAME).mkdir(parents=True)
+        assert load_settings(start=tmp_path, environ={}) == Settings()
 
     def test_project_config_must_be_a_file(self, tmp_path) -> None:
         """A directory of that name is not a config file, so ignore it."""
