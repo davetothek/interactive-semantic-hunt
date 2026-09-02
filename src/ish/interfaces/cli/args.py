@@ -15,9 +15,17 @@ from ish.settings import Settings, load_settings
 # Options whose accepted values come from a registry rather than a literal.
 _DYNAMIC_CHOICES = {
     "embedder": lambda: sorted(bootstrap.EMBEDDERS),
-    "languages": lambda: sorted(bootstrap.all_parsers(Settings())),
-    "lang": lambda: sorted(bootstrap.all_parsers(Settings())),
+    "languages": lambda: _language_choices(),
+    "lang": lambda: _language_choices(),
 }
+
+
+def _language_choices() -> list[str]:
+    """Return the language names a flag accepts, aliases included."""
+    from ish.application.search import language_names
+
+    registered = bootstrap.all_parsers(Settings())
+    return sorted(set(registered) | set(language_names()))
 
 
 def _is_path_syntax(value: str) -> bool:

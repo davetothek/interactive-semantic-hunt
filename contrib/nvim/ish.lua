@@ -55,8 +55,18 @@ end
 -- ish prints `path:line:col:[0.71] kind symbol`, which puts the number
 -- the results are ordered by in the middle of the text. Read it out and
 -- print it first, so the column the eye follows is the leftmost one.
+--
+-- Return a line that already carries a rank unchanged. fzf-lua applies
+-- `fn_transform` to the output of a command but not to a table handed
+-- back from the callback, so the server path renders its own lines and
+-- both paths must survive passing through here.
 local function render(line)
   local fzf = require('fzf-lua')
+  -- A rendered line opens with a colored rank, so read past the color
+  -- before deciding whether one is already there.
+  if fzf.utils.strip_ansi_coloring(line):match(RANK) then
+    return line
+  end
   local head, rank, tail = line:match('^(.-:%d+:%d+:)%[([%d%.]+)%]%s*(.*)$')
   if not head then
     return fzf.make_entry.file(line, { file_icons = true, colors = true })
@@ -94,7 +104,9 @@ function M.search(opts)
       return nil
     end
     if server.ensure() then
-      return server.search_now(text, opts)
+      -- Render here: a table handed back from this callback reaches fzf
+      -- without passing through `fn_transform`.
+      return vim.tbl_map(render, server.search_now(text, opts))
     end
     return command(text, opts)
   end, {
