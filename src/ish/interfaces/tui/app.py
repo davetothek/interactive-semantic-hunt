@@ -11,7 +11,12 @@ from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ish.application.preview import load_text
-from ish.application.search import Search
+from ish.application.search import (
+    Search,
+    build_result_filter,
+    describe_filters,
+    parse_query,
+)
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import format_selection, symbol_of
 
@@ -75,7 +80,9 @@ class IshApp(App[tuple[Chunk, float] | None]):
             yield OptionList(id="results-list")
             yield Static("Loading index...", id="preview-pane")
         yield Input(
-            placeholder="Semantic search query...", id="search-input", disabled=True
+            placeholder="Search, or narrow with lang:cpp under:/src/",
+            id="search-input",
+            disabled=True,
         )
         yield Footer()
 
@@ -160,16 +167,26 @@ class IshApp(App[tuple[Chunk, float] | None]):
         # this task is cancelled by exclusive=True
         await asyncio.sleep(0.2)
 
-        if not query:
-            # Revert to showing all chunks if search is cleared
-            self._populate_results(
-                [(c, 0.0) for c in self._all_chunks], show_scores=False
-            )
+        # Filters may be written into the query, as `lang:cpp under:/src/`.
+        # Strip them, so the embedder sees what is wanted rather than how
+        # it was narrowed.
+        text, languages, under = parse_query(query)
+        self.sub_title = describe_filters(languages, under)
+        try:
+            keep = build_result_filter(languages, under)
+        except ValueError:
+            # A half-typed expression is not an error to report.
+            return
+
+        if not text:
+            # No words left, so show every chunk the filters allow.
+            chunks = await asyncio.to_thread(self.search_use_case.all_chunks, keep)
+            self._populate_results([(c, 0.0) for c in chunks], show_scores=False)
             return
 
         # Perform the actual ML search in a background thread so UI doesn't freeze
         results = await asyncio.to_thread(
-            self.search_use_case.search, query, limit=self.limit
+            self.search_use_case.search, text, self.limit, keep
         )
         self._populate_results(list(results), show_scores=True)
 

@@ -45,9 +45,24 @@ class FakeSearch:
             raise RuntimeError(self._fail)
         return self._chunks
 
-    def search(self, query: str, limit: int = 5) -> Sequence[tuple[Chunk, float]]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        keep=None,
+        hybrid=None,
+    ) -> Sequence[tuple[Chunk, float]]:
         self.queries.append(query)
-        return [(self._chunks[0], 0.91)]
+        chosen = [
+            c
+            for c in self._chunks
+            if query.lower() in (c.symbol or "").lower()
+            and (keep is None or keep(c))
+        ]
+        return [(c, 0.91) for c in chosen[:limit]]
+
+    def all_chunks(self, keep=None) -> list[Chunk]:
+        return [c for c in self._chunks if keep is None or keep(c)]
 
     def close(self) -> None:
         return None
@@ -271,9 +286,9 @@ class TestLimit:
         captured: list[int] = []
 
         class Recording(FakeSearch):
-            def search(self, query: str, limit: int = 5):
+            def search(self, query: str, limit: int = 5, keep=None, hybrid=None):
                 captured.append(limit)
-                return super().search(query, limit)
+                return super().search(query, limit, keep, hybrid)
 
         app = IshApp(Recording(), Path("."), limit=17)
 
@@ -388,3 +403,135 @@ def test_selecting_in_the_list_exits() -> None:
     run(body())
     assert app.return_value is not None
     assert app.return_value[0].symbol == "alpha"
+
+
+class TestInlineFilters:
+    """Verify filters typed into the query itself."""
+
+    def _mixed(self) -> FakeSearch:
+        return FakeSearch(
+            chunks=[
+                chunk("alpha"),
+                chunk("alpha_doc", language="markdown", line=5),
+            ]
+        )
+
+    def test_lang_narrows_the_results(self) -> None:
+        fake = self._mixed()
+        app = IshApp(fake, Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"lang:markdown alpha")
+                await asyncio.sleep(SETTLE)
+                return [c.symbol for c, _ in app._current_results]
+
+        assert run(body()) == ["alpha_doc"]
+
+    def test_the_filter_is_stripped_before_searching(self) -> None:
+        """The embedder must see the words, not the narrowing."""
+        fake = self._mixed()
+        app = IshApp(fake, Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"lang:markdown alpha")
+                await asyncio.sleep(SETTLE)
+
+        run(body())
+        assert fake.queries == ["alpha"]
+
+    def test_under_narrows_by_path(self) -> None:
+        fake = FakeSearch(
+            chunks=[
+                Chunk(
+                    path=Path("/proj/src/a.py"),
+                    text="x",
+                    kind="function",
+                    language="python",
+                    symbol="thing",
+                    start_line=1,
+                    end_line=1,
+                ),
+                Chunk(
+                    path=Path("/proj/docs/b.py"),
+                    text="x",
+                    kind="function",
+                    language="python",
+                    symbol="thing",
+                    start_line=1,
+                    end_line=1,
+                ),
+            ]
+        )
+        app = IshApp(fake, Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"under:/docs/ thing")
+                await asyncio.sleep(SETTLE)
+                return [str(c.path) for c, _ in app._current_results]
+
+        assert run(body()) == ["/proj/docs/b.py"]
+
+    def test_a_filter_alone_lists_what_it_allows(self) -> None:
+        """No words left, so show every chunk the filter permits."""
+        fake = self._mixed()
+        app = IshApp(fake, Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"lang:markdown")
+                await asyncio.sleep(SETTLE)
+                return (
+                    [c.symbol for c, _ in app._current_results],
+                    fake.queries,
+                )
+
+        symbols, queries = run(body())
+        assert symbols == ["alpha_doc"]
+        # Nothing was searched, because nothing was asked.
+        assert queries == []
+
+    def test_active_filters_are_shown(self) -> None:
+        app = IshApp(self._mixed(), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"lang:markdown alpha")
+                await asyncio.sleep(SETTLE)
+                return app.sub_title
+
+        assert "markdown" in run(body())
+
+    def test_clearing_the_filter_clears_the_display(self) -> None:
+        app = IshApp(self._mixed(), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"lang:markdown")
+                await asyncio.sleep(SETTLE)
+                for _ in range(len("lang:markdown")):
+                    await pilot.press("backspace")
+                await asyncio.sleep(SETTLE)
+                return app.sub_title
+
+        assert run(body()) == ""
+
+    def test_a_half_typed_expression_does_not_crash(self) -> None:
+        """`under:(` is not yet a valid expression."""
+        app = IshApp(self._mixed(), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"under:(unclosed")
+                await asyncio.sleep(SETTLE)
+
+        run(body())

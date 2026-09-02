@@ -296,3 +296,85 @@ class TestReadOnlyFederation:
 
         search = build(embedder, FederatedVectorStore(None, []))
         assert search.build_index(project) is None
+
+
+class TestParseQuery:
+    """Verify filters written into the query text."""
+
+    def test_plain_query_is_untouched(self) -> None:
+        from ish.application.search import parse_query
+
+        assert parse_query("state machine") == ("state machine", (), "")
+
+    def test_language_is_taken_out(self) -> None:
+        from ish.application.search import parse_query
+
+        assert parse_query("lang:cpp state machine") == (
+            "state machine",
+            ("cpp",),
+            "",
+        )
+
+    def test_several_languages(self) -> None:
+        from ish.application.search import parse_query
+
+        text, langs, _ = parse_query("a lang:cpp lang:yaml b")
+        assert langs == ("cpp", "yaml")
+        # The gaps the removed words left must not survive.
+        assert text == "a b"
+
+    def test_comma_separated_languages(self) -> None:
+        from ish.application.search import parse_query
+
+        assert parse_query("lang:cpp,yaml x")[1] == ("cpp", "yaml")
+
+    def test_path_expression(self) -> None:
+        from ish.application.search import parse_query
+
+        assert parse_query("under:/src/ x") == ("x", (), "/src/")
+
+    def test_both_together(self) -> None:
+        from ish.application.search import parse_query
+
+        assert parse_query("lang:cpp under:/src/ errors") == (
+            "errors",
+            ("cpp",),
+            "/src/",
+        )
+
+    def test_a_dangling_key_is_left_alone(self) -> None:
+        """`lang:` with nothing after it is ordinary text."""
+        from ish.application.search import parse_query
+
+        assert parse_query("lang: dangling")[0] == "lang: dangling"
+
+    def test_a_colon_inside_a_word_is_not_a_filter(self) -> None:
+        from ish.application.search import parse_query
+
+        assert parse_query("slang:cpp") == ("slang:cpp", (), "")
+
+    def test_only_a_filter_leaves_no_query(self) -> None:
+        from ish.application.search import parse_query
+
+        assert parse_query("lang:cpp")[0] == ""
+
+
+class TestDescribeFilters:
+    """Verify what the interface shows the user."""
+
+    def test_nothing_active(self) -> None:
+        from ish.application.search import describe_filters
+
+        assert describe_filters((), "") == ""
+
+    def test_language_only(self) -> None:
+        from ish.application.search import describe_filters
+
+        assert describe_filters(("cpp",), "") == "lang: cpp"
+
+    def test_both(self) -> None:
+        from ish.application.search import describe_filters
+
+        described = describe_filters(("cpp", "yaml"), "/src/")
+        assert "cpp, yaml" in described
+        assert "/src/" in described

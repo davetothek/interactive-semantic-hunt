@@ -186,6 +186,7 @@ The default backend is Ollama, reached over HTTP with the standard library. Do n
 
 - The query field keeps focus at all times. `up`/`down` and `ctrl+p`/`ctrl+n` move the result highlight through app bindings, and `enter` chooses the highlighted result. Never move focus to the list to navigate it.
 - `ENABLE_COMMAND_PALETTE` is off, because Textual binds `ctrl+p` to the palette and would shadow the previous-result key.
+- **Filters are written into the query itself**, as `lang:cpp under:/src/`, parsed by `parse_query()`. There is no second input and no focus to manage, which is why the query line carries them. The filter words are stripped before the text reaches the embedder, so a vector is built from what the user wants rather than how they narrowed it. Active filters appear in the header through `sub_title`. A filter with no words left lists everything it allows, without searching.
 - Indexing runs on a worker thread and searching on another, so **any store the TUI touches must be safe to use off the thread that opened it**. The SQLite adapter opens with `check_same_thread=False` and guards every statement with one lock. A single-threaded test suite will not catch a regression here; `TestThreadSafety` exists for that.
 
 Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s including the 200 ms debounce.

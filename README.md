@@ -53,7 +53,13 @@ ish "parse a python file" src/
 
 Run the interactive picker and open the selection in your editor. Type to
 search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `escape`
-to quit:
+to quit. Narrow without leaving the query line:
+
+```text
+state machine transitions              every language
+lang:cpp state machine transitions     the implementation
+lang:yaml under:/10.System/ state      the tests that cover it
+```
 
 ```sh
 nvim $(ish -i src/)
