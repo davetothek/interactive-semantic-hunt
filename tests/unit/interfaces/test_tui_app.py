@@ -593,3 +593,93 @@ class TestIndexProgress:
                 return preview_text(app)
 
         assert "Embedding" not in run(body())
+
+
+class TestQueryLineFilters:
+    """Verify filters typed into the query line of the TUI."""
+
+    @staticmethod
+    def _mixed() -> list[Chunk]:
+        code = chunk("alpha")
+        doc = Chunk(
+            path=Path("README.md"),
+            text="alpha is the first",
+            kind="section",
+            language="markdown",
+            symbol="alpha",
+            start_line=1,
+            end_line=2,
+        )
+        return [code, doc]
+
+    def test_type_narrows_the_results(self) -> None:
+        app = IshApp(FakeSearch(self._mixed()), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"type:doc alpha")
+                await asyncio.sleep(SETTLE)
+                shown = [c.path.name for c, _ in app._current_results]
+                assert shown == ["README.md"]
+
+        run(body())
+
+    def test_the_filter_is_kept_out_of_the_query(self) -> None:
+        """The embedder must see the question, not how it was narrowed."""
+        fake = FakeSearch(self._mixed())
+        app = IshApp(fake, Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"type:doc alpha")
+                await asyncio.sleep(SETTLE)
+                assert fake.queries[-1] == "alpha"
+
+        run(body())
+
+    def test_the_active_filter_is_shown(self) -> None:
+        app = IshApp(FakeSearch(self._mixed()), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"type:doc alpha")
+                await asyncio.sleep(SETTLE)
+                assert "doc" in app.sub_title
+
+        run(body())
+
+    def test_a_command_line_filter_still_applies(self) -> None:
+        """A narrowing passed as --type holds until the query overrides it."""
+        from ish.application.search import Filters
+
+        app = IshApp(
+            FakeSearch(self._mixed()), Path("."), filters=Filters(type=("doc",))
+        )
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"alpha")
+                await asyncio.sleep(SETTLE)
+                assert [c.path.name for c, _ in app._current_results] == ["README.md"]
+
+        run(body())
+
+    def test_the_query_line_overrides_the_command_line(self) -> None:
+        from ish.application.search import Filters
+
+        app = IshApp(
+            FakeSearch(self._mixed()), Path("."), filters=Filters(type=("doc",))
+        )
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"type:code alpha")
+                await asyncio.sleep(SETTLE)
+                assert [c.path.name for c, _ in app._current_results] == ["mod.py"]
+
+        run(body())
