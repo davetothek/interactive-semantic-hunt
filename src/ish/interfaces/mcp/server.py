@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
-from ish.application.search import Search, build_result_filter
+from ish.application.search import Search
 from ish.interfaces.cli.log import setup_logging
 from ish.interfaces.format import format_chunk_line, format_result_line
 from ish.interfaces.mcp.protocol import Server, Tool
@@ -28,6 +28,30 @@ _PATH_PROPERTY = {
         "Directory or file to search. Defaults to the directory the server "
         "was started in."
     ),
+}
+
+# A tool may accept only the options that narrow what a search returns.
+# An option that decides what enters the index must stay out, because
+# the next refresh would prune whatever a single call excluded.
+_QUERY_PROPERTIES: dict[str, dict[str, Any]] = {
+    "limit": {
+        "type": "integer",
+        "description": "How many results to return.",
+        "minimum": 1,
+    },
+    "lang": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": (
+            "Return results only from these languages, such as cpp or yaml."
+        ),
+    },
+    "under": {
+        "type": "string",
+        "description": (
+            "Return results only from paths matching this regular expression."
+        ),
+    },
 }
 
 
@@ -53,6 +77,17 @@ class IshTools:
             raise ValueError(f"Path does not exist: {path}")
         return path
 
+    def _filter_for(self, arguments: Mapping[str, Any]):
+        """Build the result filter for one call.
+
+        Fall back to the configured value for anything the call omits.
+        """
+        from ish.application.search import build_result_filter
+
+        lang = arguments.get("lang") or self._settings.lang
+        under = arguments.get("under") or self._settings.under
+        return build_result_filter([str(item) for item in lang], str(under))
+
     def _search_for(self, root: Path) -> Search:
         """Return the use case for *root*, building it on first use."""
         if root not in self._by_root:
@@ -74,7 +109,8 @@ class IshTools:
         limit = int(arguments.get("limit") or self._settings.limit)
 
         use_case = self._search_for(root)
-        results = use_case.run(root, query, limit=limit)
+        use_case.build_index(root)
+        results = use_case.search(query, limit=limit, keep=self._filter_for(arguments))
         if not results:
             return f"No results for {query!r} under {root}."
 
@@ -85,7 +121,7 @@ class IshTools:
         """List every chunk the parsers find under a path."""
         root = self._resolve(arguments.get("path"))
         chunks = bootstrap.build_scan(self._settings, root).run(root)
-        keep = build_result_filter(self._settings.lang, self._settings.under)
+        keep = self._filter_for(arguments)
         if keep is not None:
             chunks = [chunk for chunk in chunks if keep(chunk)]
         if not chunks:
@@ -133,11 +169,7 @@ class IshTools:
                             "description": "What to look for, in plain language.",
                         },
                         "path": _PATH_PROPERTY,
-                        "limit": {
-                            "type": "integer",
-                            "description": "How many results to return.",
-                            "minimum": 1,
-                        },
+                        **_QUERY_PROPERTIES,
                     },
                     "required": ["query"],
                 },
@@ -152,7 +184,11 @@ class IshTools:
                 ),
                 schema={
                     "type": "object",
-                    "properties": {"path": _PATH_PROPERTY},
+                    "properties": {
+                        "path": _PATH_PROPERTY,
+                        "lang": _QUERY_PROPERTIES["lang"],
+                        "under": _QUERY_PROPERTIES["under"],
+                    },
                 },
                 handler=self.list_chunks,
             ),

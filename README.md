@@ -96,6 +96,10 @@ can query the index directly. Add it to a project with `.mcp.json`:
 It offers `search_code`, `list_chunks`, and `index_status`. The server stays
 resident, so a query costs about 58 ms rather than a process start.
 
+A call may narrow one search with `lang`, `under`, and `limit`. It cannot change
+what is indexed — those settings come from `ish.toml` only, so no single call can
+shrink an index that another call depends on.
+
 ## Index
 
 The index persists in SQLite under `$XDG_DATA_HOME/ish/`, one file per scanned

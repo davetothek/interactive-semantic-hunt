@@ -100,30 +100,42 @@ class Search:
             return None
         return chunks
 
-    def all_chunks(self) -> list[Chunk]:
+    def all_chunks(self, keep: Callable[[Chunk], bool] | None = None) -> list[Chunk]:
         """Return the chunks the store holds, for a plain listing.
 
         Apply the same result filter a search would, so the listing and
         the search agree on what is in view.
         """
+        chosen = keep or self._keep
         chunks = self._vector_store.chunks()
-        if self._keep is None:
+        if chosen is None:
             return list(chunks)
-        return [chunk for chunk in chunks if self._keep(chunk)]
+        return [chunk for chunk in chunks if chosen(chunk)]
 
-    def search(self, query: str, limit: int = 5) -> Sequence[tuple[Chunk, float]]:
-        """Query the vector store with the semantic query."""
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        keep: Callable[[Chunk], bool] | None = None,
+        hybrid: bool | None = None,
+    ) -> Sequence[tuple[Chunk, float]]:
+        """Query the vector store with the semantic query.
+
+        Accept a filter for this call alone, so a long-lived interface
+        can narrow one search without rebuilding anything.
+        """
         log.info("Embedding search query...")
         query_vector = self._embedder.embed_query(query)
         if not query_vector:
             return []
 
         log.info("Searching vector store...")
+        use_hybrid = self._hybrid if hybrid is None else hybrid
         return self._vector_store.search(
             query_vector,
-            query if self._hybrid else "",
+            query if use_hybrid else "",
             limit=limit,
-            keep=self._keep,
+            keep=keep or self._keep,
         )
 
     def run(
