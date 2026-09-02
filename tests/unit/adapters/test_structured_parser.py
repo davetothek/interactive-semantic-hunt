@@ -134,3 +134,108 @@ class TestFailures:
         """A valid document that holds nothing yields no chunk to search."""
         chunks = yaml_parser.parse(YML, "# just a comment\n")
         assert chunks[0].symbol == "spec"
+
+
+class TestOversizedDocuments:
+    """Verify a document too large to embed is split, not truncated.
+
+    An embedding model reads a fixed number of tokens and drops the
+    rest without saying so, which left most of a large document
+    unsearchable while looking indexed.
+    """
+
+    def _big(self, cases: int, filler: int) -> str:
+        body = "".join(
+            f"  - purpose: case number {i}\n    body: {'x' * filler}\n"
+            for i in range(cases)
+        )
+        return f"metadata:\n  description: A large spec\ncases:\n{body}"
+
+    def test_a_small_document_is_still_one_chunk(self, yaml_parser) -> None:
+        """The decision to index whole must survive this change."""
+        chunks = yaml_parser.parse(YML, self._big(cases=2, filler=20))
+        assert len(chunks) == 1
+        assert chunks[0].kind == "document"
+
+    def test_a_large_document_is_split(self, yaml_parser) -> None:
+        chunks = yaml_parser.parse(YML, self._big(cases=40, filler=900))
+        assert len(chunks) > 1
+
+    def test_no_piece_exceeds_the_limit(self, yaml_parser) -> None:
+        from ish.adapters.parser.structured import MAX_CHUNK_CHARS
+
+        chunks = yaml_parser.parse(YML, self._big(cases=40, filler=900))
+        assert all(len(c.text) <= MAX_CHUNK_CHARS for c in chunks)
+
+    def test_no_content_is_lost(self, yaml_parser) -> None:
+        """Splitting must not lose content, which is the bug it fixes.
+
+        Structural punctuation may fall between pieces. A line carrying
+        a word may not.
+        """
+        source = self._big(cases=40, filler=900)
+        chunks = yaml_parser.parse(YML, source)
+
+        covered: set[int] = set()
+        for c in chunks:
+            covered.update(range(c.start_line, c.end_line + 1))
+
+        carries_content = {
+            n
+            for n, line in enumerate(source.splitlines(), 1)
+            if any(ch.isalnum() for ch in line)
+        }
+        assert carries_content <= covered
+
+    def test_the_container_key_is_kept(self, yaml_parser) -> None:
+        """The key naming a split container must land in its first part."""
+        chunks = yaml_parser.parse(YML, self._big(cases=40, filler=900))
+        assert any("cases:" in c.text for c in chunks)
+
+    def test_each_piece_names_itself(self, yaml_parser) -> None:
+        chunks = yaml_parser.parse(YML, self._big(cases=40, filler=900))
+        symbols = [c.symbol for c in chunks]
+        assert len(set(symbols)) == len(symbols)
+        assert any("case number 7" in s for s in symbols)
+
+    def test_the_document_title_leads_every_name(self, yaml_parser) -> None:
+        chunks = yaml_parser.parse(YML, self._big(cases=40, filler=900))
+        assert all(c.symbol.startswith("A large spec") for c in chunks)
+
+    def test_a_split_piece_is_a_section(self, yaml_parser) -> None:
+        chunks = yaml_parser.parse(YML, self._big(cases=40, filler=900))
+        assert {c.kind for c in chunks} == {"section"}
+
+    def test_an_unsplittable_value_is_reported(self, yaml_parser, caplog) -> None:
+        """One enormous scalar cannot be divided, so say so."""
+        source = f"metadata:\n  description: Huge\nblob: {'x' * 40000}\n"
+        with caplog.at_level("WARNING"):
+            chunks = yaml_parser.parse(YML, source)
+        assert chunks
+        assert "cannot be split" in caplog.text
+
+    def test_a_large_json_document_is_split(self, json_parser) -> None:
+        import json as json_module
+
+        payload = {
+            "name": "big",
+            "items": [{"name": f"item {i}", "data": "y" * 900} for i in range(40)],
+        }
+        chunks = json_parser.parse(JSN, json_module.dumps(payload, indent=2))
+        assert len(chunks) > 1
+
+
+class TestUnnamedParts:
+    """Verify a part with nothing to name it still gets an identity."""
+
+    def test_a_sequence_of_values_is_numbered(self, yaml_parser) -> None:
+        entries = "".join(f"  - {'v' * 900}\n" for _ in range(40))
+        chunks = yaml_parser.parse(YML, f"name: Plain\nitems:\n{entries}")
+
+        assert len(chunks) > 1
+        assert any(c.symbol.endswith("[0]") for c in chunks)
+
+    def test_a_mapping_without_a_title_key_uses_its_index(self, yaml_parser) -> None:
+        entries = "".join(f"  - value: {'v' * 900}\n" for _ in range(40))
+        chunks = yaml_parser.parse(YML, f"name: Plain\nitems:\n{entries}")
+        assert any("[1]" in c.symbol for c in chunks)
