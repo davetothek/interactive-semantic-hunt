@@ -225,6 +225,21 @@ The scan recursively finds files whose suffix a registered parser claims and ign
 
 **Every rule about what to index belongs in `Scan.accepts()` and nowhere else.** Discovery and index pruning both ask that one predicate, so a filter added in only one of them would make pruning delete files it should keep. `test_accepts_agrees_with_discovery` pins this.
 
+### Which settings an interface may override per call
+
+`Settings` fields carry a `scope`. `query_scope_names()` returns the ones an interface may accept for a single call; everything else is index scope and must come from configuration only.
+
+| scope | options | may a call set it? |
+|---|---|---|
+| query | `lang`, `under`, `limit`, `no_hybrid` | yes |
+| index | everything else | **no** |
+
+The CLI is the exception, and only because a CLI invocation *is* the configuration for that run — a flag there is resolved before anything is built.
+
+For a long-lived interface such as MCP, a call that could set an index-scope option would make the next refresh prune whatever that call excluded: one `search_code` with `languages=["yaml"]` would delete every other language from the index. `TestOnlyQueryScopeIsOverridable` derives the forbidden set from the metadata and fails if a tool ever exposes one, so the rule cannot drift.
+
+`Search.search()` and `all_chunks()` take an optional filter for one call, so narrowing costs no rebuild.
+
 ### Two kinds of filter, which must never be confused
 
 | | options | applies to | prunes? |

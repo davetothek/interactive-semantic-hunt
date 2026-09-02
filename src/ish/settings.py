@@ -30,8 +30,12 @@ class ConfigError(Exception):
     """Raise when a configuration file cannot be read or understood."""
 
 
-def _opt(help: str, *, flag: str | None = None, **cli: Any):
+def _opt(help: str, *, scope: str = "index", flag: str | None = None, **cli: Any):
     """Describe one option for both the CLI and the TOML file.
+
+    *scope* says whether an option decides what enters the index or only
+    what a search returns. An index-scope option must never be settable
+    per call, because the next refresh would prune whatever it excluded.
 
     Derive the long flag from the field name unless *flag* adds a short
     one. Every option reaches both interfaces — there is deliberately no
@@ -40,7 +44,7 @@ def _opt(help: str, *, flag: str | None = None, **cli: Any):
     Extra keywords describe how the command line accepts the option. The
     CLI interface interprets them; this module never imports a parser.
     """
-    return {"help": help, "flag": flag, "cli": cli}
+    return {"help": help, "scope": scope, "flag": flag, "cli": cli}
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +61,7 @@ class Settings:
     )
     limit: int = field(
         default=5,
-        metadata=_opt("Maximum number of search results.", type=int),
+        metadata=_opt("Maximum number of search results.", scope="query", type=int),
     )
     tui_limit: int = field(
         default=50,
@@ -87,6 +91,7 @@ class Settings:
         default=(),
         metadata=_opt(
             "Return results only from these languages.",
+            scope="query",
             nargs="+",
             metavar="LANG",
         ),
@@ -95,6 +100,7 @@ class Settings:
         default="",
         metadata=_opt(
             "Return results only from paths matching this expression.",
+            scope="query",
             metavar="REGEX",
         ),
     )
@@ -143,6 +149,7 @@ class Settings:
         default=False,
         metadata=_opt(
             "Rank by vector similarity alone, with no lexical matching.",
+            scope="query",
             action="store_true",
         ),
     )
@@ -165,6 +172,16 @@ class Settings:
 def option_names() -> tuple[str, ...]:
     """Return every valid option name, for the CLI and the TOML loader alike."""
     return tuple(f.name for f in fields(Settings))
+
+
+def query_scope_names() -> tuple[str, ...]:
+    """Return the options an interface may accept for a single call.
+
+    These narrow what a search returns. Everything else decides what
+    enters the index, and letting a caller change that per call would
+    make the next refresh prune whatever the call excluded.
+    """
+    return tuple(f.name for f in fields(Settings) if f.metadata.get("scope") == "query")
 
 
 def _coerce(name: str, value: Any, default: Any) -> Any:

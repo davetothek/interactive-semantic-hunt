@@ -277,3 +277,103 @@ class TestListingRespectsTheResultFilter:
 
         assert "Guide" in out
         assert "load_config" not in out
+
+
+class TestOnlyQueryScopeIsOverridable:
+    """Verify no tool accepts an option that decides what is indexed.
+
+    A call that could set an index-scope option would make the next
+    refresh prune whatever that call excluded. Searching one language
+    over MCP would delete every other language from the index.
+    """
+
+    def _properties(self, tools: IshTools) -> set[str]:
+        names: set[str] = set()
+        for tool in tools.tools():
+            names.update(tool.schema.get("properties", {}))
+        return names
+
+    def test_no_index_scope_option_is_exposed(self, tools: IshTools) -> None:
+        from ish.settings import option_names, query_scope_names
+
+        index_scope = set(option_names()) - set(query_scope_names())
+        offered = self._properties(tools)
+
+        leaked = offered & index_scope
+        assert not leaked, f"MCP must not accept index-scope options: {leaked}"
+
+    def test_every_exposed_option_is_a_setting_or_an_input(
+        self, tools: IshTools
+    ) -> None:
+        from ish.settings import query_scope_names
+
+        allowed = set(query_scope_names()) | {"query", "path"}
+        assert self._properties(tools) <= allowed
+
+    def test_search_offers_the_narrowing_options(self, tools: IshTools) -> None:
+        search = next(t for t in tools.tools() if t.name == "search_code")
+        properties = search.schema["properties"]
+        assert "lang" in properties
+        assert "under" in properties
+        assert "limit" in properties
+
+
+class TestPerCallNarrowing:
+    """Verify a single call can narrow without touching the index."""
+
+    def test_lang_narrows_one_call(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        (project / "guide.md").write_text("# Guide\n\nSome configuration text.\n")
+
+        everything = tools.search({"query": "config", "path": str(project)})
+        markdown = tools.search(
+            {"query": "config", "path": str(project), "lang": ["markdown"]}
+        )
+
+        assert "load_config" in everything
+        assert "load_config" not in markdown
+        assert "Guide" in markdown
+
+    def test_under_narrows_one_call(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        nested = project / "inner"
+        nested.mkdir()
+        (nested / "deep.py").write_text("def deep_config(): return 1\n")
+
+        narrowed = tools.search(
+            {"query": "config", "path": str(project), "under": "/inner/"}
+        )
+        assert "deep_config" in narrowed
+        assert "load_config" not in narrowed
+
+    def test_narrowing_leaves_the_index_whole(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        """The hazard this rule exists to prevent."""
+        (project / "guide.md").write_text("# Guide\n\nText.\n")
+
+        tools.search({"query": "config", "path": str(project), "lang": ["markdown"]})
+        after = tools.index_status({"path": str(project)})
+
+        assert "python" in after
+        assert "markdown" in after
+
+    def test_a_call_without_narrowing_uses_the_configured_value(
+        self, project: Path, stub_backend, tmp_path_factory
+    ) -> None:
+        from dataclasses import replace
+
+        settings = replace(
+            Settings(),
+            no_cache=True,
+            cache_dir=str(tmp_path_factory.mktemp("idx")),
+            lang=("markdown",),
+        )
+        made = IshTools(settings, project)
+        try:
+            out = made.search({"query": "config", "path": str(project)})
+        finally:
+            made.close()
+        assert "No results" in out or "load_config" not in out
