@@ -184,6 +184,13 @@ class Settings:
             action="store_true",
         ),
     )
+    refresh: bool = field(
+        default=False,
+        metadata=_opt(
+            "Bring every stored index at or below the path up to date first.",
+            action="store_true",
+        ),
+    )
     reindex: bool = field(
         default=False,
         metadata=_opt(

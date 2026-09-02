@@ -1,5 +1,8 @@
 """Test the composition root."""
 
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 
 from ish import bootstrap
@@ -358,3 +361,71 @@ class TestFederatedWiring:
             assert isinstance(store, SqliteVectorStore)
         finally:
             store.close()
+
+
+class TestRefreshIndexes:
+    """Verify that refreshing a parent visits every index beneath it."""
+
+    @pytest.fixture()
+    def offline(self, monkeypatch):
+        class Fake:
+            model_id = "fake"
+
+            def embed_documents(self, texts):
+                return [[float(len(t)), 1.0] for t in texts]
+
+            def embed_query(self, text):
+                return [float(len(text)), 1.0]
+
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: Fake())
+
+    @pytest.fixture()
+    def nested(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        root = tmp_path / "proj"
+        (root / "a").mkdir(parents=True)
+        (root / "b").mkdir(parents=True)
+        (root / "a" / "one.py").write_text("def one():\n    pass\n")
+        (root / "b" / "two.py").write_text("def two():\n    pass\n")
+        return root
+
+    def _settings(self) -> Settings:
+        return Settings(git=False)
+
+    def test_refreshes_each_index_below(self, nested: Path, offline) -> None:
+        settings = self._settings()
+        # Build one index per subdirectory, the way naming each does.
+        for sub in ("a", "b"):
+            search = bootstrap.build_search(
+                replace(settings, federate=False), nested / sub
+            )
+            search.build_index(nested / sub)
+            search.close()
+
+        refreshed = bootstrap.refresh_indexes(settings, nested)
+        assert refreshed == [nested / "a", nested / "b"]
+
+    def test_a_refresh_picks_up_a_new_file(self, nested: Path, offline) -> None:
+        settings = self._settings()
+        search = bootstrap.build_search(replace(settings, federate=False), nested / "a")
+        search.build_index(nested / "a")
+        search.close()
+
+        (nested / "a" / "three.py").write_text("def three():\n    pass\n")
+        bootstrap.refresh_indexes(settings, nested)
+
+        after = bootstrap.build_search(replace(settings, federate=False), nested / "a")
+        symbols = {c.symbol for c in after.all_chunks()}
+        after.close()
+        assert "three" in symbols
+
+    def test_a_tree_with_no_index_refreshes_itself(self, nested: Path, offline) -> None:
+        """Naming a tree that has none builds one, rather than doing nothing."""
+        assert bootstrap.refresh_indexes(self._settings(), nested) == [nested]
+
+    def test_refreshing_does_not_recurse(self, nested: Path, offline) -> None:
+        """Each child writes to its own index, so federation must be off."""
+        settings = self._settings()
+        bootstrap.refresh_indexes(settings, nested / "a")
+        found = bootstrap.find_indexes(settings, nested)
+        assert list(found) == [nested / "a"]

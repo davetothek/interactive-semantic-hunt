@@ -1,6 +1,7 @@
 """Interactive Textual UI for Semantic Search."""
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 
 from rich.syntax import Syntax
@@ -129,13 +130,31 @@ class IshApp(App[tuple[Chunk, float] | None]):
         search_input.focus()
 
         self.query_one("#preview-pane", Static).update("Index built. Ready to search!")
-        self._populate_results([(c, 0.0) for c in self._all_chunks], show_scores=False)
+        self._show_listing(self._all_chunks)
 
     def _on_index_error(self, error: str) -> None:
         """Called if background indexing fails."""
         self.query_one("#preview-pane", Static).update(
             f"Error building index:\n{error}"
         )
+
+    def _show_listing(self, chunks: Sequence[Chunk], described: str = "") -> None:
+        """List the chunks the filters allow, one page at a time.
+
+        Mount at most ``limit`` rows. A large tree holds far more chunks
+        than a reader can look through, and one widget for each costs
+        seconds before the first keystroke: 11,543 chunks took 2.4 s.
+        Say how many there are, so a short list is not read as the whole
+        index.
+        """
+        shown = list(chunks[: self.limit])
+        self._populate_results([(c, 0.0) for c in shown], show_scores=False)
+        counted = (
+            f"{len(shown)} of {len(chunks)}"
+            if len(chunks) > len(shown)
+            else str(len(chunks))
+        )
+        self.sub_title = "   ".join(part for part in (described, counted) if part)
 
     def _populate_results(
         self, results: list[tuple[Chunk, float]], *, show_scores: bool
@@ -202,9 +221,9 @@ class IshApp(App[tuple[Chunk, float] | None]):
             return
 
         if not text:
-            # No words left, so show every chunk the filters allow.
+            # No words to search for, so list what the filters allow.
             chunks = await asyncio.to_thread(self.search_use_case.all_chunks, keep)
-            self._populate_results([(c, 0.0) for c in chunks], show_scores=False)
+            self._show_listing(chunks, filters.describe())
             return
 
         # Perform the actual ML search in a background thread so UI doesn't freeze
