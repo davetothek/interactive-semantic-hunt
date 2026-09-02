@@ -14,6 +14,42 @@ from ish.domain.chunk import Chunk
 log = logging.getLogger(__name__)
 
 
+# Filters written inside the query itself, as `lang:cpp` or `under:/src/`.
+_INLINE_FILTER = re.compile(r"(?:^|\s)(lang|under):(\S+)")
+
+
+def parse_query(text: str) -> tuple[str, tuple[str, ...], str]:
+    """Split a typed query into its text and the filters written into it.
+
+    Return the query with the filter words removed, the languages named,
+    and the path expression. Removing them matters: the embedder should
+    see what the user is looking for, not how they narrowed it.
+    """
+    languages: list[str] = []
+    under = ""
+
+    for key, value in _INLINE_FILTER.findall(text):
+        if key == "lang":
+            languages.extend(part for part in value.split(",") if part)
+        else:
+            under = value
+
+    # Collapse the gaps the removed words leave, so the embedder sees
+    # the sentence the user meant rather than its spacing.
+    remaining = " ".join(_INLINE_FILTER.sub(" ", text).split())
+    return remaining, tuple(languages), under
+
+
+def describe_filters(languages: Sequence[str], under: str) -> str:
+    """Render the active filters for display, or an empty string."""
+    parts = []
+    if languages:
+        parts.append(f"lang: {', '.join(languages)}")
+    if under:
+        parts.append(f"under: {under}")
+    return "   ".join(parts)
+
+
 def build_result_filter(
     lang: Sequence[str], under: str
 ) -> Callable[[Chunk], bool] | None:
