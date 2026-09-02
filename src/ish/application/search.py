@@ -106,7 +106,9 @@ class Search:
         """Release the store."""
         self._vector_store.close()
 
-    def build_index(self, root: Path) -> Sequence[Chunk] | None:
+    def build_index(
+        self, root: Path, on_progress: Callable[[str], None] | None = None
+    ) -> Sequence[Chunk] | None:
         """Bring the index in step with *root*.
 
         Return the chunks the store now holds, or None when it holds none.
@@ -123,7 +125,7 @@ class Search:
             self._vector_store.clear()
             self._reindex = False
 
-        stats = self._index.refresh(root)
+        stats = self._index.refresh(root, on_progress)
         log.info(
             "Index ready: %d files, %d chunks written, %d vectors embedded",
             stats.files_seen,

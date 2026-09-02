@@ -78,7 +78,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         yield Header()
         with Horizontal(id="main-container"):
             yield OptionList(id="results-list")
-            yield Static("Loading index...", id="preview-pane")
+            yield Static("Opening the index...", id="preview-pane")
         yield Input(
             placeholder="Search, or narrow with lang:cpp under:/src/",
             id="search-input",
@@ -94,11 +94,25 @@ class IshApp(App[tuple[Chunk, float] | None]):
     def build_index(self) -> None:
         """Scan and embed the directory in a background thread."""
         try:
-            chunks = self.search_use_case.build_index(self.root_path)
+            chunks = self.search_use_case.build_index(
+                self.root_path, self._report_progress
+            )
             self._all_chunks = list(chunks) if chunks else []
             self.call_from_thread(self._on_index_ready)
         except Exception as e:
             self.call_from_thread(self._on_index_error, str(e))
+
+    def _report_progress(self, message: str) -> None:
+        """Show what the background index is doing.
+
+        A first index runs for minutes. Without this the interface looks
+        indistinguishable from one that has stopped.
+        """
+        self.call_from_thread(self._show_status, message)
+
+    def _show_status(self, message: str) -> None:
+        """Write a line into the preview pane while there is nothing to preview."""
+        self.query_one("#preview-pane", Static).update(f"{message}...")
 
     def _on_index_ready(self) -> None:
         """Called when background indexing completes successfully."""

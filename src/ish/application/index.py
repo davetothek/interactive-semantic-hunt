@@ -7,7 +7,7 @@ files that no longer exist.
 
 import hashlib
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -84,9 +84,19 @@ class Index:
         self._scanner = scan
         self._embedder = embedder
         self._store = vector_store
+        self._report: Callable[[str], None] = lambda _message: None
 
-    def refresh(self, root: Path) -> IndexStats:
-        """Bring the store in step with *root* and report what changed."""
+    def refresh(
+        self, root: Path, on_progress: Callable[[str], None] | None = None
+    ) -> IndexStats:
+        """Bring the store in step with *root* and report what changed.
+
+        Report progress as it goes. A first index of a large tree runs
+        for minutes, and an interface with nothing to show cannot be
+        told apart from one that has hung.
+        """
+        self._report = on_progress or (lambda _message: None)
+        self._report("Looking for source files")
         found = self._stamp_all(self._scanner.discover(root))
         stored = self._store.file_stamps()
 
@@ -100,6 +110,7 @@ class Index:
             removed,
         )
         if not stale:
+            self._report(f"Index ready: {len(found)} files")
             return IndexStats(files_seen=len(found), files_removed=removed)
 
         parsed, embedded = self._reindex(stale, found)
@@ -167,7 +178,9 @@ class Index:
         parsed: dict[Path, list[tuple[Chunk, str]]] = {}
         texts: dict[str, str] = {}
 
-        for path in stale:
+        for number, path in enumerate(stale, 1):
+            if number % 25 == 0 or number == len(stale):
+                self._report(f"Reading {number} of {len(stale)} files")
             chunks = self._scanner.parse_file(path)
             if chunks is None:
                 continue
@@ -200,6 +213,7 @@ class Index:
         ordered = sorted(missing)
         reused = len(texts) - len(ordered)
         log.info("Embedding %d new chunks (%d reused)", len(ordered), reused)
+        self._report(f"Embedding {len(ordered)} chunks ({reused} reused)")
 
         done = 0
         for start in range(0, len(ordered), EMBED_BATCH):
@@ -209,4 +223,5 @@ class Index:
             done += len(batch)
             if len(ordered) > EMBED_BATCH:
                 log.info("  embedded %d of %d", done, len(ordered))
+            self._report(f"Embedded {done} of {len(ordered)} chunks")
         return done

@@ -193,6 +193,8 @@ The default backend is Ollama, reached over HTTP with the standard library. Do n
 
 Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s including the 200 ms debounce.
 
+- **Report progress while indexing.** A first index of a large tree runs for minutes, and an interface showing a fixed message cannot be told apart from one that has hung. `build_index()` takes a callback; the TUI writes it into the preview pane. This was a real complaint: a schema rebuild left the picker showing "Loading index..." with no sign of the 274 chunks being embedded behind it.
+
 ## MCP
 
 `ish-mcp` speaks the Model Context Protocol on stdio. It is the third interface, wired through `bootstrap` exactly like the CLI and TUI, and it offers `search_code`, `list_chunks`, and `index_status`.
