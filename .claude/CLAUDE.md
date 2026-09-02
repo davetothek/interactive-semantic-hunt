@@ -254,7 +254,7 @@ The scan recursively finds files whose suffix a registered parser claims and ign
 
 | scope | options | may a call set it? |
 |---|---|---|
-| query | `lang`, `under`, `limit`, `no_hybrid` | yes |
+| query | `lang`, `under`, `type`, `limit`, `no_hybrid` | yes |
 | index | everything else | **no** |
 
 The CLI is the exception, and only because a CLI invocation *is* the configuration for that run — a flag there is resolved before anything is built.
@@ -268,9 +268,21 @@ For a long-lived interface such as MCP, a call that could set an index-scope opt
 | | options | applies to | prunes? |
 |---|---|---|---|
 | **Index scope** | `include`, `exclude`, `ignore`, `languages`, `git` | what enters the index | yes, through `Scan.accepts()` |
-| **Query scope** | `lang`, `under` | what a search returns | never |
+| **Query scope** | `lang`, `under`, `type` | what a search returns | never |
 
 A query-scope filter that reached `Scan.accepts()` would make the next run prune everything it excluded, so `ish --lang markdown` would silently delete every Python chunk. Keep them apart: query filters are built by `build_result_filter()` and passed to the store as the `keep` predicate, applied before the limit so a filtered search still returns a full page. `test_the_filter_does_not_shrink_the_index` pins this.
+
+`Filters` carries the three query-scope narrowings as one value, so adding a
+fourth does not widen the signature of every interface that passes them.
+`Filters.or_else()` sets the precedence: a filter typed into the query beats a
+call argument, which beats configuration. Each interface calls `parse_query()`
+on the text it was given, so `type:doc` works the same from the command line,
+the TUI, MCP, and Neovim.
+
+`type` sorts a chunk with `category_of()` into `code`, `doc`, `test`, or
+`config`. The path is consulted before the language, so a YAML fixture under
+`tests/` is a test rather than config. The categories partition the corpus:
+every chunk has exactly one.
 
 Every listing path applies `build_result_filter()` too — the CLI scan and the MCP `list_chunks` — so a listing and a search never disagree about what is in view.
 

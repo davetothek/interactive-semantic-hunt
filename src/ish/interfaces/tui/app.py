@@ -12,9 +12,9 @@ from textual.widgets.option_list import Option
 
 from ish.application.preview import load_text
 from ish.application.search import (
+    Filters,
     Search,
     build_result_filter,
-    describe_filters,
     parse_query,
 )
 from ish.domain.chunk import Chunk
@@ -64,12 +64,20 @@ class IshApp(App[tuple[Chunk, float] | None]):
     ]
 
     def __init__(
-        self, search_use_case: Search, root_path: Path, *, limit: int = 50
+        self,
+        search_use_case: Search,
+        root_path: Path,
+        *,
+        limit: int = 50,
+        filters: Filters | None = None,
     ) -> None:
         super().__init__()
         self.search_use_case = search_use_case
         self.root_path = root_path
         self.limit = limit
+        # What the command line already narrowed. A filter typed into
+        # the query line overrides it for as long as it is typed.
+        self._base_filters = filters or Filters()
         self._current_results: list[tuple[Chunk, float]] = []
         self._all_chunks: list[Chunk] = []
 
@@ -80,7 +88,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
             yield OptionList(id="results-list")
             yield Static("Opening the index...", id="preview-pane")
         yield Input(
-            placeholder="Search, or narrow with lang:cpp under:/src/",
+            placeholder="Search, or narrow with lang:cpp type:doc under:/src/",
             id="search-input",
             disabled=True,
         )
@@ -184,10 +192,11 @@ class IshApp(App[tuple[Chunk, float] | None]):
         # Filters may be written into the query, as `lang:cpp under:/src/`.
         # Strip them, so the embedder sees what is wanted rather than how
         # it was narrowed.
-        text, languages, under = parse_query(query)
-        self.sub_title = describe_filters(languages, under)
+        text, typed = parse_query(query)
+        filters = typed.or_else(self._base_filters)
+        self.sub_title = filters.describe()
         try:
-            keep = build_result_filter(languages, under)
+            keep = build_result_filter(filters)
         except ValueError:
             # A half-typed expression is not an error to report.
             return

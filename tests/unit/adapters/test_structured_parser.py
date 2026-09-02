@@ -64,9 +64,7 @@ class TestWholeDocument:
         assert chunk.kind == "document"
         assert chunk.language == "yaml"
 
-    def test_a_list_of_plain_values_is_not_a_list_of_things(
-        self, yaml_parser
-    ) -> None:
+    def test_a_list_of_plain_values_is_not_a_list_of_things(self, yaml_parser) -> None:
         """Tags belong to the document, not to themselves."""
         source = "name: A test\ntags:\n  - one\n  - two\n"
         assert len(yaml_parser.parse(YML, source)) == 1
@@ -220,9 +218,7 @@ class TestOversizedDocuments:
         )
         return f"metadata:\n  description: A large spec\ncases:\n{body}"
 
-    def test_a_small_document_with_no_entries_stays_whole(
-        self, yaml_parser
-    ) -> None:
+    def test_a_small_document_with_no_entries_stays_whole(self, yaml_parser) -> None:
         """Size alone must not divide a document that describes one thing."""
         chunks = yaml_parser.parse(YML, "name: small\nvalue: 1\n")
         assert len(chunks) == 1

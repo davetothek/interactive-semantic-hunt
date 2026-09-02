@@ -7,7 +7,14 @@ import pytest
 
 from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 from ish.application.scan import Scan
-from ish.application.search import Search, build_result_filter
+from ish.application.search import (
+    TYPES,
+    Filters,
+    Search,
+    build_result_filter,
+    category_of,
+    parse_query,
+)
 from ish.domain.chunk import Chunk
 
 
@@ -210,7 +217,13 @@ class TestResultFilters:
     def _search(self, embedder, mixed: Path, **kwargs) -> Search:
         return build(
             embedder,
-            keep=build_result_filter(kwargs.pop("lang", ()), kwargs.pop("under", "")),
+            keep=build_result_filter(
+                Filters(
+                    lang=tuple(kwargs.pop("lang", ())),
+                    under=kwargs.pop("under", ""),
+                    type=tuple(kwargs.pop("type", ())),
+                )
+            ),
             **kwargs,
         )
 
@@ -255,9 +268,9 @@ class TestResultFilters:
     ) -> None:
         """A narrowed query must leave every file indexed."""
         store = PurePythonVectorStore()
-        build(embedder, store, keep=build_result_filter((), "/docs/")).build_index(
-            mixed
-        )
+        build(
+            embedder, store, keep=build_result_filter(Filters(under="/docs/"))
+        ).build_index(mixed)
 
         assert len(store.file_stamps()) == 2
         assert len(store.chunks()) == 2
@@ -302,60 +315,45 @@ class TestParseQuery:
     """Verify filters written into the query text."""
 
     def test_plain_query_is_untouched(self) -> None:
-        from ish.application.search import parse_query
-
-        assert parse_query("state machine") == ("state machine", (), "")
+        assert parse_query("state machine") == ("state machine", Filters())
 
     def test_language_is_taken_out(self) -> None:
-        from ish.application.search import parse_query
-
         assert parse_query("lang:cpp state machine") == (
             "state machine",
-            ("cpp",),
-            "",
+            Filters(lang=("cpp",)),
         )
 
     def test_several_languages(self) -> None:
-        from ish.application.search import parse_query
-
-        text, langs, _ = parse_query("a lang:cpp lang:yaml b")
-        assert langs == ("cpp", "yaml")
+        text, filters = parse_query("a lang:cpp lang:yaml b")
+        assert filters.lang == ("cpp", "yaml")
         # The gaps the removed words left must not survive.
         assert text == "a b"
 
     def test_comma_separated_languages(self) -> None:
-        from ish.application.search import parse_query
-
-        assert parse_query("lang:cpp,yaml x")[1] == ("cpp", "yaml")
+        assert parse_query("lang:cpp,yaml x")[1].lang == ("cpp", "yaml")
 
     def test_path_expression(self) -> None:
-        from ish.application.search import parse_query
+        assert parse_query("under:/src/ x") == ("x", Filters(under="/src/"))
 
-        assert parse_query("under:/src/ x") == ("x", (), "/src/")
+    def test_type_is_taken_out(self) -> None:
+        assert parse_query("type:doc install") == ("install", Filters(type=("doc",)))
 
-    def test_both_together(self) -> None:
-        from ish.application.search import parse_query
+    def test_comma_separated_types(self) -> None:
+        assert parse_query("type:doc,test x")[1].type == ("doc", "test")
 
-        assert parse_query("lang:cpp under:/src/ errors") == (
-            "errors",
-            ("cpp",),
-            "/src/",
-        )
+    def test_all_three_together(self) -> None:
+        text, filters = parse_query("lang:cpp type:test under:/src/ errors")
+        assert text == "errors"
+        assert filters == Filters(lang=("cpp",), under="/src/", type=("test",))
 
     def test_a_dangling_key_is_left_alone(self) -> None:
         """`lang:` with nothing after it is ordinary text."""
-        from ish.application.search import parse_query
-
         assert parse_query("lang: dangling")[0] == "lang: dangling"
 
     def test_a_colon_inside_a_word_is_not_a_filter(self) -> None:
-        from ish.application.search import parse_query
-
-        assert parse_query("slang:cpp") == ("slang:cpp", (), "")
+        assert parse_query("slang:cpp") == ("slang:cpp", Filters())
 
     def test_only_a_filter_leaves_no_query(self) -> None:
-        from ish.application.search import parse_query
-
         assert parse_query("lang:cpp")[0] == ""
 
 
@@ -363,18 +361,110 @@ class TestDescribeFilters:
     """Verify what the interface shows the user."""
 
     def test_nothing_active(self) -> None:
-        from ish.application.search import describe_filters
-
-        assert describe_filters((), "") == ""
+        assert Filters().describe() == ""
 
     def test_language_only(self) -> None:
-        from ish.application.search import describe_filters
+        assert Filters(lang=("cpp",)).describe() == "lang: cpp"
 
-        assert describe_filters(("cpp",), "") == "lang: cpp"
-
-    def test_both(self) -> None:
-        from ish.application.search import describe_filters
-
-        described = describe_filters(("cpp", "yaml"), "/src/")
+    def test_every_filter(self) -> None:
+        described = Filters(("cpp", "yaml"), "/src/", ("doc",)).describe()
         assert "cpp, yaml" in described
         assert "/src/" in described
+        assert "doc" in described
+
+    def test_empty_filters_are_falsy(self) -> None:
+        assert not Filters()
+        assert Filters(type=("doc",))
+
+
+class TestOrElse:
+    """Verify that a typed filter overrides the configured one."""
+
+    def test_empty_falls_back(self) -> None:
+        base = Filters(lang=("python",), under="/src/", type=("code",))
+        assert Filters().or_else(base) == base
+
+    def test_each_field_wins_on_its_own(self) -> None:
+        base = Filters(lang=("python",), under="/src/")
+        merged = Filters(lang=("cpp",)).or_else(base)
+        assert merged.lang == ("cpp",)
+        # A field the query did not mention keeps the configured value.
+        assert merged.under == "/src/"
+
+
+class TestCategories:
+    """Verify how a chunk is sorted into code, doc, test, or config."""
+
+    @staticmethod
+    def _chunk(path: str, language: str = "python") -> Chunk:
+        return Chunk(
+            path=Path(path),
+            text="x",
+            kind="function",
+            language=language,
+            symbol="x",
+            start_line=1,
+            end_line=1,
+        )
+
+    @pytest.mark.parametrize(
+        ("path", "language", "expected"),
+        [
+            ("/p/src/a.py", "python", "code"),
+            ("/p/src/a.cpp", "cpp", "code"),
+            ("/p/README.md", "markdown", "doc"),
+            ("/p/doc/guide.adoc", "asciidoc", "doc"),
+            ("/p/deploy.yaml", "yaml", "config"),
+            ("/p/package.json", "json", "config"),
+            ("/p/tests/test_a.py", "python", "test"),
+            ("/p/test/a.py", "python", "test"),
+            ("/p/src/a_test.py", "python", "test"),
+            ("/p/conftest.py", "python", "test"),
+            ("/p/spec/a.py", "python", "test"),
+        ],
+    )
+    def test_category(self, path: str, language: str, expected: str) -> None:
+        assert category_of(self._chunk(path, language)) == expected
+
+    def test_a_fixture_counts_as_a_test_not_config(self) -> None:
+        """A YAML fixture belongs with the tests that read it."""
+        assert category_of(self._chunk("/p/tests/data/case.yaml", "yaml")) == "test"
+
+    def test_a_doc_inside_tests_counts_as_a_test(self) -> None:
+        assert category_of(self._chunk("/p/tests/README.md", "markdown")) == "test"
+
+    def test_every_category_is_listed(self) -> None:
+        assert set(TYPES) == {"code", "doc", "test", "config"}
+
+
+class TestTypeFilter:
+    """Verify the type filter narrows results."""
+
+    @staticmethod
+    def _chunks() -> list[Chunk]:
+        make = TestCategories._chunk
+        return [
+            make("/p/src/a.py", "python"),
+            make("/p/README.md", "markdown"),
+            make("/p/tests/test_a.py", "python"),
+            make("/p/deploy.yaml", "yaml"),
+        ]
+
+    def test_one_type(self) -> None:
+        keep = build_result_filter(Filters(type=("doc",)))
+        assert keep is not None
+        assert [c.path.name for c in self._chunks() if keep(c)] == ["README.md"]
+
+    def test_several_types(self) -> None:
+        keep = build_result_filter(Filters(type=("doc", "test")))
+        assert keep is not None
+        kept = {c.path.name for c in self._chunks() if keep(c)}
+        assert kept == {"README.md", "test_a.py"}
+
+    def test_type_and_language_both_apply(self) -> None:
+        keep = build_result_filter(Filters(lang=("python",), type=("code",)))
+        assert keep is not None
+        assert [c.path.name for c in self._chunks() if keep(c)] == ["a.py"]
+
+    def test_no_type_keeps_everything(self) -> None:
+        assert build_result_filter(Filters()) is None

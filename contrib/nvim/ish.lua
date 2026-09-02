@@ -1,21 +1,38 @@
 -- lua/utils/ish.lua
 -- Semantic code search backed by ish, presented through fzf-lua.
 --
--- Each keystroke runs one ish query. The index is already built, so a
--- query costs a search rather than a scan, and fzf-lua debounces the
--- typing.
+-- Each keystroke asks the resident ish server one question. The index is
+-- already built, so a query costs a search rather than a scan, and
+-- fzf-lua debounces the typing.
 
 local M = {}
+
+-- Exposed for testing the pieces this module builds.
+local _internal = {}
+
+-- A rank as it is printed at the head of a line, for example "0.71 ".
+local RANK = '^%s*%d+%.%d+%s+'
 
 local function root()
   local found = vim.fs.find('.git', { upward = true, path = vim.uv.cwd() })[1]
   return found and vim.fs.dirname(found) or vim.uv.cwd()
 end
 
+-- fzf-lua hands the typed query to a live callback as a string in some
+-- versions and as a table in others. Take either.
+local function query_text(query)
+  if type(query) == 'table' then
+    query = query[1]
+  end
+  return type(query) == 'string' and query or ''
+end
+
+-- Build the command that runs ish directly, for when the server cannot
+-- be reached.
 local function command(query, opts)
   local parts = {
     'ish',
-    vim.fn.shellescape(query),
+    vim.fn.shellescape(query_text(query)),
     vim.fn.shellescape(opts.cwd or root()),
     '--format grep',
     '--limit ' .. (opts.limit or 40),
@@ -23,28 +40,68 @@ local function command(query, opts)
   if opts.lang and #opts.lang > 0 then
     table.insert(parts, '--lang ' .. table.concat(opts.lang, ' '))
   end
-  if opts.under then
+  if opts.type and #opts.type > 0 then
+    table.insert(parts, '--type ' .. table.concat(opts.type, ' '))
+  end
+  if opts.under and opts.under ~= '' then
     table.insert(parts, '--under ' .. vim.fn.shellescape(opts.under))
   end
   -- ish reports progress on stderr; the picker wants only results.
   return table.concat(parts, ' ') .. ' 2>/dev/null'
 end
 
+-- Move the rank to the head of the line.
+--
+-- ish prints `path:line:col:[0.71] kind symbol`, which puts the number
+-- the results are ordered by in the middle of the text. Read it out and
+-- print it first, so the column the eye follows is the leftmost one.
+local function render(line)
+  local fzf = require('fzf-lua')
+  local head, rank, tail = line:match('^(.-:%d+:%d+:)%[([%d%.]+)%]%s*(.*)$')
+  if not head then
+    return fzf.make_entry.file(line, { file_icons = true, colors = true })
+  end
+  local entry = fzf.make_entry.file(head .. tail, { file_icons = true, colors = true })
+  return fzf.utils.ansi_codes.yellow(rank) .. ' ' .. entry
+end
+
+-- Take the rank back off before fzf-lua reads the path out of a line.
+-- The previewer and every action parse the entry through this hook, so
+-- one place covers them all.
+local function unrender(entry)
+  local plain = require('fzf-lua.utils').strip_ansi_coloring(entry)
+  return (plain:gsub(RANK, ''))
+end
+
 --- Search the whole project by meaning.
---- Type `lang:cpp` or `under:/src/` inside the query to narrow it.
+---
+--- Narrow it by writing a filter into the query: `lang:cpp`, `type:doc`,
+--- `type:test`, or `under:/src/`. The server reads them out of the query
+--- and the embedder never sees them.
+---
+--- Ask the resident server, which is started on first use, and fall back
+--- to running ish directly if it cannot be reached. A fresh process per
+--- keystroke costs about half a second; the server answers in a tenth of
+--- that.
 function M.search(opts)
   opts = opts or {}
+  opts.cwd = opts.cwd or root()
+  local server = require('utils.ish_server')
+
   require('fzf-lua').fzf_live(function(query)
-    if not query or query == '' then
+    local text = query_text(query)
+    if text == '' then
       return nil
     end
-    return command(query, opts)
+    if server.ensure() then
+      return server.search_now(text, opts)
+    end
+    return command(text, opts)
   end, {
     prompt = opts.prompt or 'Semantic❯ ',
     previewer = 'builtin',
-    fn_transform = function(line)
-      return require('fzf-lua').make_entry.file(line, { file_icons = true, colors = true })
-    end,
+    fn_transform = render,
+    _fmt = { from = unrender },
     actions = require('fzf-lua').defaults.actions.files,
     fzf_opts = { ['--delimiter'] = ':', ['--nth'] = '4..' },
   })
@@ -57,6 +114,13 @@ function M.search_lang(languages, opts)
   return M.search(opts)
 end
 
+--- Search only the kinds given: code, doc, test, or config.
+function M.search_type(types, opts)
+  opts = vim.tbl_extend('force', opts or {}, { type = types })
+  opts.prompt = opts.prompt or ('Semantic[' .. table.concat(types, ',') .. ']❯ ')
+  return M.search(opts)
+end
+
 --- Search below the current file's directory.
 function M.search_here(opts)
   local dir = vim.fs.dirname(vim.api.nvim_buf_get_name(0))
@@ -64,5 +128,11 @@ function M.search_here(opts)
   opts.prompt = opts.prompt or 'Semantic(here)❯ '
   return M.search(opts)
 end
+
+_internal.query_text = query_text
+_internal.command = command
+_internal.render = render
+_internal.unrender = unrender
+M._internal = _internal
 
 return M

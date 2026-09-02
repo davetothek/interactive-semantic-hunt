@@ -377,3 +377,30 @@ class TestPerCallNarrowing:
         finally:
             made.close()
         assert "No results" in out or "load_config" not in out
+
+
+class TestOutputShape:
+    """Verify a caller can ask for the shape it can parse."""
+
+    def test_grep_shape_on_request(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        out = tools.search({"query": "config", "path": str(project), "format": "grep"})
+        for line in out.splitlines():
+            parts = line.split(":")
+            assert parts[1].isdigit(), line
+            assert parts[2] == "1", line
+
+    def test_plain_shape_by_default(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        out = tools.search({"query": "config", "path": str(project)})
+        assert out.startswith("[")
+
+    def test_listing_honours_the_shape(self, tools: IshTools, project: Path) -> None:
+        out = tools.list_chunks({"path": str(project), "format": "grep"})
+        assert all(line.split(":")[2] == "1" for line in out.splitlines())
+
+    def test_the_shape_is_offered_by_the_tools(self, tools: IshTools) -> None:
+        search = next(t for t in tools.tools() if t.name == "search_code")
+        assert "format" in search.schema["properties"]

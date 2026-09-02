@@ -47,7 +47,7 @@ def test_query_output(
     out = capsys.readouterr().out
     assert "[0.95] foo.py:1-2  function  foo" in out
     mock_search_instance.run.assert_called_once_with(
-        project.resolve(), "my search", limit=5
+        project.resolve(), "my search", limit=5, keep=None
     )
 
 
@@ -86,7 +86,7 @@ def test_query_output_ollama(
     out = capsys.readouterr().out
     assert "[0.95] foo.py:1-2  function  foo" in out
     mock_search_instance.run.assert_called_once_with(
-        project.resolve(), "my search", limit=5
+        project.resolve(), "my search", limit=5, keep=None
     )
 
 

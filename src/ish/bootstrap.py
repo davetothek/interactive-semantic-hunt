@@ -274,5 +274,12 @@ def build_search(settings: Settings, root: Path) -> Search:
         vector_store=build_vector_store(settings, root, embedder),
         reindex=settings.reindex,
         hybrid=not settings.no_hybrid,
-        keep=build_result_filter(settings.lang, settings.under),
+        keep=build_result_filter(settings_filters(settings)),
     )
+
+
+def settings_filters(settings: Settings):
+    """Return the result filters the configuration asks for."""
+    from ish.application.search import Filters
+
+    return Filters(settings.lang, settings.under, settings.type)
