@@ -127,7 +127,11 @@ class VectorStore(Protocol):
         ...
 
     def chunks(self) -> Sequence[Chunk]:
-        """Return every chunk the store holds, for a plain listing."""
+        """Return every chunk the store holds, for a plain listing.
+
+        A returned chunk may carry no text. A store records where a
+        chunk is, and a caller that needs the source reads the file.
+        """
         ...
 
     def search(

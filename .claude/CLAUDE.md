@@ -169,7 +169,10 @@ Measured on a real firmware project (10k files, 30,317 chunks): scanning and par
 
 - **Vectors persist every 64 chunks; chunk rows land at the end of a file.** So a stopped run keeps the expensive half. Restarting a firmware index that had been killed reported `Embedding 6136 new chunks (256 reused)` — content-keyed vectors recovered exactly.
 - An index showing `chunks=0` with a positive vector count is a run in progress or one that was stopped, not a corrupt index.
-- The index holds the **verbatim source text**, so it inherits nothing but the permissions of `$XDG_DATA_HOME`. Roughly 6 KB per chunk.
+- **The index stores where a chunk is, never what it says.** It holds vectors, paths, line ranges, kinds, and symbol names. A preview reads the file, which also means it always shows the file as it is now.
+- Symbol names are stored, and a heading path is a symbol, so prose that appears in a heading is in the index by design. Body text is not.
+- **A schema change must vacuum.** Dropping a table frees its pages without clearing them, so an index built when the source was still stored kept that source readable on disk. `TestMigrationErasesOldContent` pins this.
+- The lexical half indexes `symbol` and `terms` only. It is gated to identifier-like queries, which match those columns anyway, so dropping the body cost nothing measurable.
 
 Embedding models are often trained with a task prefix for stored text and another for queries, so the `Embedder` port has `embed_documents` and `embed_query` rather than one method. The table lives in `adapters/embedder/prefixes.py`, keyed by model name, because the convention belongs to the model and not to the backend serving it. Measured on this repo with nomic-embed-text over 16 queries: top-1 accuracy 62% without the prefixes, 75% with.
 

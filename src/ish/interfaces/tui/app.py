@@ -10,6 +10,7 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from ish.application.preview import load_text
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import format_selection, symbol_of
@@ -140,7 +141,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
             return
 
         chunk, _ = self._current_results[index]
-        code = chunk.text
+        code = load_text(chunk)
         # Highlight with the chunk's own language so every parser renders right.
         syntax = Syntax(
             code,

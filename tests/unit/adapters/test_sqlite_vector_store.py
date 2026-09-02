@@ -158,12 +158,31 @@ class TestSearch:
     def test_empty_store_returns_nothing(self, store: SqliteVectorStore) -> None:
         assert store.search([1.0, 0.0]) == []
 
-    def test_chunk_round_trips(self, store: SqliteVectorStore) -> None:
+    def test_location_round_trips(self, store: SqliteVectorStore) -> None:
+        """Everything but the source comes back."""
         original = make_chunk("f")
         store.add_vectors({"h": [1.0, 0.0]})
         store.set_file(Path("a.py"), STAMP, [(original, "h")])
+
         ((restored, _score),) = store.search([1.0, 0.0], limit=1)
-        assert restored == original
+        assert restored.path == original.path
+        assert restored.symbol == original.symbol
+        assert restored.kind == original.kind
+        assert restored.language == original.language
+        assert restored.start_line == original.start_line
+        assert restored.end_line == original.end_line
+
+    def test_the_source_is_not_stored(self, store: SqliteVectorStore) -> None:
+        """An index must hold no readable copy of the code it indexed."""
+        secret = make_chunk("f")
+        store.add_vectors({"h": [1.0, 0.0]})
+        store.set_file(Path("a.py"), STAMP, [(secret, "h")])
+
+        ((restored, _score),) = store.search([1.0, 0.0], limit=1)
+        assert restored.text == ""
+
+        raw = Path(store._path).read_bytes()
+        assert secret.text.encode() not in raw
 
     def test_null_symbol_round_trips(self, store: SqliteVectorStore) -> None:
         anonymous = Chunk(
@@ -577,3 +596,36 @@ class TestRecordedRoot:
         junk = tmp_path / "junk.db"
         junk.write_text("not a database")
         assert SqliteVectorStore.read_root(junk) is None
+
+
+class TestMigrationErasesOldContent:
+    """Verify that rebuilding an index removes what the old one held.
+
+    Dropping a table frees its pages without clearing them, so an index
+    built when the source was still stored would keep that source
+    readable on disk long after the schema stopped storing it.
+    """
+
+    def test_old_rows_are_not_recoverable(self, db_path: Path) -> None:
+        import sqlite3 as sqlite_module
+
+        secret = b"TOP_SECRET_BODY_MARKER_0123456789"
+
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite_module.connect(db_path)
+        db.executescript(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, text TEXT);"
+        )
+        db.execute("INSERT INTO meta VALUES ('schema_version', '1')")
+        for _ in range(200):
+            db.execute("INSERT INTO chunks (text) VALUES (?)", (secret.decode(),))
+        db.commit()
+        db.close()
+
+        assert secret in db_path.read_bytes(), "the fixture must plant the marker"
+
+        rebuilt = SqliteVectorStore(db_path, model_id="m")
+        rebuilt.close()
+
+        assert secret not in db_path.read_bytes()
