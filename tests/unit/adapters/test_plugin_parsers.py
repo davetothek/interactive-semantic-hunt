@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 from ish.adapters.parser.plugins import load_parsers, plugin_dir
 from ish.application.ports.parser import Parser
 
-GOOD = '''
+GOOD = """
 from pathlib import Path
 from ish.domain.chunk import Chunk
 
@@ -22,7 +24,7 @@ class Toy:
 
 def parser():
     return Toy()
-'''
+"""
 
 
 def write(directory: Path, name: str, body: str) -> Path:
