@@ -33,6 +33,53 @@ _TEST_PATH = re.compile(
 # The categories a chunk can fall into. Every chunk has exactly one.
 TYPES = ("code", "doc", "test", "config")
 
+# The names a reader is likely to type for a language ish stores under
+# another name. A parser owns several file kinds, so the name it is
+# registered under is not always the one that comes to mind: the C++
+# parser reads C, and few people write "asciidoc" when they mean adoc.
+LANGUAGE_ALIASES = {
+    "c": "cpp",
+    "c++": "cpp",
+    "cc": "cpp",
+    "cxx": "cpp",
+    "h": "cpp",
+    "hpp": "cpp",
+    "adoc": "asciidoc",
+    "asc": "asciidoc",
+    "md": "markdown",
+    "mdown": "markdown",
+    "py": "python",
+    "python3": "python",
+    "yml": "yaml",
+}
+
+
+def canonical_language(name: str) -> str:
+    """Return the name ish stores a language under.
+
+    Leave an unknown name alone, so a filter for a language no parser
+    reads returns nothing rather than an error.
+    """
+    key = name.strip().lower()
+    return LANGUAGE_ALIASES.get(key, key)
+
+
+def _unique(names) -> tuple[str, ...]:
+    """Return the names once each, in the order they were given.
+
+    Two spellings of one language resolve to a single name, so keep the
+    display and the filter free of the repeat.
+    """
+    seen: dict[str, None] = {}
+    for name in names:
+        seen[name] = None
+    return tuple(seen)
+
+
+def language_names() -> tuple[str, ...]:
+    """Return every name a user may type for a language, sorted."""
+    return tuple(sorted(LANGUAGE_ALIASES))
+
 
 def category_of(chunk: Chunk) -> str:
     """Return what a chunk is for: test, doc, config, or code.
@@ -60,6 +107,20 @@ class Filters:
     lang: tuple[str, ...] = ()
     under: str = ""
     type: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Store the canonical name of every language and kind.
+
+        Normalize once, at the edge, so that everything downstream —
+        the filter, the display, and any comparison — agrees on one
+        spelling of each name.
+        """
+        object.__setattr__(
+            self, "lang", _unique(canonical_language(name) for name in self.lang)
+        )
+        object.__setattr__(
+            self, "type", _unique(name.strip().lower() for name in self.type)
+        )
 
     def __bool__(self) -> bool:
         """Report whether anything is narrowed."""

@@ -68,6 +68,10 @@ the command line, the picker, Neovim, and MCP. The words are taken out
 before the query is embedded, so the model sees the question rather than
 how it was narrowed.
 
+A language may be named however it comes to mind. `c`, `c++`, `cxx`, `h`, and
+`hpp` all mean `cpp`, because one parser reads them all; `adoc` means
+`asciidoc`, `md` means `markdown`, `py` means `python`, and `yml` means `yaml`.
+
 `type:` sorts every chunk into exactly one kind. A path decides before a
 language does, so a YAML fixture counts as a test rather than as config:
 

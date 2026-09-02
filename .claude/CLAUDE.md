@@ -279,6 +279,12 @@ call argument, which beats configuration. Each interface calls `parse_query()`
 on the text it was given, so `type:doc` works the same from the command line,
 the TUI, MCP, and Neovim.
 
+`canonical_language()` maps the name a reader types to the name a parser is
+registered under, so `lang:c`, `lang:h`, and `lang:cpp` name one parser. A
+`Filters` normalizes at construction, which keeps the filter, the display, and
+every comparison on one spelling. The CLI derives its `--lang` choices from the
+registry plus the alias table, so both interfaces accept the same words.
+
 `type` sorts a chunk with `category_of()` into `code`, `doc`, `test`, or
 `config`. The path is consulted before the language, so a YAML fixture under
 `tests/` is a test rather than config. The categories partition the corpus:

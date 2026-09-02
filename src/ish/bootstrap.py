@@ -124,8 +124,14 @@ def build_parsers(settings: Settings) -> list[Parser]:
     Build every registered parser when the ``languages`` option is empty.
     Otherwise build only the languages it names, in that order.
     """
+    from ish.application.search import canonical_language
+
     available = all_parsers(settings)
-    wanted = settings.languages or tuple(available)
+    # Accept the same spellings the query line accepts, so `--languages c`
+    # and `lang:c` name one parser.
+    wanted = tuple(canonical_language(name) for name in settings.languages) or tuple(
+        available
+    )
 
     unknown = [name for name in wanted if name not in available]
     if unknown:
