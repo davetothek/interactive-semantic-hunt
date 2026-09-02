@@ -31,6 +31,20 @@ def format_result_line(chunk: Chunk, score: float) -> str:
     return f"[{score:.2f}] {format_chunk_line(chunk)}"
 
 
+def format_grep_line(chunk: Chunk, score: float | None = None) -> str:
+    """Format a result the way a grep-driven editor expects.
+
+    ``path:line:column:text`` is what an editor picker parses to open a
+    file at a position and to preview it, so emitting it directly saves
+    every caller from parsing the human format.
+    """
+    prefix = f"[{score:.2f}] " if score is not None else ""
+    return (
+        f"{display_path(chunk.path)}:{chunk.start_line}:1:"
+        f"{prefix}{chunk.kind}  {symbol_of(chunk)}"
+    )
+
+
 def format_selection(chunk: Chunk) -> str:
     """Format a selected chunk as an editor-friendly ``path:line`` locator."""
     return f"{display_path(chunk.path)}:{chunk.start_line}"

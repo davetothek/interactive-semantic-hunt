@@ -133,6 +133,14 @@ class Settings:
             metavar="LANG",
         ),
     )
+    format: str = field(
+        default="plain",
+        metadata=_opt(
+            "Output shape. Use grep for an editor picker.",
+            scope="query",
+            choices=["plain", "grep"],
+        ),
+    )
     color: str = field(
         default="auto",
         metadata=_opt("Control log color.", choices=["auto", "always", "never"]),
