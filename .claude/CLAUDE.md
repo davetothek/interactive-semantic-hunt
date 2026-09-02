@@ -142,12 +142,14 @@ Interfaces call `bootstrap.build_scan(settings)` / `bootstrap.build_search(setti
 Precedence, resolved only in `load_settings()`:
 
 ```
-defaults < ~/.config/ish/ish.toml < ./ish.toml (searched upward) < ISH_* env < CLI flags
+defaults < ~/.config/ish/config.toml < ./.ish/config.toml (searched upward) < ISH_* env < CLI flags
 ```
 
 - **No use case ever receives a `Settings` object.** `Scan` and `Search` take explicit constructor arguments; `bootstrap` reads the settings and passes values. Keep the dependency arrow pointing at values, not at a config bag.
 - There is deliberately no way to declare a config-only or CLI-only option. `tests/unit/test_settings.py` enforces the parity in both directions.
-- An unknown key warns and is skipped. A malformed or unreadable file raises `ConfigError` and exits 1.
+- An unknown key warns and is skipped. A malformed or unreadable file raises `ConfigError` and exits 1. Anything that is not a file is absent, so a directory of that name is skipped rather than reported.
+- The project config is `.ish/config.toml`, keeping a tree's settings beside anything else the tool leaves there. The older flat `ish.toml` is still read, second, so a file written before this keeps working.
+- **A refresh reads the configuration beside each tree, not beside the parent.** An index-scope option decides what belongs in an index, so refreshing a child under the parent's options prunes everything those options reject. A tree that git ignores, kept by a `git = false` of its own, would lose every chunk it holds. `TestRefreshReadsEachTreeConfig` pins this against a real git repository, because git shows tracked files *and* untracked ones no rule covers — the child has to be ignored, not merely untracked, for the parent to reject it.
 
 `src/ish/__init__.py` must stay free of layer imports — `tests/unit/test_package.py` enforces this in a fresh interpreter.
 

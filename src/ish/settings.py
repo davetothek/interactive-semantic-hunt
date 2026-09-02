@@ -19,6 +19,9 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+CONFIG_DIRNAME = ".ish"
+CONFIG_BASENAME = "config.toml"
+# The older flat name, still read so an existing file keeps working.
 CONFIG_FILENAME = "ish.toml"
 ENV_PREFIX = "ISH_"
 
@@ -253,7 +256,15 @@ def _accept(source: str, raw: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
-    """Read one config file. Return an empty mapping when it is absent."""
+    """Read one config file. Return an empty mapping when it is absent.
+
+    Treat anything that is not a file as absent, so a directory of that
+    name is skipped rather than reported. A file that exists and cannot
+    be read is still an error, because ignoring it would silently drop
+    the settings it holds.
+    """
+    if path.exists() and not path.is_file():
+        return {}
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -267,18 +278,35 @@ def _read_toml(path: Path) -> dict[str, Any]:
     return _accept(str(path), raw)
 
 
+def config_names(directory: Path) -> tuple[Path, ...]:
+    """Return the config files to look for in *directory*, in order.
+
+    Keep the settings for a tree in one place, beside anything else the
+    tool leaves there. Read the older flat name second, so a file
+    written before this still applies.
+    """
+    return (
+        directory / CONFIG_DIRNAME / CONFIG_BASENAME,
+        directory / CONFIG_FILENAME,
+    )
+
+
 def user_config_path() -> Path:
     """Return the user-level config path, honoring ``XDG_CONFIG_HOME``."""
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "ish" / CONFIG_FILENAME
+    directory = Path(base) / "ish"
+    for candidate in (directory / CONFIG_BASENAME, directory / CONFIG_FILENAME):
+        if candidate.is_file():
+            return candidate
+    return directory / CONFIG_BASENAME
 
 
 def find_project_config(start: Path) -> Path | None:
     """Search *start* and its parents for a project config file."""
     for directory in [start, *start.parents]:
-        candidate = directory / CONFIG_FILENAME
-        if candidate.is_file():
-            return candidate
+        for candidate in config_names(directory):
+            if candidate.is_file():
+                return candidate
     return None
 
 
