@@ -104,22 +104,37 @@ PARSERS: dict[str, Callable[[], Parser]] = {
 }
 
 
+def all_parsers(settings: Settings) -> dict[str, Callable[[], Parser]]:
+    """Return every parser available, built in or written by the user.
+
+    A user parser replaces a built-in one of the same language, which is
+    how a project teaches ish about its own dialect of a format.
+    """
+    if not settings.plugins:
+        return dict(PARSERS)
+
+    from ish.adapters.parser.plugins import load_parsers
+
+    return {**PARSERS, **load_parsers()}
+
+
 def build_parsers(settings: Settings) -> list[Parser]:
     """Return the enabled source parsers.
 
     Build every registered parser when the ``languages`` option is empty.
     Otherwise build only the languages it names, in that order.
     """
-    wanted = settings.languages or tuple(PARSERS)
+    available = all_parsers(settings)
+    wanted = settings.languages or tuple(available)
 
-    unknown = [name for name in wanted if name not in PARSERS]
+    unknown = [name for name in wanted if name not in available]
     if unknown:
-        valid = ", ".join(sorted(PARSERS))
+        valid = ", ".join(sorted(available))
         raise ValueError(
             f"Unknown language(s): {', '.join(unknown)}. Valid languages: {valid}"
         )
 
-    return [PARSERS[name]() for name in wanted]
+    return [available[name]() for name in wanted]
 
 
 def build_embedder(settings: Settings) -> Embedder:
