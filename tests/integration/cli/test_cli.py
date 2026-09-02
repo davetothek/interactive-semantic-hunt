@@ -266,3 +266,25 @@ class TestConfigFile:
         assert exit_code == 1
         assert "Cannot parse" in captured.err
         assert captured.out == ""
+
+
+class TestGrepFormat:
+    """Verify the shape an editor picker consumes, end to end."""
+
+    def test_scan_output_is_grep_shaped(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        exit_code = main(["", str(project), "--format", "grep"])
+        out = capsys.readouterr().out
+
+        assert exit_code == 0
+        for line in out.strip().splitlines():
+            parts = line.split(":")
+            assert parts[1].isdigit(), line
+            assert parts[2] == "1", line
+
+    def test_plain_remains_the_default(
+        self, project: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["", str(project)])
+        assert "-" in capsys.readouterr().out.split()[0]

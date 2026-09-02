@@ -12,11 +12,21 @@ from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.cli.log import resolve_color, setup_logging
 from ish.interfaces.format import (
     format_chunk_line,
+    format_grep_line,
     format_result_line,
     format_selection,
 )
 
 log = logging.getLogger("ish.cli")
+
+
+def _render(chunk, shape: str, score: float | None = None) -> str:
+    """Render one result in the shape the caller asked for."""
+    if shape == "grep":
+        return format_grep_line(chunk, score)
+    if score is None:
+        return format_chunk_line(chunk)
+    return format_result_line(chunk, score)
 
 
 def _run_query(args: CliArgs) -> int:
@@ -25,7 +35,7 @@ def _run_query(args: CliArgs) -> int:
     try:
         results = search_use_case.run(args.path, args.query, limit=args.settings.limit)
         for chunk, score in results:
-            sys.stdout.write(f"{format_result_line(chunk, score)}\n")
+            sys.stdout.write(f"{_render(chunk, args.settings.format, score)}\n")
     finally:
         search_use_case.close()
     return 0
@@ -58,7 +68,7 @@ def _run_scan(args: CliArgs) -> int:
     keep = build_result_filter(args.settings.lang, args.settings.under)
     for chunk in scanner.run(args.path):
         if keep is None or keep(chunk):
-            sys.stdout.write(f"{format_chunk_line(chunk)}\n")
+            sys.stdout.write(f"{_render(chunk, args.settings.format)}\n")
     return 0
 
 
