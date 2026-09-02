@@ -105,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
+        if args.settings.refresh:
+            bootstrap.refresh_indexes(args.settings, args.path)
         if args.query:
             return _run_query(args)
         if args.interactive:

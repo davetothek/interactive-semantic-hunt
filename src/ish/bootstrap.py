@@ -244,6 +244,16 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
     if not others:
         return primary
 
+    if primary is None:
+        # Nothing here may be written, so a search reads whatever the
+        # indexes below already hold. Say so: a stale answer and a fresh
+        # one look the same.
+        log.warning(
+            "Reading %d stored indexes under %s without refreshing them. "
+            "Pass --refresh to bring them up to date first.",
+            len(others),
+            resolved,
+        )
     log.info("Searching %d indexes under %s", len(others) + bool(primary), resolved)
     return FederatedVectorStore(primary, others)
 
@@ -282,6 +292,30 @@ def build_search(settings: Settings, root: Path) -> Search:
         hybrid=not settings.no_hybrid,
         keep=build_result_filter(settings_filters(settings)),
     )
+
+
+def refresh_indexes(settings: Settings, root: Path, on_progress=None) -> list[Path]:
+    """Bring every stored index at or below *root* up to date.
+
+    A search of a parent reads the indexes beneath it and writes to
+    none, because choosing one to write to would be wrong. Refreshing
+    therefore means visiting each tree in turn. Return the trees
+    refreshed, in order.
+    """
+    from dataclasses import replace
+
+    resolved = root.resolve()
+    trees = sorted(find_indexes(settings, resolved)) or [resolved]
+    # Each tree writes to its own index, so federation must be off.
+    one_tree = replace(settings, federate=False, refresh=False)
+    for tree in trees:
+        log.info("Refreshing the index for %s", tree)
+        search = build_search(one_tree, tree)
+        try:
+            search.build_index(tree, on_progress)
+        finally:
+            search.close()
+    return trees
 
 
 def settings_filters(settings: Settings):

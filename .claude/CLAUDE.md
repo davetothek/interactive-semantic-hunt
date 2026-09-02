@@ -162,6 +162,18 @@ The index persists in SQLite, one file per scanned tree, under `$XDG_CACHE_HOME/
 - **Orphans are pruned to the scanned tree only**, so indexing a subdirectory never discards its siblings.
 - `remove_files` and `clear` keep vectors, since restoring a file should cost no embedding. `prune_vectors` sweeps unreferenced ones on demand.
 - Interfaces must call `Search.close()`, which releases the database.
+- **A search of a parent refreshes nothing.** With indexes below it and none of
+  its own, the store has no writable primary, so it reads what is stored and
+  warns. `bootstrap.refresh_indexes()` visits each tree in turn, with federation
+  off so each writes to its own index. Without the warning a stale answer and a
+  fresh one look the same; that was a real defect, an integration test index
+  left one-fifth built answered every root search for hours.
+- **Embedding is bound by tokens, not by cores.** Measured on 14 cores with
+  nomic-embed-text over Ollama: 32 chunks of 3 tokens cost 0.8 s, of 50 tokens
+  5.3 s, of 1300 tokens 236 s. llama-server takes `-t 14` and still uses two
+  cores. Raising `OLLAMA_NUM_PARALLEL` changes nothing, because Ollama pins an
+  embedding model to one slot. Throughput is about 270 tokens per second, so
+  chunk size, not concurrency, sets the cost of an index.
 
 Measured on this repo (33 files, 104 chunks): a cold index costs ~87s with Ollama, ~51s with llama.cpp, which parallelizes bulk embedding better. A warm query costs ~0.20s.
 
@@ -193,6 +205,10 @@ The default backend is Ollama, reached over HTTP with the standard library. Do n
 
 Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s including the 200 ms debounce.
 
+- **The listing mounts a page, not the index.** `_show_listing()` caps at
+  `tui_limit` and names the total in `sub_title`. One widget per chunk costs
+  seconds: one firmware tree's 11,543 chunks took 2.4 s before the first keystroke, and
+  0.82 s once capped.
 - **Report progress while indexing.** A first index of a large tree runs for minutes, and an interface showing a fixed message cannot be told apart from one that has hung. `build_index()` takes a callback; the TUI writes it into the preview pane. This was a real complaint: a schema rebuild left the picker showing "Loading index..." with no sign of the 274 chunks being embedded behind it.
 
 ## MCP

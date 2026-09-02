@@ -103,6 +103,7 @@ nvim $(ish -i src/)
 | `--under REGEX` | Show results only from matching paths |
 | `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |
 | `--model NAME` | Override the backend model |
+| `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 
@@ -126,6 +127,22 @@ line, and prints the rank in the leftmost column. `search_lang({'cpp'})`,
 `contrib/nvim/ish_server.lua` keeps one `ish-mcp` process per session. It
 starts on the first search and is reused after that, which cuts a keystroke
 from about 500 ms to about 150 ms. Copy it beside the picker.
+
+## Use from Python
+
+```python
+from ish.interfaces.python.api import Ish
+
+with Ish("src/") as ish:
+    for chunk, score in ish.search("type:doc how to configure", limit=5):
+        print(score, chunk.path, chunk.symbol)
+    print(ish.status())
+```
+
+`Ish` holds the index open, so a second query costs a search rather than a
+process start. It offers `search()`, `chunks()`, `index()`, `refresh_all()`,
+and `status()`, and reads `lang:`, `type:`, and `under:` out of the query
+exactly as the other interfaces do.
 
 ## Use from an agent
 
@@ -151,7 +168,9 @@ shrink an index that another call depends on.
 ## Index
 
 The index persists in SQLite under `$XDG_DATA_HOME/ish/`, one file per scanned
-tree. A repeated query reuses it, so only changed files are parsed and only new
+tree. **A search of a parent reads the indexes below it and refreshes none** —
+choosing one of them to write to would be wrong — so it warns and offers
+`--refresh`, which visits each tree in turn. A repeated query reuses it, so only changed files are parsed and only new
 text is embedded. A renamed file re-embeds nothing.
 
 Each index records the tree it was built from, so searching a directory also

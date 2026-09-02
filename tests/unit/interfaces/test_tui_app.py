@@ -511,6 +511,7 @@ class TestInlineFilters:
         assert "markdown" in run(body())
 
     def test_clearing_the_filter_clears_the_display(self) -> None:
+        """Only the count remains once no filter narrows the view."""
         app = IshApp(self._mixed(), Path("."))
 
         async def body():
@@ -523,7 +524,9 @@ class TestInlineFilters:
                 await asyncio.sleep(SETTLE)
                 return app.sub_title
 
-        assert run(body()) == ""
+        shown = run(body())
+        assert "lang" not in shown
+        assert shown.isdigit()
 
     def test_a_half_typed_expression_does_not_crash(self) -> None:
         """`under:(` is not yet a valid expression."""
@@ -681,5 +684,75 @@ class TestQueryLineFilters:
                 await pilot.press(*"type:code alpha")
                 await asyncio.sleep(SETTLE)
                 assert [c.path.name for c, _ in app._current_results] == ["mod.py"]
+
+        run(body())
+
+
+class TestListingIsCapped:
+    """Verify the listing mounts a page, not the whole index.
+
+    One widget per chunk costs seconds on a large tree: 11,543 chunks
+    took 2.4 s before the first keystroke.
+    """
+
+    @staticmethod
+    def _many(count: int) -> list[Chunk]:
+        return [chunk(f"sym{i}", line=i + 1) for i in range(count)]
+
+    def test_startup_mounts_at_most_the_limit(self) -> None:
+        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert len(app._current_results) == 25
+
+        run(body())
+
+    def test_the_header_says_how_many_there_are(self) -> None:
+        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.sub_title == "25 of 500"
+
+        run(body())
+
+    def test_a_short_listing_shows_only_its_size(self) -> None:
+        app = IshApp(FakeSearch(self._many(3)), Path("."), limit=25)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.sub_title == "3"
+
+        run(body())
+
+    def test_clearing_the_query_stays_capped(self) -> None:
+        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"sym1")
+                await asyncio.sleep(SETTLE)
+                for _ in range(4):
+                    await pilot.press("backspace")
+                await asyncio.sleep(SETTLE)
+                assert len(app._current_results) == 25
+
+        run(body())
+
+    def test_the_filter_is_still_described(self) -> None:
+        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"lang:python")
+                await asyncio.sleep(SETTLE)
+                assert "lang: python" in app.sub_title
+                assert "25 of 500" in app.sub_title
 
         run(body())
