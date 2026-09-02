@@ -7,7 +7,7 @@ import logging
 import sys
 
 from ish import bootstrap
-from ish.application.search import build_result_filter
+from ish.application.search import build_result_filter, parse_query
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.cli.log import resolve_color, setup_logging
 from ish.interfaces.format import (
@@ -31,9 +31,16 @@ def _render(chunk, shape: str, score: float | None = None) -> str:
 
 def _run_query(args: CliArgs) -> int:
     """Search for the query and print the ranked results."""
+    # Accept `lang:cpp type:doc` inside the query as well as as flags,
+    # so a query copied from the interactive view behaves the same here.
+    text, typed = parse_query(args.query)
+    keep = build_result_filter(typed.or_else(bootstrap.settings_filters(args.settings)))
+
     search_use_case = bootstrap.build_search(args.settings, args.path)
     try:
-        results = search_use_case.run(args.path, args.query, limit=args.settings.limit)
+        results = search_use_case.run(
+            args.path, text, limit=args.settings.limit, keep=keep
+        )
         for chunk, score in results:
             sys.stdout.write(f"{_render(chunk, args.settings.format, score)}\n")
     finally:
@@ -51,7 +58,12 @@ def _run_tui(args: CliArgs) -> int:
 
     search_use_case = bootstrap.build_search(args.settings, args.path)
     try:
-        app = IshApp(search_use_case, args.path, limit=args.settings.tui_limit)
+        app = IshApp(
+            search_use_case,
+            args.path,
+            limit=args.settings.tui_limit,
+            filters=bootstrap.settings_filters(args.settings),
+        )
         selected = app.run()
     finally:
         search_use_case.close()
@@ -65,7 +77,7 @@ def _run_tui(args: CliArgs) -> int:
 def _run_scan(args: CliArgs) -> int:
     """Scan the path and list every chunk in the plain output format."""
     scanner = bootstrap.build_scan(args.settings, args.path)
-    keep = build_result_filter(args.settings.lang, args.settings.under)
+    keep = build_result_filter(bootstrap.settings_filters(args.settings))
     for chunk in scanner.run(args.path):
         if keep is None or keep(chunk):
             sys.stdout.write(f"{_render(chunk, args.settings.format)}\n")

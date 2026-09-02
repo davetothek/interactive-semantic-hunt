@@ -104,6 +104,15 @@ class Settings:
             metavar="REGEX",
         ),
     )
+    type: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Return results only of these kinds: code, doc, test, config.",
+            scope="query",
+            nargs="+",
+            metavar="TYPE",
+        ),
+    )
     federate: bool = field(
         default=True,
         metadata=_opt(

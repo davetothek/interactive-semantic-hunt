@@ -12,9 +12,18 @@ from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
-from ish.application.search import Search
+from ish.application.search import (
+    Filters,
+    Search,
+    build_result_filter,
+    parse_query,
+)
 from ish.interfaces.cli.log import setup_logging
-from ish.interfaces.format import format_chunk_line, format_result_line
+from ish.interfaces.format import (
+    format_chunk_line,
+    format_grep_line,
+    format_result_line,
+)
 from ish.interfaces.mcp.protocol import Server, Tool
 from ish.settings import Settings, load_settings
 
@@ -52,6 +61,22 @@ _QUERY_PROPERTIES: dict[str, dict[str, Any]] = {
             "Return results only from paths matching this regular expression."
         ),
     },
+    "type": {
+        "type": "array",
+        "items": {"type": "string", "enum": ["code", "doc", "test", "config"]},
+        "description": (
+            "Return results only of these kinds. Use doc for prose, test "
+            "for tests and fixtures, config for YAML and JSON settings."
+        ),
+    },
+    "format": {
+        "type": "string",
+        "enum": ["plain", "grep"],
+        "description": (
+            "Shape of each line. Use grep for an editor, which opens a "
+            "result at path:line:column."
+        ),
+    },
 }
 
 
@@ -77,16 +102,19 @@ class IshTools:
             raise ValueError(f"Path does not exist: {path}")
         return path
 
-    def _filter_for(self, arguments: Mapping[str, Any]):
+    def _filter_for(self, arguments: Mapping[str, Any], typed: Filters | None = None):
         """Build the result filter for one call.
 
-        Fall back to the configured value for anything the call omits.
+        Rank a filter typed into the query above the call argument, and
+        that above the configured value.
         """
-        from ish.application.search import build_result_filter
-
-        lang = arguments.get("lang") or self._settings.lang
-        under = arguments.get("under") or self._settings.under
-        return build_result_filter([str(item) for item in lang], str(under))
+        asked = Filters(
+            lang=tuple(str(item) for item in arguments.get("lang") or ()),
+            under=str(arguments.get("under") or ""),
+            type=tuple(str(item) for item in arguments.get("type") or ()),
+        )
+        chain = asked.or_else(bootstrap.settings_filters(self._settings))
+        return build_result_filter(typed.or_else(chain) if typed else chain)
 
     def _search_for(self, root: Path) -> Search:
         """Return the use case for *root*, building it on first use."""
@@ -104,17 +132,27 @@ class IshTools:
         query = str(arguments.get("query") or "").strip()
         if not query:
             raise ValueError("The 'query' argument is required.")
+        # Accept `lang:cpp type:doc` inside the query, so an editor can
+        # pass the line as typed instead of parsing it first.
+        query, typed = parse_query(query)
+        if not query:
+            raise ValueError("The 'query' argument holds only filters.")
 
         root = self._resolve(arguments.get("path"))
         limit = int(arguments.get("limit") or self._settings.limit)
 
         use_case = self._search_for(root)
         use_case.build_index(root)
-        results = use_case.search(query, limit=limit, keep=self._filter_for(arguments))
+        keep = self._filter_for(arguments, typed)
+        results = use_case.search(query, limit=limit, keep=keep)
         if not results:
             return f"No results for {query!r} under {root}."
 
-        lines = [format_result_line(chunk, score) for chunk, score in results]
+        shape = str(arguments.get("format") or self._settings.format)
+        if shape == "grep":
+            lines = [format_grep_line(chunk, score) for chunk, score in results]
+        else:
+            lines = [format_result_line(chunk, score) for chunk, score in results]
         return "\n".join(lines)
 
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
@@ -126,7 +164,9 @@ class IshTools:
             chunks = [chunk for chunk in chunks if keep(chunk)]
         if not chunks:
             return f"No source files found under {root}."
-        return "\n".join(format_chunk_line(chunk) for chunk in chunks)
+        shape = str(arguments.get("format") or self._settings.format)
+        render = format_grep_line if shape == "grep" else format_chunk_line
+        return "\n".join(render(chunk) for chunk in chunks)
 
     def index_status(self, arguments: Mapping[str, Any]) -> str:
         """Report what the stored index holds for a path."""
@@ -188,6 +228,8 @@ class IshTools:
                         "path": _PATH_PROPERTY,
                         "lang": _QUERY_PROPERTIES["lang"],
                         "under": _QUERY_PROPERTIES["under"],
+                        "type": _QUERY_PROPERTIES["type"],
+                        "format": _QUERY_PROPERTIES["format"],
                     },
                 },
                 handler=self.list_chunks,

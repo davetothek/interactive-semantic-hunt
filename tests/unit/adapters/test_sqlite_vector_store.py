@@ -639,9 +639,7 @@ class TestTopKScoring:
     """
 
     def _many(self, store: SqliteVectorStore, count: int) -> None:
-        store.add_vectors(
-            {f"h{i}": [1.0, float(i) / count] for i in range(count)}
-        )
+        store.add_vectors({f"h{i}": [1.0, float(i) / count] for i in range(count)})
         store.set_file(
             Path("a.py"),
             STAMP,
@@ -667,9 +665,7 @@ class TestTopKScoring:
         ((_chunk, score),) = store.search([1.0, 0.0], limit=1)
         assert score == pytest.approx(0.6, abs=1e-6)
 
-    def test_order_is_stable_for_equal_scores(
-        self, store: SqliteVectorStore
-    ) -> None:
+    def test_order_is_stable_for_equal_scores(self, store: SqliteVectorStore) -> None:
         store.add_vectors({f"h{i}": [1.0, 0.0] for i in range(5)})
         store.set_file(
             Path("a.py"),

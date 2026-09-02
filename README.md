@@ -59,7 +59,24 @@ to quit. Narrow without leaving the query line:
 state machine transitions              every language
 lang:cpp state machine transitions     the implementation
 lang:yaml under:/10.System/ state      the tests that cover it
+type:doc how do I configure this       the prose, not the code
+type:test,doc retry backoff            the tests and what they document
 ```
+
+`lang:`, `under:`, and `type:` work in the query line of every interface —
+the command line, the picker, Neovim, and MCP. The words are taken out
+before the query is embedded, so the model sees the question rather than
+how it was narrowed.
+
+`type:` sorts every chunk into exactly one kind. A path decides before a
+language does, so a YAML fixture counts as a test rather than as config:
+
+| kind | what it holds |
+|---|---|
+| `code` | Python, C, C++, and anything a plugin parser adds |
+| `doc` | Markdown and AsciiDoc |
+| `test` | anything under `tests/`, `spec/`, `fixtures/`, plus `test_*` and `conftest.py` |
+| `config` | YAML, JSON, and TOML outside a test path |
 
 ```sh
 nvim $(ish -i src/)
@@ -80,6 +97,7 @@ nvim $(ish -i src/)
 | `--git`, `--no-git` | Skip files git ignores (default: on) |
 | `--lang LANG ...` | Show results only from these languages |
 | `--under REGEX` | Show results only from matching paths |
+| `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |
 | `--model NAME` | Override the backend model |
 | `--reindex` | Discard the stored index and build it again |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
@@ -97,7 +115,13 @@ map('n', '<leader>fi', function() require('utils.ish').search() end,
 ```
 
 It reads `--format grep`, so the built-in previewer opens each result at its
-line. `search_lang({'cpp'})` and `search_here()` narrow it.
+line, and prints the rank in the leftmost column. `search_lang({'cpp'})`,
+`search_type({'doc'})`, and `search_here()` narrow it, as does a `lang:`,
+`type:`, or `under:` word typed into the query.
+
+`contrib/nvim/ish_server.lua` keeps one `ish-mcp` process per session. It
+starts on the first search and is reused after that, which cuts a keystroke
+from about 500 ms to about 150 ms. Copy it beside the picker.
 
 ## Use from an agent
 
@@ -115,7 +139,8 @@ can query the index directly. Add it to a project with `.mcp.json`:
 It offers `search_code`, `list_chunks`, and `index_status`. The server stays
 resident, so a query costs about 58 ms rather than a process start.
 
-A call may narrow one search with `lang`, `under`, and `limit`. It cannot change
+A call may narrow one search with `lang`, `under`, `type`, and `limit`, or
+write the same filters into the query text. It cannot change
 what is indexed — those settings come from `ish.toml` only, so no single call can
 shrink an index that another call depends on.
 
