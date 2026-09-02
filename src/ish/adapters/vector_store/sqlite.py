@@ -25,7 +25,6 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
-from operator import mul
 from pathlib import Path
 from typing import Any
 
@@ -380,7 +379,8 @@ class SqliteVectorStore:
         keep: Callable[[Chunk], bool] | None = None,
     ) -> Sequence[tuple[Chunk, float]]:
         """Rank chunks by vector similarity, fused with a lexical order."""
-        scored = self._semantic(query_vector)
+        # Over-fetch, because a filter and the lexical half both trim.
+        scored = self._semantic(query_vector, max(limit * 8, 60))
         if keep is not None:
             scored = [pair for pair in scored if keep(pair[0])]
         if not query_text or not is_code_like(query_text):
@@ -425,33 +425,67 @@ class SqliteVectorStore:
 
         return [self._to_chunk(row) for row in rows]
 
-    def _semantic(self, query_vector: Sequence[float]) -> list[tuple[Chunk, float]]:
-        """Score every stored chunk against the query vector."""
+    def _semantic(
+        self, query_vector: Sequence[float], top: int
+    ) -> list[tuple[Chunk, float]]:
+        """Return the *top* best chunks for a query vector.
+
+        Read only the vectors, score them as one matrix, then read the
+        details of the few that won. Fetching every row's text and
+        building a chunk for each cost far more than the arithmetic:
+        measured on 7000 chunks, the multiplication took 1 ms while
+        materializing every row took 60.
+        """
         norm = math.sqrt(sum(value * value for value in query_vector))
-        if norm == 0.0:
+        if norm == 0.0 or top <= 0:
             return []
-        query = array.array("f", [value / norm for value in query_vector])
 
         with self._lock:
             rows = self._db.execute(
-                "SELECT c.path, c.kind, c.language, c.symbol, "
-                "       c.start_line, c.end_line, v.data, v.dim "
+                "SELECT c.id, v.dim, v.data "
                 "FROM chunks c "
                 "JOIN vectors v ON v.content_hash = c.content_hash "
                 "WHERE v.model_id = ?",
                 (self._model_id,),
             ).fetchall()
+        if not rows:
+            return []
 
-        scored: list[tuple[Chunk, float]] = []
-        for row in rows:
-            blob, dim = row[6], row[7]
-            if dim != len(query):
+        width = len(query_vector)
+        for _identifier, dim, _data in rows:
+            if dim != width:
                 raise ValueError(
                     f"The index holds {dim}-dimension vectors but the query has "
-                    f"{len(query)}. Re-index with the current model."
+                    f"{width}. Re-index with the current model."
                 )
-            score = sum(map(mul, query, _unpack(blob), strict=True))
-            scored.append((self._to_chunk(row), score))
 
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-        return scored
+        import numpy
+
+        matrix = numpy.frombuffer(
+            b"".join(row[2] for row in rows), dtype=numpy.float32
+        ).reshape(len(rows), width)
+        query = numpy.asarray(query_vector, dtype=numpy.float32) / norm
+        scores = matrix @ query
+
+        count = min(top, len(rows))
+        best = numpy.argpartition(-scores, count - 1)[:count]
+        best = best[numpy.argsort(-scores[best])]
+
+        order = [int(rows[index][0]) for index in best]
+        found = {int(rows[index][0]): float(scores[index]) for index in best}
+        return self._details(found, order)
+
+    def _details(
+        self, scores: dict[int, float], order: list[int]
+    ) -> list[tuple[Chunk, float]]:
+        """Read the chunks behind the identifiers that scored best."""
+        marks = ",".join("?" * len(order))
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, path, kind, language, symbol, start_line, end_line "
+                f"FROM chunks WHERE id IN ({marks})",  # noqa: S608
+                order,
+            ).fetchall()
+
+        by_id = {int(row[0]): self._to_chunk(row[1:]) for row in rows}
+        return [(by_id[key], scores[key]) for key in order if key in by_id]

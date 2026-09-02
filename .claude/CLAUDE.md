@@ -204,6 +204,24 @@ Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s inc
 
 Measured: ~58 ms per `search_code` call, against ~190 ms for the same query through the CLI.
 
+### Query cost, and where it goes
+
+Profiled against a real 7,834-chunk index across three federated indexes:
+
+| | |
+|---|---|
+| process floor (`ish --version`) | 60–80 ms |
+| numpy import | 54 ms |
+| yaml import | 22 ms |
+| build embedder, open indexes | 33 ms |
+| embed the query (HTTP to Ollama) | 54 ms |
+| **scan every vector** | **48 ms** |
+| whole CLI query | ~380 ms |
+
+The scan was 276 ms and grew linearly with the index, which is what made a live editor picker unusable. Scoring the index as one matrix and reading the details of only the winners brought it to 48 ms: the multiplication itself is 1.3 ms, and the rest was materializing rows nobody looked at.
+
+Most of what remains is interpreter and library startup, paid once per process. A resident interface such as MCP pays it at launch and answers in about 130 ms.
+
 ## Ranking
 
 Search fuses two rankings with weighted Reciprocal Rank Fusion: the vector order, and a BM25 order from an FTS5 table kept in step with `chunks` by triggers.
