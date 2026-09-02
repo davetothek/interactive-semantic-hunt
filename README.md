@@ -86,6 +86,19 @@ nvim $(ish -i src/)
 
 Logs go to stderr, so you can pipe stdout safely.
 
+## Use from Neovim
+
+`contrib/nvim/ish.lua` is an fzf-lua picker. Copy it to `lua/utils/ish.lua` and
+bind it:
+
+```lua
+map('n', '<leader>fi', function() require('utils.ish').search() end,
+    { desc = 'Semantic search (ish)' })
+```
+
+It reads `--format grep`, so the built-in previewer opens each result at its
+line. `search_lang({'cpp'})` and `search_here()` narrow it.
+
 ## Use from an agent
 
 `ish-mcp` serves the same search over the Model Context Protocol, so an agent

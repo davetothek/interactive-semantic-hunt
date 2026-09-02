@@ -40,7 +40,9 @@ class FakeSearch:
         self._fail = fail
         self.queries: list[str] = []
 
-    def build_index(self, root: Path) -> Sequence[Chunk] | None:
+    def build_index(self, root: Path, on_progress=None) -> Sequence[Chunk] | None:
+        if on_progress is not None:
+            on_progress("Embedding 1 of 2 chunks")
         if self._fail:
             raise RuntimeError(self._fail)
         return self._chunks
@@ -534,3 +536,60 @@ class TestInlineFilters:
                 await asyncio.sleep(SETTLE)
 
         run(body())
+
+
+class TestIndexProgress:
+    """Verify the interface says what it is doing while it indexes.
+
+    A first index runs for minutes. Without a message, a working
+    interface is indistinguishable from one that has hung.
+    """
+
+    def test_progress_reaches_the_pane(self) -> None:
+        """Hold the index open until the message has been observed."""
+        import threading
+
+        release = threading.Event()
+
+        class Held(FakeSearch):
+            def build_index(self, root, on_progress=None):
+                if on_progress:
+                    on_progress("Embedding 120 of 274 chunks")
+                # Wait rather than sleep, so the test never races a clock.
+                release.wait(timeout=5)
+                return self._chunks
+
+        app = IshApp(Held(), Path("."))
+        seen: list[str] = []
+
+        async def body():
+            async with app.run_test():
+                for _ in range(250):
+                    await asyncio.sleep(0.02)
+                    seen.append(preview_text(app))
+                    if any("120 of 274" in text for text in seen):
+                        break
+                release.set()
+                await asyncio.sleep(0.05)
+
+        run(body())
+        assert any("120 of 274" in text for text in seen)
+
+    def test_a_message_is_shown_before_any_progress(self) -> None:
+        app = IshApp(FakeSearch(), Path("."))
+
+        async def body():
+            async with app.run_test():
+                return preview_text(app)
+
+        assert run(body()).strip() != ""
+
+    def test_progress_gives_way_to_the_results(self) -> None:
+        app = IshApp(FakeSearch(), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                return preview_text(app)
+
+        assert "Embedding" not in run(body())
