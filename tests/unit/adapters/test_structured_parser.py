@@ -41,9 +41,13 @@ class TestIdentity:
 
 
 class TestWholeDocument:
-    """Verify the document becomes one chunk."""
+    """Verify a document describing one thing stays one chunk.
 
-    SOURCE = "metadata:\n  description: A test\ncases:\n  - purpose: one\n"
+    A mapping is the attributes of a single thing. Splitting it would
+    scatter that thing across several vectors.
+    """
+
+    SOURCE = "name: A test\nversion: 3\nenabled: true\n"
 
     def test_one_chunk(self, yaml_parser) -> None:
         assert len(yaml_parser.parse(YML, self.SOURCE)) == 1
@@ -53,12 +57,77 @@ class TestWholeDocument:
 
     def test_line_range_covers_the_file(self, yaml_parser) -> None:
         chunk = yaml_parser.parse(YML, self.SOURCE)[0]
-        assert (chunk.start_line, chunk.end_line) == (1, 4)
+        assert (chunk.start_line, chunk.end_line) == (1, 3)
 
     def test_kind_and_language(self, yaml_parser) -> None:
         chunk = yaml_parser.parse(YML, self.SOURCE)[0]
         assert chunk.kind == "document"
         assert chunk.language == "yaml"
+
+    def test_a_list_of_plain_values_is_not_a_list_of_things(
+        self, yaml_parser
+    ) -> None:
+        """Tags belong to the document, not to themselves."""
+        source = "name: A test\ntags:\n  - one\n  - two\n"
+        assert len(yaml_parser.parse(YML, source)) == 1
+
+
+class TestListOfThings:
+    """Verify a document listing several things becomes several chunks.
+
+    Measured on a real specification corpus: one chunk per test case
+    rather than per file moved top-one retrieval from 30% to 90%.
+    """
+
+    SOURCE = (
+        "metadata:\n"
+        "  description: A test\n"
+        "cases:\n"
+        "  - purpose: reads the flash\n"
+        "    step: one\n"
+        "  - purpose: writes the flash\n"
+        "    step: two\n"
+    )
+
+    def test_one_chunk_per_entry(self, yaml_parser) -> None:
+        chunks = yaml_parser.parse(YML, self.SOURCE)
+        assert len(chunks) == 3
+
+    def test_each_entry_names_itself(self, yaml_parser) -> None:
+        symbols = [c.symbol for c in yaml_parser.parse(YML, self.SOURCE)]
+        assert any("reads the flash" in s for s in symbols)
+        assert any("writes the flash" in s for s in symbols)
+
+    def test_the_document_title_leads_each_name(self, yaml_parser) -> None:
+        chunks = yaml_parser.parse(YML, self.SOURCE)
+        assert all(c.symbol.startswith("A test") for c in chunks)
+
+    def test_splitting_stops_at_the_things(self, yaml_parser) -> None:
+        """An entry's own fields must not become chunks of their own."""
+        source = (
+            "cases:\n"
+            "  - purpose: one\n"
+            "    steps:\n"
+            "      - do: a\n"
+            "      - do: b\n"
+            "  - purpose: two\n"
+            "    steps:\n"
+            "      - do: c\n"
+        )
+        chunks = yaml_parser.parse(YML, source)
+        assert len(chunks) == 2
+
+    def test_no_content_is_lost(self, yaml_parser) -> None:
+        chunks = yaml_parser.parse(YML, self.SOURCE)
+        covered: set[int] = set()
+        for c in chunks:
+            covered.update(range(c.start_line, c.end_line + 1))
+        carries = {
+            n
+            for n, line in enumerate(self.SOURCE.splitlines(), 1)
+            if any(ch.isalnum() for ch in line)
+        }
+        assert carries <= covered
 
 
 class TestNaming:
@@ -151,9 +220,11 @@ class TestOversizedDocuments:
         )
         return f"metadata:\n  description: A large spec\ncases:\n{body}"
 
-    def test_a_small_document_is_still_one_chunk(self, yaml_parser) -> None:
-        """The decision to index whole must survive this change."""
-        chunks = yaml_parser.parse(YML, self._big(cases=2, filler=20))
+    def test_a_small_document_with_no_entries_stays_whole(
+        self, yaml_parser
+    ) -> None:
+        """Size alone must not divide a document that describes one thing."""
+        chunks = yaml_parser.parse(YML, "name: small\nvalue: 1\n")
         assert len(chunks) == 1
         assert chunks[0].kind == "document"
 
