@@ -1,0 +1,50 @@
+name: release
+
+# Publish what a tag names. The tag is the decision to release; nothing
+# reaches PyPI without one.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Refuse a tag that disagrees with the version
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(uv run --no-project python -c "
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+          ")
+          if [ "$tagged" != "$declared" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $declared in pyproject.toml"
+            exit 1
+          fi
+
+      - run: uv sync --dev
+      - run: uv run poe check
+
+      - run: uv build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted publishing: PyPI verifies this workflow rather than a
+    # stored token, so there is no secret to leak or rotate.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

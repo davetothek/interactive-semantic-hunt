@@ -1,0 +1,51 @@
+name: check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  # One run per branch. A newer push makes the older run pointless.
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # No extras. The backends that need a compiler are optional, and
+      # the tests stand in for them, so a check never builds llama.cpp.
+      - run: uv sync --dev
+
+      - run: uv run poe lint
+      - run: uv run poe typecheck
+      - run: uv run poe test
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+
+      - run: uv build
+
+      # A package that cannot be installed on its own is not releasable,
+      # whatever the tests say.
+      - name: Install the wheel by itself and run it
+        run: |
+          uv venv /tmp/fresh
+          VIRTUAL_ENV=/tmp/fresh uv pip install dist/*.whl
+          /tmp/fresh/bin/ish --version
+          /tmp/fresh/bin/ish-complete "ty" .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
