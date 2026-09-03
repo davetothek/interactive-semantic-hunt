@@ -95,6 +95,16 @@ vim.g.ish_index_status = ''
 
 -- How wide to draw the bar. Narrow enough to sit in a statusline.
 local BAR_WIDTH = 8
+-- How long to leave the finished mark up before clearing it.
+local DONE_MS = 1500
+-- What a finished refresh publishes. It carries no counts, so the
+-- statusline renders it as a mark rather than a bar.
+local DONE = 'done'
+
+-- Say it in the statusline, never through `vim.notify`. With
+-- `cmdheight = 0` there is no command line to put a message in, so
+-- nvim draws one over the last screen row, which is the statusline
+-- itself. A progress report must not cover what it is reporting into.
 
 --- Read how far along a refresh is, from what it says it is doing.
 ---
@@ -137,6 +147,9 @@ function M.statusline()
   if not text or text == '' then
     return ''
   end
+  if text == DONE then
+    return 'ish ✓'
+  end
   local fraction = M.fraction(text)
   if not fraction then
     return 'ish …'
@@ -166,30 +179,37 @@ local function watch(server, path)
     end
   end
 
-  local function finish(message)
-    show('')
+  local function finish(say_done)
     if not timer:is_closing() then
       timer:stop()
       timer:close()
     end
-    if message then
-      vim.notify(message, vim.log.levels.INFO)
+    if not say_done then
+      return show('')
     end
+    -- Leave a mark for a moment, so a refresh that finished is not
+    -- indistinguishable from one that never ran.
+    show(DONE)
+    vim.defer_fn(function()
+      if vim.g.ish_index_status == DONE then
+        show('')
+      end
+    end, DONE_MS)
   end
 
   timer:start(0, WATCH_MS, vim.schedule_wrap(function()
     waited = waited + WATCH_MS
     if waited > WATCH_LIMIT_MS then
-      return finish(nil)
+      return finish(false)
     end
     server.status(path, function(state)
       if state.refreshing then
         told = true
         show(state.refreshing)
       elseif state.chunks == nil then
-        finish(nil)                      -- the server stopped answering
+        finish(false)                    -- the server stopped answering
       else
-        finish(told and 'ish: index up to date' or nil)
+        finish(told)
       end
     end)
   end))

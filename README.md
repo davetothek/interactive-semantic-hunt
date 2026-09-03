@@ -149,8 +149,10 @@ line, and prints the rank in the leftmost column. `search_lang({'cpp'})`,
 `type:`, or `under:` word typed into the query.
 
 While the index refreshes, `require('utils.ish').statusline()` renders a bar
-for a statusline — `ish ███░░░░░ 38%` — and an empty string when idle. It reads
-`vim.g.ish_index_status`, which the picker keeps up to date.
+for a statusline — `ish ███░░░░░ 38%` — and an empty string when idle. It reads `vim.g.ish_index_status`, which the picker keeps up to date, and
+shows `ish ✓` briefly when a refresh finishes. Nothing is reported through
+`vim.notify`: with `cmdheight = 0` there is no command line to put a message
+in, so nvim draws one over the last screen row — the statusline itself.
 
 The picker never blocks the editor: results are written as they arrive, so
 typing stays smooth however long a search takes.
