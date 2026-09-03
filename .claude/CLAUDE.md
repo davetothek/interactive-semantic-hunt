@@ -125,6 +125,8 @@ src/foo.py:35-42  method    ConfigLoader.load
 Registered languages: `python`, `markdown`, `asciidoc`, `cpp`.
 
 - **A YAML or JSON document is split at the first list of things it holds.** A sequence of mappings is a list of distinct things and each deserves its own vector; a mapping is the attributes of one thing and splitting it would scatter that thing. Splitting stops at those things, so an entry's own fields do not become chunks. Measured on 40 queries against 110 real specifications: one chunk per test case rather than per file moved top-1 retrieval from **30% to 90%** and MRR from 0.393 to 0.914, with keyword queries that shared no exact string with any stored name. Size was never the problem; a single embedding standing for ten unrelated purposes was.
+- **Every parser is wrapped in `SizeLimited`**, in `build_parsers()`, so a chunk no language can shorten is divided on line boundaries before it reaches the embedder. Applying it in one place means a plugin gets it without asking. This was a real gap: the cap lived only in the structured parser, and C and C++ lost 53 percent of their characters past the window — one generated struct held 2,949,177 characters and was read to 8,000. It now splits into 374 pieces.
+- **`MAX_CHUNK_CHARS` is 8,000, which is the window the backend actually serves.** Ollama launches an embedding model with `-c 2048`, so a larger cap only means text nobody reads.
 - **`MAX_CHUNK_CHARS` is a constant, not a setting.** It describes what the embedding model can read, not what a user prefers. It still applies after the split above, because a single entry can exceed a context on its own. An embedding model reads a fixed number of tokens and drops the rest silently, so a large document indexed whole is mostly unsearchable with nothing to say so. Measured: a 120 KB document and the same document with a distinct tail appended embedded to cosine 1.000000, meaning the tail was never read. `MAX_CHUNK_CHARS` in `adapters/parser/structured.py` is the threshold; above it the parser descends the structure only as far as needed, and warns when a single value still cannot be divided.
 - **Markdown and AsciiDoc share one parser.** They differ only in the heading marker and the suffixes, so `MarkupParser` is built twice with different arguments. A section runs to the next heading, its symbol is the heading path, and fenced blocks are skipped so `# comment` in a code sample is not a heading.
 - **C and C++ share one parser**, registered as `cpp`, which owns `.h`. The C++ grammar reads nearly all C, and splitting them would leave every header ambiguous. A type is only a definition when it has a body, so `struct Node *next` does not become a second chunk. An attached doc comment travels with the definition, for the same reason decorators do.
@@ -302,6 +304,14 @@ registered under, so `lang:c`, `lang:h`, and `lang:cpp` name one parser. A
 `Filters` normalizes at construction, which keeps the filter, the display, and
 every comparison on one spelling. The CLI derives its `--lang` choices from the
 registry plus the alias table, so both interfaces accept the same words.
+
+`type_patterns` lets a repository say what its own paths hold, as
+`type:regex`, first match wins, falling back to the built-in reading. A naming
+convention belongs to a repository rather than to a language: one firmware tree numbers
+its trees, so `20.Tests` and `30.Verification` matched no general rule and
+7,395 test chunks were filed as code. `compile_categories()` builds the
+function; `bootstrap.build_result_filter()` is the one place that joins it to a
+filter, so no interface has to remember.
 
 `type` sorts a chunk with `category_of()` into `code`, `doc`, `test`, or
 `config`. The path is consulted before the language, so a YAML fixture under

@@ -14,6 +14,7 @@ from ish.application.search import (
     build_result_filter,
     canonical_language,
     category_of,
+    compile_categories,
     parse_query,
 )
 from ish.domain.chunk import Chunk
@@ -527,3 +528,66 @@ class TestLanguageAliases:
             keep = build_result_filter(Filters(lang=(name,)))
             assert keep is not None
             assert keep(chunk), name
+
+
+class TestConfigurableCategories:
+    """Verify a repository can say what its own paths mean.
+
+    A naming convention belongs to a repository, not to a language, so
+    it is written down rather than guessed.
+    """
+
+    @staticmethod
+    def _chunk(path: str, language: str = "python") -> Chunk:
+        return Chunk(
+            path=Path(path),
+            text="x",
+            kind="function",
+            language=language,
+            symbol="x",
+            start_line=1,
+            end_line=1,
+        )
+
+    def test_no_patterns_keeps_the_built_in_reading(self) -> None:
+        assert compile_categories(()) is category_of
+
+    def test_a_pattern_sorts_a_path(self) -> None:
+        """The case that the built-in rule misses."""
+        sort_into = compile_categories(("test:/[0-9.]*(Testing|Verification)/",))
+        chunk = self._chunk("/p/20.Tests/30.Verification/case.yaml", "yaml")
+        assert category_of(chunk) == "config"
+        assert sort_into(chunk) == "test"
+
+    def test_the_first_match_wins(self) -> None:
+        sort_into = compile_categories(("doc:/spec/", "test:/spec/"))
+        assert sort_into(self._chunk("/p/spec/a.py")) == "doc"
+
+    def test_an_unmatched_path_falls_back(self) -> None:
+        sort_into = compile_categories(("test:/nothing/",))
+        assert sort_into(self._chunk("/p/README.md", "markdown")) == "doc"
+
+    def test_the_filter_uses_the_patterns(self) -> None:
+        sort_into = compile_categories(("test:Testing/",))
+        chunk = self._chunk("/p/20.Tests/case.yaml", "yaml")
+        keep = build_result_filter(Filters(type=("test",)), sort_into)
+        assert keep is not None and keep(chunk)
+        # Without the pattern the same chunk is configuration.
+        plain = build_result_filter(Filters(type=("test",)))
+        assert plain is not None and not plain(chunk)
+
+    def test_a_malformed_rule_names_itself(self) -> None:
+        with pytest.raises(ValueError, match="type:regex"):
+            compile_categories(("justtext",))
+
+    def test_an_unknown_type_is_reported(self) -> None:
+        with pytest.raises(ValueError, match="unknown type"):
+            compile_categories(("banana:/x/",))
+
+    def test_an_invalid_expression_is_reported(self) -> None:
+        with pytest.raises(ValueError, match="invalid regular expression"):
+            compile_categories(("test:(unclosed",))
+
+    def test_the_type_name_is_case_insensitive(self) -> None:
+        sort_into = compile_categories(("TEST:/x/",))
+        assert sort_into(self._chunk("/p/x/a.py")) == "test"

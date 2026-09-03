@@ -15,7 +15,6 @@ from ish import bootstrap
 from ish.application.search import (
     Filters,
     Search,
-    build_result_filter,
     parse_query,
 )
 from ish.interfaces.cli.log import setup_logging
@@ -114,7 +113,9 @@ class IshTools:
             type=tuple(str(item) for item in arguments.get("type") or ()),
         )
         chain = asked.or_else(bootstrap.settings_filters(self._settings))
-        return build_result_filter(typed.or_else(chain) if typed else chain)
+        return bootstrap.build_result_filter(
+            self._settings, typed.or_else(chain) if typed else chain
+        )
 
     def _search_for(self, root: Path) -> Search:
         """Return the use case for *root*, building it on first use."""

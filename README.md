@@ -82,6 +82,18 @@ language does, so a YAML fixture counts as a test rather than as config:
 | `test` | anything under `tests/`, `spec/`, `fixtures/`, plus `test_*` and `conftest.py` |
 | `config` | YAML, JSON, and TOML outside a test path |
 
+A repository that names its trees its own way can say so, in
+`.ish/config.toml`:
+
+```toml
+type_patterns = [
+  "test:/[0-9.]*(Testing|Verification)/",
+  "doc:/[0-9.]*Specification/",
+]
+```
+
+The first match wins; anything unmatched keeps the reading above.
+
 ```sh
 nvim $(ish -i src/)
 ```
@@ -102,6 +114,7 @@ nvim $(ish -i src/)
 | `--lang LANG ...` | Show results only from these languages |
 | `--under REGEX` | Show results only from matching paths |
 | `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |
+| `--type-patterns TYPE:REGEX ...` | Say what a path holds, overriding the built-in reading |
 | `--model NAME` | Override the backend model |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |

@@ -81,6 +81,54 @@ def language_names() -> tuple[str, ...]:
     return tuple(sorted(LANGUAGE_ALIASES))
 
 
+def compile_categories(
+    patterns: Sequence[str],
+) -> Callable[[Chunk], str]:
+    """Turn ``type:regex`` rules into a function that sorts a chunk.
+
+    A naming convention is a property of a repository, not of a
+    language, so let it be written down rather than guessed. Measured on
+    one firmware tree: `20.Tests` and `30.Verification` match no
+    general rule, which filed 7,395 test chunks as code.
+
+    Try each rule in order against the path and take the first that
+    matches. Fall back to the built-in reading, so a rule adds to the
+    default rather than replacing it.
+    """
+    compiled: list[tuple[str, re.Pattern[str]]] = []
+    for rule in patterns:
+        name, _, expression = rule.partition(":")
+        name = name.strip().lower()
+        if not expression:
+            raise ValueError(
+                f"The type pattern {rule!r} needs the form 'type:regex', "
+                f"for example 'test:/[0-9.]*Test'."
+            )
+        if name not in TYPES:
+            raise ValueError(
+                f"The type pattern {rule!r} names an unknown type {name!r}. "
+                f"Valid types: {', '.join(TYPES)}."
+            )
+        try:
+            compiled.append((name, re.compile(expression)))
+        except re.error as exc:
+            raise ValueError(
+                f"The type pattern {rule!r} has an invalid regular expression: {exc}"
+            ) from exc
+
+    if not compiled:
+        return category_of
+
+    def categorize(chunk: Chunk) -> str:
+        path = chunk.path.as_posix()
+        for name, pattern in compiled:
+            if pattern.search(path):
+                return name
+        return category_of(chunk)
+
+    return categorize
+
+
 def category_of(chunk: Chunk) -> str:
     """Return what a chunk is for: test, doc, config, or code.
 
@@ -175,7 +223,9 @@ def parse_query(text: str) -> tuple[str, Filters]:
     return remaining, Filters(tuple(languages), under, tuple(types))
 
 
-def build_result_filter(filters: Filters) -> Callable[[Chunk], bool] | None:
+def build_result_filter(
+    filters: Filters, categorize: Callable[[Chunk], str] | None = None
+) -> Callable[[Chunk], bool] | None:
     """Build the result filter, or None when nothing narrows the view.
 
     These narrow what a search returns. They must never reach the index,
@@ -184,6 +234,7 @@ def build_result_filter(filters: Filters) -> Callable[[Chunk], bool] | None:
     """
     languages = frozenset(filters.lang)
     types = frozenset(filters.type)
+    sort_into = categorize or category_of
     try:
         pattern = re.compile(filters.under) if filters.under else None
     except re.error as exc:
@@ -198,7 +249,7 @@ def build_result_filter(filters: Filters) -> Callable[[Chunk], bool] | None:
     def keep(chunk: Chunk) -> bool:
         if languages and chunk.language not in languages:
             return False
-        if types and category_of(chunk) not in types:
+        if types and sort_into(chunk) not in types:
             return False
         return pattern is None or bool(pattern.search(chunk.path.as_posix()))
 

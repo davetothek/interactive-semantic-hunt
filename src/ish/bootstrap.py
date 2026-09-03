@@ -141,7 +141,11 @@ def build_parsers(settings: Settings) -> list[Parser]:
             f"Unknown language(s): {', '.join(unknown)}. Valid languages: {valid}"
         )
 
-    return [available[name]() for name in wanted]
+    from ish.adapters.parser.limits import SizeLimited
+
+    # Wrap here, so every language and every plugin keeps its chunks
+    # inside what the embedding model can read.
+    return [SizeLimited(available[name]()) for name in wanted]
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -283,8 +287,6 @@ def build_scan(settings: Settings, root: Path) -> Scan:
 
 def build_search(settings: Settings, root: Path) -> Search:
     """Wire the full search use case for one scanned tree."""
-    from ish.application.search import build_result_filter
-
     embedder = build_embedder(settings)
     return Search(
         scan=build_scan(settings, root),
@@ -292,7 +294,7 @@ def build_search(settings: Settings, root: Path) -> Search:
         vector_store=build_vector_store(settings, root, embedder),
         reindex=settings.reindex,
         hybrid=not settings.no_hybrid,
-        keep=build_result_filter(settings_filters(settings)),
+        keep=build_result_filter(settings, settings_filters(settings)),
     )
 
 
@@ -335,6 +337,20 @@ def refresh_indexes(
         finally:
             search.close()
     return trees
+
+
+def build_categorizer(settings: Settings):
+    """Return the function that sorts a chunk into a type."""
+    from ish.application.search import compile_categories
+
+    return compile_categories(settings.type_patterns)
+
+
+def build_result_filter(settings: Settings, filters):
+    """Build the result filter, using the types the settings define."""
+    from ish.application.search import build_result_filter as make
+
+    return make(filters, build_categorizer(settings))
 
 
 def settings_filters(settings: Settings):

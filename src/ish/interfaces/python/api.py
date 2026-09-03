@@ -25,8 +25,6 @@ from ish import bootstrap
 from ish.application.search import (
     Filters,
     Search,
-    build_result_filter,
-    category_of,
     parse_query,
 )
 from ish.domain.chunk import Chunk
@@ -149,7 +147,7 @@ class Ish:
             use_case.search(
                 text,
                 limit if limit is not None else self.settings.limit,
-                keep=build_result_filter(filters),
+                keep=bootstrap.build_result_filter(self.settings, filters),
                 hybrid=hybrid,
             )
         )
@@ -166,7 +164,9 @@ class Ish:
             bootstrap.settings_filters(self.settings)
         )
         self._use_case.build_index(self.path)
-        return self._use_case.all_chunks(build_result_filter(filters))
+        return self._use_case.all_chunks(
+            bootstrap.build_result_filter(self.settings, filters)
+        )
 
     def status(self) -> dict[str, object]:
         """Report what is indexed for this tree.
@@ -175,11 +175,12 @@ class Ish:
         what a search can reach without listing all of it.
         """
         chunks = self._use_case.all_chunks()
+        sort_into = bootstrap.build_categorizer(self.settings)
         languages: dict[str, int] = {}
         kinds: dict[str, int] = {}
         for chunk in chunks:
             languages[chunk.language] = languages.get(chunk.language, 0) + 1
-            kind = category_of(chunk)
+            kind = sort_into(chunk)
             kinds[kind] = kinds.get(kind, 0) + 1
         return {
             "path": self.path,
