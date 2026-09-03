@@ -10,8 +10,15 @@ beside the code it describes, so one query searches both.
 ## Install
 
 ```sh
-uv sync
+pip install interactive-semantic-hunt
 ```
+
+Nothing in that install compiles: the default backend reaches Ollama over
+HTTP with the standard library. A backend that runs the model in this
+process is an extra — `[llama]` for llama.cpp, `[st]` for
+sentence-transformers.
+
+To work on ish itself, clone it and run `uv sync`.
 
 The default embedding backend is Ollama, which keeps the model resident so no
 run pays a model load. Start it once and pull the embedding model:
@@ -26,8 +33,8 @@ Set `OLLAMA_HOST` to reach a daemon elsewhere.
 Two other backends need no daemon:
 
 - `--embedder llama.cpp` downloads a GGUF model and loads it per run. Slower per
-  query, faster for a first index of a large tree.
-- `--embedder st` uses sentence-transformers. Install it with `uv sync --extra st`.
+  query, faster for a first index of a large tree. Needs the `[llama]` extra.
+- `--embedder st` uses sentence-transformers. Needs the `[st]` extra.
 
 ## Use
 
