@@ -85,7 +85,7 @@ interfaces → application → domain
 - **ruff** — linter and formatter. Config in `pyproject.toml`. Line length 88, double quotes, space indent. Cache in `.cache/ruff`.
 - **ty** — type checker (dev dependency).
 - **pytest** — test runner. Cache in `.cache/pytest`.
-- **pytest-cov** — coverage reporting. Fail threshold is 90%.
+- **pytest-cov** — coverage reporting. Fail threshold is 100%. Every line is covered; a new one must arrive with the test that reaches it.
 - **poethepoet** — task runner (dev dependency).
 
 ### Poe targets
@@ -238,6 +238,16 @@ by serializing.
   `tui_limit` and names the total in `sub_title`. One widget per chunk costs
   seconds: one firmware tree's 11,543 chunks took 2.4 s before the first keystroke, and
   0.82 s once capped.
+- **The query field takes typing from the first frame.** Opening an index of a
+  large tree takes most of a second, and a field that cannot be typed into reads
+  as an interface that has not started. A query typed while the index opens is
+  answered by `_on_index_ready` rather than lost, and the progress message stays
+  up meanwhile. Measured on one firmware tree: usable at 0.34 s, against 0.77 s when the
+  field waited for the index.
+- **A skipped file is counted, not named.** A tree of headers holds many that
+  declare nothing: one firmware subdirectory printed 12 warnings before any
+  result. `Scan` collects them and reports one line, with the names at `-v`.
+  Nothing is swallowed; the count is at WARNING where it will be read.
 - **A refresh says which tree it is on.** `--refresh` runs before the interface
   is drawn, so without it the terminal sits blank for minutes and cannot be told
   from a command that has stopped. The CLI writes one line to stderr, rewritten

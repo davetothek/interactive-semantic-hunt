@@ -115,7 +115,7 @@ class TestCLIEdgeCases:
         exit_code = main(["", str(f)])
         assert exit_code == 0
         err = capsys.readouterr().err
-        assert "Cannot parse" in err
+        assert "could not be parsed" in err
 
     def test_embedder_failure_exits_cleanly(
         self,
@@ -346,3 +346,57 @@ class TestRefreshReportsProgress:
         said: list[str] = []
         bootstrap.refresh_indexes(Settings(git=False), root, on_progress=said.append)
         assert any("Refreshing 1 of 1" in line for line in said)
+
+
+class TestRefreshFromTheCommandLine:
+    """Verify --refresh visits the trees before the query runs."""
+
+    def _offline(self, monkeypatch) -> None:
+        from ish import bootstrap
+
+        class Fake:
+            model_id = "fake"
+
+            def embed_documents(self, texts):
+                return [[1.0, 0.0] for _ in texts]
+
+            def embed_query(self, text):
+                return [1.0, 0.0]
+
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: Fake())
+
+    def test_refresh_runs_before_the_query(self, tmp_path, monkeypatch) -> None:
+        from ish import bootstrap
+
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        self._offline(monkeypatch)
+        (tmp_path / "a.py").write_text("def one():\n    pass\n")
+
+        visited: list = []
+        original = bootstrap.refresh_indexes
+
+        def watched(settings, root, on_progress=None, overrides=None):
+            visited.append(root)
+            return original(settings, root, on_progress, overrides)
+
+        monkeypatch.setattr(bootstrap, "refresh_indexes", watched)
+        assert main(["one", str(tmp_path), "--refresh", "--no-git"]) == 0
+        assert visited == [tmp_path.resolve()]
+
+    def test_without_the_flag_nothing_is_refreshed(self, tmp_path, monkeypatch) -> None:
+        from ish import bootstrap
+
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        self._offline(monkeypatch)
+        (tmp_path / "a.py").write_text("def one():\n    pass\n")
+
+        visited: list = []
+        monkeypatch.setattr(
+            bootstrap,
+            "refresh_indexes",
+            lambda *a, **k: visited.append(a),
+        )
+        assert main(["one", str(tmp_path), "--no-git"]) == 0
+        assert visited == []

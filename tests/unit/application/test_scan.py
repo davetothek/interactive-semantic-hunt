@@ -161,7 +161,7 @@ class TestUnreadableFile:
 
         assert len(chunks) == 0
         err = capsys.readouterr().err
-        assert "Cannot read" in err
+        assert "could not be read" in err
 
 
 class TestNonUtf8File:
@@ -183,7 +183,7 @@ class TestNonUtf8File:
 
         assert {c.path.name for c in chunks} == {"good.py"}
         err = capsys.readouterr().err
-        assert "Cannot read" in err
+        assert "could not be read" in err
 
 
 class TestSyntaxErrorFile:
@@ -208,7 +208,7 @@ class TestSyntaxErrorFile:
 
         assert {c.path.name for c in chunks} == {"good.py"}
         err = capsys.readouterr().err
-        assert "Cannot parse" in err
+        assert "could not be parsed" in err
 
 
 class TestParserRouting:
@@ -447,3 +447,67 @@ class TestFilteredPruning:
         scanner = Scan(parsers=[FakeParser()], exclude=["/vendor/"])
         assert scanner.accepts(tmp_path / "keep.py") is True
         assert scanner.accepts(vendor / "drop.py") is False
+
+
+class TestSkippedFilesAreSummarised:
+    """Verify a skipped file is counted, not printed one line each.
+
+    A tree of headers holds many files that declare nothing, and one
+    line each buries everything else the run has to say.
+    """
+
+    class Grumpy:
+        language = "grumpy"
+        suffixes = frozenset({".gr"})
+
+        def parse(self, path, source):
+            raise ParseError("nothing here")
+
+    def _scan(self, root: Path) -> Scan:
+        return Scan(parsers=[self.Grumpy()])
+
+    def test_the_count_is_reported_once(self, tmp_path: Path, caplog) -> None:
+        for index in range(5):
+            (tmp_path / f"f{index}.gr").write_text("x")
+        with caplog.at_level("WARNING"):
+            assert self._scan(tmp_path).run(tmp_path) == []
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "5 file(s) could not be parsed" in warnings[0].getMessage()
+
+    def test_the_names_are_kept_for_the_curious(self, tmp_path: Path, caplog) -> None:
+        (tmp_path / "one.gr").write_text("x")
+        with caplog.at_level("INFO", logger="ish"):
+            self._scan(tmp_path).run(tmp_path)
+        assert any("one.gr" in r.getMessage() for r in caplog.records)
+
+    def test_nothing_is_said_when_nothing_is_skipped(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            self._scan(tmp_path).run(tmp_path)
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_an_unreadable_file_is_counted_separately(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        bad = tmp_path / "locked.gr"
+        bad.write_text("x")
+        bad.chmod(0o000)
+        try:
+            with caplog.at_level("WARNING"):
+                self._scan(tmp_path).run(tmp_path)
+            said = " ".join(r.getMessage() for r in caplog.records)
+            assert "could not be read" in said
+        finally:
+            bad.chmod(0o600)
+
+    def test_a_second_run_starts_the_count_again(self, tmp_path: Path, caplog) -> None:
+        """A count that accumulated would grow with every refresh."""
+        (tmp_path / "one.gr").write_text("x")
+        scan = self._scan(tmp_path)
+        scan.run(tmp_path)
+        with caplog.at_level("WARNING"):
+            scan.run(tmp_path)
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert "1 file(s)" in warnings[0].getMessage()

@@ -64,7 +64,7 @@ docstring-code-format = true
 
 [tool.pytest.ini_options]
 cache_dir = ".cache/pytest"
-addopts = "--cov=ish --cov-report=term-missing --cov-fail-under=90"
+addopts = "--cov=ish --cov-report=term-missing --cov-fail-under=100"
 
 [tool.coverage.run]
 source = ["ish"]

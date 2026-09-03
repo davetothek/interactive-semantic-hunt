@@ -138,6 +138,9 @@ class IshApp(App[tuple[Chunk, float] | None]):
         self._generation = 0
         # Set when the interface closes, so a thread stops talking to it.
         self._leaving = threading.Event()
+        # Whether the index is open. Until it is, a query is remembered
+        # rather than answered.
+        self._index_ready = False
         # Search on one daemon thread. The embedding backend serves one
         # request at a time anyway, so running several only makes the
         # newest query wait behind queries nobody wants any more, and
@@ -163,12 +166,17 @@ class IshApp(App[tuple[Chunk, float] | None]):
         yield Input(
             placeholder="Search, or narrow with lang:cpp type:doc under:/src/",
             id="search-input",
-            disabled=True,
         )
         yield Footer()
 
     def on_mount(self) -> None:
-        """Start the background indexing task when UI mounts."""
+        """Take the query, and open the index behind it.
+
+        Keep the field live from the first frame. Opening an index of a
+        large tree takes most of a second, and a field that cannot be
+        typed into reads as an interface that has not started.
+        """
+        self.query_one(Input).focus()
         self.build_index()
 
     def build_index(self) -> None:
@@ -208,11 +216,13 @@ class IshApp(App[tuple[Chunk, float] | None]):
         self.query_one("#preview-pane", Static).update(f"{message}...")
 
     def _on_index_ready(self) -> None:
-        """Called when background indexing completes successfully."""
-        search_input = self.query_one(Input)
-        search_input.disabled = False
-        search_input.focus()
-
+        """Show what the index holds, and answer anything typed meanwhile."""
+        self._index_ready = True
+        typed = self.query_one(Input).value
+        if typed.strip():
+            # Something was typed while the index opened. Answer it.
+            self.do_search(typed)
+            return
         self.query_one("#preview-pane", Static).update("Index built. Ready to search!")
         self._show_listing(self._all_chunks)
 
@@ -298,6 +308,11 @@ class IshApp(App[tuple[Chunk, float] | None]):
         text, typed = parse_query(query)
         filters = typed.or_else(self._base_filters)
         self.sub_title = filters.describe()
+
+        if not self._index_ready:
+            # The index is still opening. It answers this query itself
+            # when it is ready, so leave the progress message standing.
+            return
         try:
             keep = build_result_filter(filters, self._categorize)
         except ValueError:
@@ -345,8 +360,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Triggered when the user types in the search bar."""
-        if not event.input.disabled:
-            self.do_search(event.value)
+        self.do_search(event.value)
 
     def on_option_list_option_highlighted(
         self, event: OptionList.OptionHighlighted

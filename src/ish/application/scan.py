@@ -52,6 +52,8 @@ class Scan:
         # A predicate supplied by the caller, so the application never
         # learns how a version control system is asked.
         self._ignored_by = ignored_by
+        self._unreadable: list[Path] = []
+        self._unparsed: list[Path] = []
         self._by_suffix: dict[str, Parser] = {}
         for parser in parsers:
             for suffix in parser.suffixes:
@@ -71,6 +73,7 @@ class Scan:
         the next file.
         """
         chunks: list[Chunk] = []
+        self._unreadable, self._unparsed = [], []
         files = self.discover(root)
         log.info("Found %d source files to scan under %s", len(files), root)
 
@@ -79,8 +82,28 @@ class Scan:
             if parsed is not None:
                 chunks.extend(parsed)
 
+        self._report_skipped()
         log.info("Scan complete: extracted %d chunks", len(chunks))
         return chunks
+
+    def _report_skipped(self) -> None:
+        """Say how many files were skipped, not which ones.
+
+        A tree of headers holds many files that declare nothing, and one
+        line each buries everything else the run has to say. Keep the
+        count where it will be read and the names behind -v.
+        """
+        for label, paths in (
+            ("could not be read", self._unreadable),
+            ("could not be parsed", self._unparsed),
+        ):
+            if not paths:
+                continue
+            log.warning(
+                "%d file(s) %s and were skipped. Run with -v to name them.",
+                len(paths),
+                label,
+            )
 
     def accepts(self, path: Path) -> bool:
         """Return True when this scan would index *path*.
@@ -113,13 +136,15 @@ class Scan:
         try:
             source = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            log.warning("Cannot read %s: %s", path, exc)
+            self._unreadable.append(path)
+            log.info("Cannot read %s: %s", path, exc)
             return None
 
         try:
             return self._by_suffix[path.suffix].parse(path, source)
         except ParseError as exc:
-            log.warning("Cannot parse %s: %s", path, exc)
+            self._unparsed.append(path)
+            log.info("Cannot parse %s: %s", path, exc)
             return None
 
     def discover(self, root: Path) -> list[Path]:

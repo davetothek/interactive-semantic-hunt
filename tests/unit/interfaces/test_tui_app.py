@@ -82,7 +82,7 @@ async def _ready(app: IshApp, pilot, timeout: float = 5.0) -> None:
     while waited < timeout:
         await asyncio.sleep(0.02)
         waited += 0.02
-        if app._all_chunks or app.query_one(Input).disabled is False:
+        if app._index_ready:
             return
     raise AssertionError("index never became ready")
 
@@ -270,14 +270,30 @@ class TestIndexFailure:
 
         run(body())
 
-    def test_input_stays_disabled_after_a_failure(self) -> None:
-        """Typing into a dead index would only produce more errors."""
-        app = IshApp(FakeSearch(fail="boom"), Path("."))
+    def test_typing_after_a_failure_searches_nothing(self) -> None:
+        """Searching a dead index would only produce more errors."""
+        fake = FakeSearch(fail="boom")
+        app = IshApp(fake, Path("."))
 
         async def body():
-            async with app.run_test():
+            async with app.run_test() as pilot:
                 await asyncio.sleep(0.4)
-                assert app.query_one(Input).disabled is True
+                await pilot.press(*"alpha")
+                await asyncio.sleep(SETTLE)
+                assert fake.queries == []
+
+        run(body())
+
+    def test_the_error_stays_on_screen_while_typing(self) -> None:
+        """Whatever is typed, the reason must remain readable."""
+        app = IshApp(FakeSearch(fail="Cannot reach Ollama"), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await asyncio.sleep(0.4)
+                await pilot.press(*"alpha")
+                await asyncio.sleep(SETTLE)
+                assert "Cannot reach Ollama" in preview_text(app)
 
         run(body())
 
@@ -918,3 +934,190 @@ class TestQuittingIsImmediate:
     def test_quit_is_bound_to_the_usual_keys(self) -> None:
         keys = {binding[0] for binding in IshApp.BINDINGS}
         assert {"escape", "ctrl+c", "ctrl+q"} <= keys
+
+
+class TestTypingBeforeTheIndexOpens:
+    """Verify the query field is useful from the first frame.
+
+    Opening an index of a large tree takes most of a second, and a field
+    that cannot be typed into reads as an interface that has not started.
+    """
+
+    class Slow:
+        """A use case whose index takes a while to open."""
+
+        def __init__(self, delay: float = 0.4) -> None:
+            self.delay = delay
+            self.queries: list[str] = []
+            self._chunks = [chunk("alpha"), chunk("beta", line=5)]
+
+        def build_index(self, root, on_progress=None):
+            if on_progress is not None:
+                on_progress("Embedding 1 of 2 chunks")
+            time.sleep(self.delay)
+            return self._chunks
+
+        def all_chunks(self, keep=None):
+            return self._chunks
+
+        def search(self, query, limit=5, keep=None, hybrid=None):
+            self.queries.append(query)
+            return [(c, 0.9) for c in self._chunks if query in (c.symbol or "")]
+
+        def close(self) -> None:
+            return None
+
+    def test_the_field_takes_typing_at_once(self) -> None:
+        app = IshApp(self.Slow(), Path("."), limit=5)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                field = app.query_one(Input)
+                assert field.disabled is False
+                assert field.has_focus
+
+        run(body())
+
+    def test_a_query_typed_while_opening_is_answered(self) -> None:
+        """What was typed must not be lost to the wait.
+
+        Hold the index open long enough that every keystroke lands
+        first, so the assertion does not race the opening.
+        """
+        slow = self.Slow(delay=1.2)
+        app = IshApp(slow, Path("."), limit=5, debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                assert app._index_ready is False
+                assert slow.queries == []
+                for _ in range(300):
+                    await asyncio.sleep(0.02)
+                    if app._current_results:
+                        break
+
+        run(body())
+        assert slow.queries == ["alpha"]
+        assert [c.symbol for c, _ in app._current_results] == ["alpha"]
+
+    def test_nothing_is_searched_before_the_index_opens(self) -> None:
+        slow = self.Slow(delay=2.0)
+        app = IshApp(slow, Path("."), limit=5, debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                await asyncio.sleep(0.3)
+                assert slow.queries == []
+
+        run(body())
+
+    def test_the_progress_message_survives_typing(self) -> None:
+        """Typing must not wipe the only sign that work is going on."""
+        app = IshApp(self.Slow(delay=2.0), Path("."), limit=5, debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                await asyncio.sleep(0.3)
+                assert "Embedding 1 of 2 chunks" in preview_text(app)
+
+        run(body())
+
+    def test_an_empty_field_lists_the_index_when_it_opens(self) -> None:
+        app = IshApp(self.Slow(), Path("."), limit=5)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await asyncio.sleep(0.1)
+                assert len(app._current_results) == 2
+
+        run(body())
+
+
+class TestWorkerErrors:
+    """Verify a failure on the search thread reaches the caller."""
+
+    def test_an_exception_is_carried_back(self) -> None:
+        app = IshApp(FakeSearch(), Path("."))
+
+        async def body() -> None:
+            async with app.run_test():
+
+                def explode() -> None:
+                    raise RuntimeError("boom")
+
+                with pytest.raises(RuntimeError, match="boom"):
+                    await app._off_loop(explode)
+
+        run(body())
+
+    def test_a_result_is_carried_back(self) -> None:
+        app = IshApp(FakeSearch(), Path("."))
+
+        async def body() -> None:
+            async with app.run_test():
+                assert await app._off_loop(lambda value: value * 2, 21) == 42
+
+        run(body())
+
+    def test_stale_work_reports_nothing(self) -> None:
+        """Both paths return None once a later keystroke has replaced them."""
+        app = IshApp(FakeSearch(), Path("."))
+        app._generation = 2
+        assert app._search_if_current(1, "old", None) is None
+        assert app._listing_if_current(1, None) is None
+
+
+class TestStaleResultsAreNotShown:
+    """Verify a reply nobody is waiting for never reaches the screen.
+
+    A later keystroke replaces an earlier search, and the earlier one
+    must leave the results as the newer query found them.
+    """
+
+    def test_a_stale_search_leaves_the_results_alone(self) -> None:
+        app = IshApp(FakeSearch(), Path("."), debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"alpha")
+                await asyncio.sleep(SETTLE)
+                shown = app._current_results
+                assert shown
+
+                # Whatever comes back is out of date.
+                app._search_if_current = lambda generation, text, keep: None
+                await pilot.press(*"bb")
+                await asyncio.sleep(SETTLE)
+                assert app._current_results is shown
+
+        run(body())
+
+    def test_a_stale_listing_leaves_the_results_alone(self) -> None:
+        app = IshApp(FakeSearch(), Path("."), debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await pilot.press(*"alpha")
+                await asyncio.sleep(SETTLE)
+                shown = app._current_results
+
+                # Deleting a character searches too, so silence both
+                # paths and check that neither writes to the screen.
+                app._listing_if_current = lambda generation, keep: None
+                app._search_if_current = lambda generation, text, keep: None
+                for _ in range(5):
+                    await pilot.press("backspace")
+                await asyncio.sleep(SETTLE)
+                assert app._current_results is shown
+
+        run(body())
