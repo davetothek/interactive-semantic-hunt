@@ -7,7 +7,7 @@ call, so a query costs a search rather than a startup.
 
 import logging
 import sys
-import time
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -87,11 +87,13 @@ class IshTools:
         self._settings = settings
         self._root = root
         self._by_root: dict[Path, Search] = {}
-        # When each tree was last re-checked for changes.
-        self._refreshed: dict[Path, float] = {}
+        # Trees a thread is already keeping current.
+        self._watched: set[Path] = set()
+        self._closing = threading.Event()
 
     def close(self) -> None:
         """Release every index this server opened."""
+        self._closing.set()
         for search in self._by_root.values():
             search.close()
         self._by_root.clear()
@@ -121,19 +123,38 @@ class IshTools:
         )
 
     def _keep_current(self, root: Path, use_case: Search) -> None:
-        """Re-check *root* for changes, but not on every call.
+        """Open the index, then keep it current behind the questions.
 
-        The server is long-lived and an editor asks on every keystroke.
-        Refreshing each time walks the tree, and for a parent read from
-        the indexes below it builds every chunk only to count them:
-        23,215 of them, which is most of the cost of an answer.
+        The server outlives the files it describes, and an editor asks
+        about code it is in the middle of changing. Refreshing on the
+        way to an answer would put a walk of the tree in front of every
+        keystroke, so refresh on a thread instead and let a search read
+        whatever is there. The stored matrix notices another connection
+        committing, so a search never serves what a refresh replaced.
+
+        A parent read from the indexes below it is not writable, and
+        refreshing through it did nothing at all. Refresh each tree
+        beneath it, which is what brings an edit into view.
         """
-        now = time.monotonic()
-        last = self._refreshed.get(root)
-        if last is not None and now - last < self._settings.refresh_seconds:
+        if root in self._watched:
             return
+        self._watched.add(root)
         use_case.build_index(root)
-        self._refreshed[root] = now
+        thread = threading.Thread(
+            target=self._refresh_forever,
+            args=(root,),
+            name=f"ish-refresh-{root.name}",
+            daemon=True,
+        )
+        thread.start()
+
+    def _refresh_forever(self, root: Path) -> None:
+        """Bring every index under *root* up to date, over and over."""
+        while not self._closing.wait(self._settings.refresh_seconds):
+            try:
+                bootstrap.refresh_indexes(self._settings, root)
+            except Exception as exc:  # noqa: BLE001 - a watch must not die
+                log.warning("Cannot refresh %s: %s", root, exc)
 
     def _search_for(self, root: Path) -> Search:
         """Return the use case for *root*, building it on first use."""
