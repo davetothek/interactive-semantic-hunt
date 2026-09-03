@@ -132,6 +132,15 @@ local function watch(server, path)
   return timer
 end
 
+-- Bind Tab to the completer, which reads the query and returns it
+-- finished. Ask twice: once for the query, once for the choices to show
+-- beside it when the word is still ambiguous.
+local function complete_bind(cwd)
+  local where = vim.fn.shellescape(cwd)
+  return ('transform-query(ish-complete {q} %s)+transform-header(ish-complete --candidates {q} %s)')
+    :format(where, where)
+end
+
 --- Search the whole project by meaning.
 ---
 --- Narrow it by writing a filter into the query: `lang:cpp`, `type:doc`,
@@ -173,6 +182,10 @@ function M.search(opts)
     _fmt = { from = unrender },
     actions = require('fzf-lua').defaults.actions.files,
     fzf_opts = { ['--delimiter'] = ':', ['--nth'] = '4..' },
+    -- Tab finishes a filter word the way a shell does, and names the
+    -- choices when it cannot finish one. The values are not guessable:
+    -- `lang:` takes a parser name or an alias, `under:` takes a path.
+    keymap = { fzf = { ['tab'] = complete_bind(opts.cwd) } },
   })
 end
 
@@ -203,6 +216,7 @@ _internal.command = command
 _internal.render = render
 _internal.unrender = unrender
 _internal.watch = watch
+_internal.complete_bind = complete_bind
 M._internal = _internal
 
 return M
