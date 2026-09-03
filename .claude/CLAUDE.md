@@ -6,25 +6,24 @@
 
 ## Current state
 
-MVP 1 is complete, and the semantic-search slice from spec §15 is implemented. The project has a working scan pipeline, semantic query, and an interactive TUI.
+Released. Every slice the spec describes is built, and the file listing that
+used to sit here went stale faster than the code; read `src/` instead. The
+table under **Key locations** is the map worth keeping.
 
-### What exists
+What is deliberately not built: an HTTP API, and any interface beyond the four
+below.
 
-- `src/ish/domain/chunk.py` — `Chunk` dataclass (frozen, slots). The sole domain model.
-- `src/ish/application/ports/` — `Parser`, `Embedder`, and `VectorStore` protocols.
-- `src/ish/application/scan.py` — scan use case (discover, read, parse).
-- `src/ish/application/search.py` — search use case (scan, embed, store, query).
-- `src/ish/adapters/parser/python.py` — AST-based Python parser.
-- `src/ish/adapters/embedder/` — llama.cpp, Ollama, and sentence-transformers backends, plus a disk-cache wrapper (`cached.py`).
-- `src/ish/adapters/vector_store/pure_python.py` — in-memory cosine-similarity store.
-- `src/ish/interfaces/cli/` — argument parsing (`config.py`), logging (`log.py`), and the entry point (`main.py`).
-- `src/ish/interfaces/tui/app.py` — Textual TUI, run with `ish -i`.
-- Unit and integration tests under `tests/`.
+### The four interfaces
 
-### What does not exist yet
+| | run with | notes |
+|---|---|---|
+| CLI | `ish "query" path` | one shot, ~380 ms including interpreter start |
+| TUI | `ish -i path` | the primary one; `fzf`-style picker |
+| MCP | `ish-mcp` | resident, ~58 ms a call, for an agent or an editor |
+| Python | `from ish.interfaces.python.api import Ish` | holds the index open |
 
-- `src/ish/interfaces/python/api.py` — skeleton `Ish` class only.
-- MCP, persistent or incremental indexing, `.ishignore`, Git ignore integration, Tree-sitter, non-Python languages, configuration files, HTTP API.
+`ish-complete` is a fifth entry point, but it finishes a filter word rather
+than searching.
 
 ## Architecture
 
@@ -418,7 +417,7 @@ These rules are mandatory. They add to the STE skill (`.claude/skills/ste-writin
 ## Ground rules
 
 - **Read `spec.md` first** for any substantial work. It is the source of truth for requirements.
-- **Do not add out-of-scope features.** Embeddings, the in-memory vector store, and the TUI are in scope (spec §15). Still excluded: MCP, persistent or incremental indexing, Tree-sitter, non-Python languages, config files, `.ishignore`, Git ignore integration, HTTP API. See spec §13.
+- **Do not add out-of-scope features.** An HTTP API stays out: the MCP server already serves a resident interface, and a second one would be a second thing to keep in step. A new language is one module and one registry entry, and needs no discussion.
 - **Do not silently swallow errors.** Parse failures must surface — either skip the file and report to stderr, or return a structured error.
 - **Keep the domain model clean.** No embedding vectors, AST nodes, parser internals, or UI state in `Chunk`.
 - **Run tests before declaring done.**
