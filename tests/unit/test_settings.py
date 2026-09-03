@@ -8,12 +8,14 @@ import pytest
 from ish.interfaces.cli.args import add_settings_options
 from ish.settings import (
     CONFIG_BASENAME,
+    CONFIG_DIRNAME,
     CONFIG_FILENAME,
     ConfigError,
     Settings,
     find_project_config,
     load_settings,
     option_names,
+    project_configs,
 )
 
 
@@ -209,3 +211,50 @@ class TestUnreadableConfig:
         (tmp_path / CONFIG_FILENAME).mkdir()
         assert find_project_config(tmp_path) is None
         assert load_settings(start=tmp_path, environ={}) == Settings()
+
+
+class TestConfigInheritance:
+    """Verify that a config beside a subtree adds to the one above it.
+
+    Reading only the nearest file would make a setting for one tree
+    silently drop what the repository above had already decided.
+    """
+
+    def _write(self, directory, body: str) -> None:
+        (directory / CONFIG_DIRNAME).mkdir(parents=True, exist_ok=True)
+        (directory / CONFIG_DIRNAME / CONFIG_BASENAME).write_text(body)
+
+    def test_a_subtree_inherits_what_it_does_not_name(self, tmp_path) -> None:
+        child = tmp_path / "child"
+        child.mkdir()
+        self._write(tmp_path, "limit = 11\nmodel = 'up'\n")
+        self._write(child, "limit = 22\n")
+
+        settings = load_settings(start=child, environ={})
+        assert settings.limit == 22
+        assert settings.model == "up"
+
+    def test_the_nearest_file_wins(self, tmp_path) -> None:
+        deep = tmp_path / "a" / "b"
+        deep.mkdir(parents=True)
+        self._write(tmp_path, "limit = 1\n")
+        self._write(tmp_path / "a", "limit = 2\n")
+        assert load_settings(start=deep, environ={}).limit == 2
+
+    def test_the_chain_is_outermost_first(self, tmp_path) -> None:
+        child = tmp_path / "child"
+        child.mkdir()
+        self._write(tmp_path, "limit = 1\n")
+        self._write(child, "limit = 2\n")
+        chain = project_configs(child)
+        assert [c.parent.parent.name for c in chain] == [tmp_path.name, "child"]
+
+    def test_find_project_config_still_returns_the_nearest(self, tmp_path) -> None:
+        child = tmp_path / "child"
+        child.mkdir()
+        self._write(tmp_path, "limit = 1\n")
+        self._write(child, "limit = 2\n")
+        assert find_project_config(child) == (child / CONFIG_DIRNAME / CONFIG_BASENAME)
+
+    def test_no_config_anywhere_is_an_empty_chain(self, tmp_path) -> None:
+        assert project_configs(tmp_path / "nowhere") == []
