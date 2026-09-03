@@ -547,3 +547,49 @@ class TestConfigLocation:
         deep = tmp_path / "a" / "b"
         deep.mkdir(parents=True)
         assert load_settings(start=deep, environ={}).limit == 7
+
+
+class TestFederationWarning:
+    """Verify what a read-only parent search reports."""
+
+    @pytest.fixture()
+    def nested(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        root = tmp_path / "proj"
+        (root / "child").mkdir(parents=True)
+        (root / "child" / "mod.py").write_text("def one():\n    pass\n")
+        return root
+
+    class _Fake:
+        model_id = "fake"
+
+        def embed_documents(self, texts):
+            return [[float(len(t)), 1.0] for t in texts]
+
+        def embed_query(self, text):
+            return [float(len(text)), 1.0]
+
+    def _seed_child(self, root: Path) -> Settings:
+        settings = Settings(git=False)
+        search = bootstrap.build_search(
+            replace(settings, federate=False), root / "child"
+        )
+        search.build_index(root / "child")
+        search.close()
+        return settings
+
+    def test_a_read_only_parent_warns(self, nested: Path, monkeypatch, caplog):
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: self._Fake())
+        settings = self._seed_child(nested)
+        with caplog.at_level("WARNING"):
+            bootstrap.build_search(settings, nested).close()
+        assert "without refreshing" in caplog.text
+
+    def test_a_refresh_silences_the_warning(self, nested: Path, monkeypatch, caplog):
+        """The warning asks for --refresh, so it must not follow one."""
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: self._Fake())
+        settings = replace(self._seed_child(nested), refresh=True)
+        with caplog.at_level("WARNING"):
+            bootstrap.build_search(settings, nested).close()
+        assert "without refreshing" not in caplog.text

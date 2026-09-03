@@ -245,10 +245,11 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
     if not others:
         return primary
 
-    if primary is None:
+    if primary is None and not settings.refresh:
         # Nothing here may be written, so a search reads whatever the
         # indexes below already hold. Say so: a stale answer and a fresh
-        # one look the same.
+        # one look the same. Stay quiet when a refresh has just run,
+        # which is the very thing the warning asks for.
         log.warning(
             "Reading %d stored indexes under %s without refreshing them. "
             "Pass --refresh to bring them up to date first.",
