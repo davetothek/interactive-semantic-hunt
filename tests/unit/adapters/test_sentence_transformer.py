@@ -19,15 +19,20 @@ class FakeNumpyArray:
 
 @pytest.fixture()
 def mock_st(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Mock the heavy SentenceTransformer class."""
-    mock_class = MagicMock()
-    # When initialized, return a mock instance
-    mock_instance = MagicMock()
-    mock_class.return_value = mock_instance
+    """Stand in for the backend, which is an extra and may be absent.
 
-    # Patch it where it's imported (inside the __init__)
-    # We patch the module it comes from.
-    monkeypatch.setattr("sentence_transformers.SentenceTransformer", mock_class)
+    Put the module into ``sys.modules`` rather than patching an
+    attribute on it, so the test says what the adapter does without
+    needing a package that installs a whole tensor library.
+    """
+    import sys
+
+    mock_class = MagicMock()
+    mock_class.return_value = MagicMock()
+
+    module = MagicMock()
+    module.SentenceTransformer = mock_class
+    monkeypatch.setitem(sys.modules, "sentence_transformers", module)
     return mock_class
 
 

@@ -321,8 +321,6 @@ name = "interactive-semantic-hunt"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "huggingface-hub" },
-    { name = "llama-cpp-python" },
     { name = "numpy" },
     { name = "pyyaml" },
     { name = "textual" },
@@ -332,6 +330,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+llama = [
+    { name = "huggingface-hub" },
+    { name = "llama-cpp-python" },
+]
 st = [
     { name = "sentence-transformers" },
 ]
@@ -347,8 +349,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "huggingface-hub", specifier = ">=0.23.0" },
-    { name = "llama-cpp-python", specifier = ">=0.2.75" },
+    { name = "huggingface-hub", marker = "extra == 'llama'", specifier = ">=0.23.0" },
+    { name = "llama-cpp-python", marker = "extra == 'llama'", specifier = ">=0.2.75" },
     { name = "numpy", specifier = ">=2.5.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sentence-transformers", marker = "extra == 'st'" },
@@ -357,7 +359,7 @@ requires-dist = [
     { name = "tree-sitter-c", specifier = ">=0.24.2" },
     { name = "tree-sitter-cpp", specifier = ">=0.23.4" },
 ]
-provides-extras = ["st"]
+provides-extras = ["llama", "st"]
 
 [package.metadata.requires-dev]
 dev = [
