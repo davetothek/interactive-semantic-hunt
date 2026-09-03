@@ -64,6 +64,7 @@ def _run_tui(args: CliArgs) -> int:
             search_use_case,
             args.path,
             limit=args.settings.tui_limit,
+            debounce_ms=args.settings.tui_debounce_ms,
             filters=bootstrap.settings_filters(args.settings),
             categorize=bootstrap.build_categorizer(args.settings),
         )

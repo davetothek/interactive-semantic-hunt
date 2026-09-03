@@ -9,6 +9,7 @@ Measured on this repository with nomic-embed-text, 16 queries: the
 prefixes moved top-1 accuracy from 62% to 75%.
 """
 
+from collections import OrderedDict
 from collections.abc import Sequence
 
 # Model name prefix -> (document prefix, query prefix).
@@ -36,6 +37,12 @@ def prefixes_for(model_name: str) -> tuple[str, str]:
     return ("", "")
 
 
+# How many recent queries to keep. Typing walks over the same text as
+# characters are added and removed, so a small cache turns a backspace
+# from a request into a lookup.
+QUERY_CACHE_SIZE = 128
+
+
 class PrefixingEmbedder:
     """Add task prefixes, then hand the text to the concrete backend.
 
@@ -53,10 +60,27 @@ class PrefixingEmbedder:
         return self._embed(prepared)
 
     def embed_query(self, text: str) -> Sequence[float]:
-        """Embed one search query."""
+        """Embed one search query, reusing a recent answer.
+
+        An interactive search embeds a query on every keystroke, and
+        deleting a character asks for text already seen.
+        """
+        cache = getattr(self, "_query_cache", None)
+        if cache is None:
+            cache = self._query_cache = OrderedDict()
+        held = cache.get(text)
+        if held is not None:
+            cache.move_to_end(text)
+            return held
+
         _, prefix = prefixes_for(self.model_name)
         vectors = self._embed([f"{prefix}{text}" if prefix else text])
-        return vectors[0] if vectors else []
+        vector = vectors[0] if vectors else []
+
+        cache[text] = vector
+        if len(cache) > QUERY_CACHE_SIZE:
+            cache.popitem(last=False)
+        return vector
 
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode already-prepared texts. Implemented by each adapter."""

@@ -209,7 +209,13 @@ The default backend is Ollama, reached over HTTP with the standard library. Do n
 - **Filters are written into the query itself**, as `lang:cpp under:/src/`, parsed by `parse_query()`. There is no second input and no focus to manage, which is why the query line carries them. The filter words are stripped before the text reaches the embedder, so a vector is built from what the user wants rather than how they narrowed it. Active filters appear in the header through `sub_title`. A filter with no words left lists everything it allows, without searching.
 - Indexing runs on a worker thread and searching on another, so **any store the TUI touches must be safe to use off the thread that opened it**. The SQLite adapter opens with `check_same_thread=False` and guards every statement with one lock. A single-threaded test suite will not catch a regression here; `TestThreadSafety` exists for that.
 
-Measured with a warm index: startup 0.05 s, last keystroke to results 0.18 s including the 200 ms debounce.
+Measured on one firmware tree, 23,215 chunks over 8 federated indexes: startup 0.77 s, last keystroke to results 0.16 s. It was 0.42 s, and three things paid for the difference.
+
+- **The scored matrix is kept between queries.** Reading every vector out of SQLite and joining 71 MB of blobs cost 118 ms a query while the multiplication cost 2. The cache is dropped when this store writes, and when `PRAGMA data_version` shows another connection has committed, so a second process indexing never leaves a reader stale.
+- **The store over-fetches only when something will trim.** A filter and the lexical half both discard, so the wider slice earns its keep there; for a plain query it built 2,311 chunks to return 50.
+- **A recent query is not embedded twice.** Typing walks over the same text as characters come and go, so deleting one costs a lookup rather than 79 ms of inference.
+
+`tui_debounce_ms` is 120. The debounce is what remains of the latency, so it is a setting rather than a constant.
 
 - **The listing mounts a page, not the index.** `_show_listing()` caps at
   `tui_limit` and names the total in `sub_title`. One widget per chunk costs
