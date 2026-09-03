@@ -92,8 +92,10 @@ class OllamaEmbedder(PrefixingEmbedder):
         except urllib.error.URLError as exc:
             raise RuntimeError(
                 f"Cannot reach Ollama at {self.host}: {exc.reason}. "
-                f"Start it with 'ollama serve', or select another backend "
-                f"with '--embedder llama.cpp'."
+                f"Start it with 'ollama serve', or install another backend "
+                f"and select it, as in "
+                f"'pip install interactive-semantic-hunt[llama]' "
+                f"then '--embedder llama.cpp'."
             ) from exc
         except json.JSONDecodeError as exc:
             raise RuntimeError(
