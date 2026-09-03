@@ -404,3 +404,16 @@ class TestOutputShape:
     def test_the_shape_is_offered_by_the_tools(self, tools: IshTools) -> None:
         search = next(t for t in tools.tools() if t.name == "search_code")
         assert "format" in search.schema["properties"]
+
+
+class TestQueryOfOnlyFilters:
+    """Verify a query that narrows but asks nothing is reported."""
+
+    def test_filters_alone_are_an_error(self, tools: IshTools, project: Path) -> None:
+        with pytest.raises(ValueError, match="only filters"):
+            tools.search({"query": "lang:python type:code", "path": str(project)})
+
+    def test_a_query_beside_a_filter_is_fine(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        assert tools.search({"query": "lang:python config", "path": str(project)})

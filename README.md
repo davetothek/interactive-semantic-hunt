@@ -125,7 +125,8 @@ nvim $(ish -i src/)
 | `--reindex` | Discard the stored index and build it again |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 
-Logs go to stderr, so you can pipe stdout safely.
+Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
+or parsed is counted in one line; `-v` names them.
 
 ## Use from Neovim
 
