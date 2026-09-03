@@ -373,8 +373,10 @@ def refresh_indexes(
 
     resolved = root.resolve()
     trees = sorted(find_indexes(settings, resolved)) or [resolved]
-    for tree in trees:
+    for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
+        if on_progress is not None:
+            on_progress(f"Refreshing {number} of {len(trees)}: {tree.name}")
         # Each tree writes to its own index, so federation must be off.
         per_tree = replace(
             load_settings(overrides or {}, start=tree),

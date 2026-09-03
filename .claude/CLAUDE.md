@@ -215,6 +215,14 @@ Measured on one firmware tree, 23,215 chunks over 8 federated indexes: startup 0
 - **The store over-fetches only when something will trim.** A filter and the lexical half both discard, so the wider slice earns its keep there; for a plain query it built 2,311 chunks to return 50.
 - **A recent query is not embedded twice.** Typing walks over the same text as characters come and go, so deleting one costs a lookup rather than 79 ms of inference.
 
+**Every thread the interface starts is a daemon, and it owns them itself.**
+A thread pool registers an exit hook that joins its threads however it is shut
+down, so an embedding in flight held the whole process open: quitting during an
+index appeared to hang for as long as the index took. `_DaemonWorker` runs one
+call at a time on a daemon thread, and indexing runs on another, so leaving is
+immediate. `_leaving` stops a thread talking to an interface that has gone.
+`escape`, `ctrl+c`, and `ctrl+q` all quit.
+
 **Searching runs on one thread, and work nobody wants is dropped.** Cancelling
 the task that waits on a thread does not stop the thread, so every keystroke's
 search used to run to the end: typing 24 characters against a slow backend ran
@@ -230,6 +238,10 @@ by serializing.
   `tui_limit` and names the total in `sub_title`. One widget per chunk costs
   seconds: one firmware tree's 11,543 chunks took 2.4 s before the first keystroke, and
   0.82 s once capped.
+- **A refresh says which tree it is on.** `--refresh` runs before the interface
+  is drawn, so without it the terminal sits blank for minutes and cannot be told
+  from a command that has stopped. The CLI writes one line to stderr, rewritten
+  in place and cleared at the end, so a piped stdout still holds only results.
 - **Report progress while indexing.** A first index of a large tree runs for minutes, and an interface showing a fixed message cannot be told apart from one that has hung. `build_index()` takes a callback; the TUI writes it into the preview pane. This was a real complaint: a schema rebuild left the picker showing "Loading index..." with no sign of the 274 chunks being embedded behind it.
 
 ## MCP

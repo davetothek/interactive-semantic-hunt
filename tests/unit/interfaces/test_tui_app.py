@@ -5,6 +5,7 @@ A fake search use case keeps the tests free of a model and a daemon.
 """
 
 import asyncio
+import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -818,11 +819,14 @@ class TestStaleWorkIsDropped:
         # Whatever ran, the last one is the whole query.
         assert slow.begun[-1] == "abcdefghij"
 
-    def test_the_search_runs_on_one_thread(self) -> None:
-        """A backend that serves one request at a time gains nothing
-        from several, and loses to queries nobody wants."""
+    def test_the_search_runs_on_one_daemon_thread(self) -> None:
+        """One thread, because the backend serves one request at a time.
+
+        A daemon, because exit must never wait for a request in flight.
+        """
         app = IshApp(self.Slow(), Path("."), limit=5)
-        assert app._searcher._max_workers == 1
+        assert app._searcher._thread.daemon
+        assert app._searcher._thread.is_alive()
 
     def test_out_of_date_work_returns_nothing(self) -> None:
         app = IshApp(self.Slow(), Path("."), limit=5)
@@ -835,3 +839,82 @@ class TestStaleWorkIsDropped:
         app._generation = 7
         assert app._search_if_current(7, "now", None) is not None
         assert app._listing_if_current(7, None) is not None
+
+
+class TestQuittingIsImmediate:
+    """Verify the interface closes while work is still in flight.
+
+    A thread pool registers an exit hook that joins its threads however
+    it is shut down, so an embedding in flight held the whole process
+    open. Every thread the interface starts is a daemon for that reason.
+    """
+
+    class Blocking:
+        """A use case whose calls do not return in the life of a test."""
+
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+
+        def build_index(self, root, on_progress=None):
+            if on_progress is not None:
+                on_progress("Embedding 1 of 100000 chunks")
+            self.entered.set()
+            time.sleep(30)
+            return []
+
+        def all_chunks(self, keep=None):
+            return []
+
+        def search(self, query, limit=5, keep=None, hybrid=None):
+            self.entered.set()
+            time.sleep(30)
+            return []
+
+        def close(self) -> None:
+            return None
+
+    def test_every_worker_thread_is_a_daemon(self) -> None:
+        """Nothing the interface starts may outlive the wish to leave."""
+        blocking = self.Blocking()
+        app = IshApp(blocking, Path("."), limit=5, debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                assert blocking.entered.wait(5.0)
+                await pilot.pause()
+
+        run(body())
+        for thread in threading.enumerate():
+            if thread.name.startswith("ish-"):
+                assert thread.daemon, thread.name
+
+    def test_closing_does_not_wait_for_the_index(self) -> None:
+        blocking = self.Blocking()
+        app = IshApp(blocking, Path("."), limit=5, debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                assert blocking.entered.wait(5.0)
+                await pilot.pause()
+
+        started = time.monotonic()
+        run(body())
+        assert time.monotonic() - started < 5.0
+
+    def test_the_index_thread_stops_talking_once_closed(self) -> None:
+        """A thread must not touch the interface after it has gone."""
+        blocking = self.Blocking()
+        app = IshApp(blocking, Path("."), limit=5, debounce_ms=10)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                assert blocking.entered.wait(5.0)
+                await pilot.pause()
+
+        run(body())
+        assert app._leaving.is_set()
+        assert not app._still_here()
+
+    def test_quit_is_bound_to_the_usual_keys(self) -> None:
+        keys = {binding[0] for binding in IshApp.BINDINGS}
+        assert {"escape", "ctrl+c", "ctrl+q"} <= keys
