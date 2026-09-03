@@ -148,6 +148,9 @@ line, and prints the rank in the leftmost column. `search_lang({'cpp'})`,
 `search_type({'doc'})`, and `search_here()` narrow it, as does a `lang:`,
 `type:`, or `under:` word typed into the query.
 
+The picker never blocks the editor: results are written as they arrive, so
+typing stays smooth however long a search takes.
+
 `contrib/nvim/ish_server.lua` keeps one `ish-mcp` process per session. It
 starts on the first search and is reused after that, which cuts a keystroke
 from about 500 ms to about 150 ms. Copy it beside the picker.

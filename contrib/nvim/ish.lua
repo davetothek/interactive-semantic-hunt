@@ -169,12 +169,21 @@ function M.search(opts)
     if text == '' then
       return nil
     end
-    if server.ensure() then
-      -- Render here: a table handed back from this callback reaches fzf
-      -- without passing through `fn_transform`.
-      return vim.tbl_map(render, server.search_now(text, opts))
+    if not server.ensure() then
+      return command(text, opts)
     end
-    return command(text, opts)
+    -- Hand fzf-lua a function rather than a list. It calls this with a
+    -- pair of write callbacks, so the answer can arrive whenever it
+    -- arrives. Waiting for it here would stop Neovim redrawing for the
+    -- length of a round trip, which is what made typing feel heavy.
+    return function(write_line, write)
+      server.search(text, opts, function(lines)
+        for _, line in ipairs(lines) do
+          write_line(render(line))
+        end
+        write(nil)
+      end)
+    end
   end, {
     prompt = opts.prompt or 'Semantic❯ ',
     previewer = 'builtin',

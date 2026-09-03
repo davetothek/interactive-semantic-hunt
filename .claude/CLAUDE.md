@@ -351,6 +351,13 @@ For a long-lived interface such as MCP, a call that could set an index-scope opt
 
 A query-scope filter that reached `Scan.accepts()` would make the next run prune everything it excluded, so `ish --lang markdown` would silently delete every Python chunk. Keep them apart: query filters are built by `build_result_filter()` and passed to the store as the `keep` predicate, applied before the limit so a filtered search still returns a full page. `test_the_filter_does_not_shrink_the_index` pins this.
 
+**The Neovim picker never waits on the main loop.** A live contents function may
+return a table, a command, or a function; fzf-lua calls the function with a pair
+of write callbacks, so an answer can arrive whenever it arrives. Returning a
+table meant waiting for the round trip first, which stopped Neovim redrawing for
+160 ms a keystroke and is what made typing feel heavy. `M.search_now` still
+blocks and says so; the picker uses `M.search`.
+
 `interfaces/complete.py` finishes a filter word the way a shell does: one
 candidate completes it and adds a space, several complete as far as they agree,
 and nothing matching leaves the text alone, so the key is never destructive.

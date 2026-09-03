@@ -189,9 +189,13 @@ function M.status(path, callback)
   end)
 end
 
---- Ask, and wait briefly for the answer.
---- fzf-lua wants results back from its callback, so block for the round
---- trip rather than restructure the picker around a callback.
+--- Ask, and wait for the answer.
+---
+--- This stops Neovim redrawing for the length of a round trip, so it
+--- must not be used where a person is typing: it cost 160 ms a
+--- keystroke in the picker, which is what made the field feel heavy.
+--- Use `M.search` there, which hands the answer back when it arrives.
+--- Kept for scripts and measurements, where blocking is what is wanted.
 --- @return string[] lines
 function M.search_now(query, opts)
   local answer, done = {}, false
