@@ -47,17 +47,36 @@ local function on_stdout(_, data)
   end
 end
 
+-- Write one message, unless the server has gone. A job that exits
+-- leaves callbacks in flight, and writing to it raises.
+local function write(message)
+  if not state.job then
+    return false
+  end
+  local ok = pcall(vim.fn.chansend, state.job, vim.json.encode(message) .. '\n')
+  if not ok then
+    state.job = nil
+  end
+  return ok
+end
+
 local function send(method, params, callback)
   state.next_id = state.next_id + 1
   local id = state.next_id
-  if callback then
-    state.pending[id] = callback
-  end
   local message = { jsonrpc = '2.0', id = id, method = method }
   if params then
     message.params = params
   end
-  vim.fn.chansend(state.job, vim.json.encode(message) .. '\n')
+  if not write(message) then
+    -- Nothing will answer, so let the caller stop waiting.
+    if callback then
+      callback(nil, 'the server has gone')
+    end
+    return
+  end
+  if callback then
+    state.pending[id] = callback
+  end
 end
 
 --- Start the server if it is not already running. Safe to call repeatedly.
@@ -77,6 +96,11 @@ function M.ensure()
     on_stdout = on_stdout,
     on_exit = function()
       state.job, state.ready = nil, false
+      local waiting = state.pending
+      state.pending = {}
+      for _, callback in pairs(waiting) do
+        pcall(callback, nil, 'the server stopped')
+      end
     end,
     stderr_buffered = false,
   })
@@ -88,10 +112,7 @@ function M.ensure()
 
   send('initialize', { protocolVersion = '2025-06-18', capabilities = {} }, function()
     state.ready = true
-    vim.fn.chansend(
-      state.job,
-      vim.json.encode({ jsonrpc = '2.0', method = 'notifications/initialized' }) .. '\n'
-    )
+    write({ jsonrpc = '2.0', method = 'notifications/initialized' })
   end)
   return true
 end
@@ -131,6 +152,40 @@ function M.search(query, opts, callback)
       end
     end
     callback(lines)
+  end)
+end
+
+--- Call one tool and hand the reply text to *callback*.
+local function call(name, arguments, callback)
+  if not M.ensure() then
+    return callback(nil)
+  end
+  send('tools/call', { name = name, arguments = arguments }, function(result, err)
+    if err or not result or result.isError then
+      return callback(nil)
+    end
+    callback(result.content and result.content[1] and result.content[1].text or '')
+  end)
+end
+
+--- Ask the server to bring the index up to date, and return at once.
+--- Searching keeps working while it runs, and answers improve as it goes.
+function M.refresh(path, callback)
+  call('refresh_index', { path = path }, callback or function() end)
+end
+
+--- Report what the index holds, and whether a refresh is running.
+--- Calls back with { refreshing = string|nil, chunks = number|nil }.
+function M.status(path, callback)
+  call('index_status', { path = path }, function(text)
+    if not text then
+      return callback({})
+    end
+    local doing = text:match('refreshing%s*:%s*([^\n]+)')
+    if doing == 'no' then
+      doing = nil
+    end
+    callback({ refreshing = doing, chunks = tonumber(text:match('chunks%s*:%s*(%d+)')) })
   end)
 end
 

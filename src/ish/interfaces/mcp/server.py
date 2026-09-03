@@ -87,8 +87,10 @@ class IshTools:
         self._settings = settings
         self._root = root
         self._by_root: dict[Path, Search] = {}
-        # Trees a thread is already keeping current.
-        self._watched: set[Path] = set()
+        # Trees a thread is already keeping current, and what each is
+        # doing, so a caller can say so while it reads stale answers.
+        self._watched: dict[Path, threading.Event] = {}
+        self._progress: dict[Path, str] = {}
         self._closing = threading.Event()
 
     def close(self) -> None:
@@ -138,23 +140,65 @@ class IshTools:
         """
         if root in self._watched:
             return
-        self._watched.add(root)
+        wake = threading.Event()
+        self._watched[root] = wake
         use_case.build_index(root)
-        thread = threading.Thread(
+        threading.Thread(
             target=self._refresh_forever,
-            args=(root,),
+            args=(root, wake),
             name=f"ish-refresh-{root.name}",
             daemon=True,
-        )
-        thread.start()
+        ).start()
 
-    def _refresh_forever(self, root: Path) -> None:
-        """Bring every index under *root* up to date, over and over."""
-        while not self._closing.wait(self._settings.refresh_seconds):
-            try:
-                bootstrap.refresh_indexes(self._settings, root)
-            except Exception as exc:  # noqa: BLE001 - a watch must not die
-                log.warning("Cannot refresh %s: %s", root, exc)
+    def _refresh_forever(self, root: Path, wake: threading.Event) -> None:
+        """Bring every index under *root* up to date, when asked or in time."""
+        while not self._closing.is_set():
+            # Wake early when something asks, otherwise on the interval.
+            wake.wait(self._settings.refresh_seconds or None)
+            wake.clear()
+            if self._closing.is_set():
+                return
+            self._refresh_once(root)
+
+    def _refresh_once(self, root: Path) -> None:
+        """Refresh *root*, recording what it is doing as it goes."""
+        self._progress[root] = "starting"
+        tree = ""
+
+        def note(message: str) -> None:
+            """Keep the tree being visited beside what it is doing.
+
+            A count of files says nothing about which tree they are in,
+            and a refresh walks several.
+            """
+            nonlocal tree
+            if message.startswith("Refreshing "):
+                tree = message
+                self._progress[root] = message
+            else:
+                self._progress[root] = f"{tree}, {message}" if tree else message
+
+        try:
+            bootstrap.refresh_indexes(self._settings, root, on_progress=note)
+        except Exception as exc:  # noqa: BLE001 - a watch must not die
+            log.warning("Cannot refresh %s: %s", root, exc)
+        finally:
+            self._progress.pop(root, None)
+
+    def refresh(self, arguments: Mapping[str, Any]) -> str:
+        """Ask for a refresh now, and return without waiting for it.
+
+        An editor opens a picker over code it has been changing, so this
+        is the moment to look, and the answers must keep coming while it
+        does. Report progress through ``index_status``.
+        """
+        root = self._resolve(arguments.get("path"))
+        use_case = self._search_for(root)
+        self._keep_current(root, use_case)
+        waiting = self._watched.get(root)
+        if waiting is not None:
+            waiting.set()
+        return f"Refreshing {root} in the background."
 
     def _search_for(self, root: Path) -> Search:
         """Return the use case for *root*, building it on first use."""
@@ -212,7 +256,7 @@ class IshTools:
         """Report what the stored index holds for a path."""
         root = self._resolve(arguments.get("path"))
         use_case = self._search_for(root)
-        use_case.build_index(root)
+        self._keep_current(root, use_case)
         chunks = use_case.all_chunks()
 
         languages: dict[str, int] = {}
@@ -220,8 +264,10 @@ class IshTools:
             languages[chunk.language] = languages.get(chunk.language, 0) + 1
         breakdown = ", ".join(f"{n} {lang}" for lang, n in sorted(languages.items()))
 
+        doing = self._progress.get(root)
         return (
             f"Index for {root}\n"
+            f"  refreshing: {doing or 'no'}\n"
             f"  chunks   : {len(chunks)}\n"
             f"  languages: {breakdown or 'none'}\n"
             f"  embedder : {self._settings.embedder}\n"
@@ -278,14 +324,29 @@ class IshTools:
                 name="index_status",
                 description=(
                     "Report how many chunks the stored index holds for a path, "
-                    "which languages they came from, and which embedding "
-                    "backend produced them. Refreshes the index first."
+                    "which languages they came from, which embedding backend "
+                    "produced them, and whether a refresh is running."
                 ),
                 schema={
                     "type": "object",
                     "properties": {"path": _PATH_PROPERTY},
                 },
                 handler=self.index_status,
+            ),
+            Tool(
+                name="refresh_index",
+                description=(
+                    "Bring the index for a path up to date, in the background. "
+                    "Returns at once; searching keeps working while it runs, "
+                    "and answers improve as it goes. Call it when opening a "
+                    "search over code that has been edited. Watch it finish "
+                    "with index_status."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {"path": _PATH_PROPERTY},
+                },
+                handler=self.refresh,
             ),
         ]
 
