@@ -593,3 +593,105 @@ class TestFederationWarning:
         with caplog.at_level("WARNING"):
             bootstrap.build_search(settings, nested).close()
         assert "without refreshing" not in caplog.text
+
+
+class TestCoveringIndex:
+    """Verify that asking inside an indexed tree reads what is there.
+
+    Building a second index for a subdirectory would embed every file
+    again, because a vector is shared only within one index file.
+    """
+
+    @pytest.fixture()
+    def offline(self, monkeypatch):
+        class Fake:
+            model_id = "fake"
+
+            def embed_documents(self, texts):
+                return [[float(len(t)), 1.0] for t in texts]
+
+            def embed_query(self, text):
+                return [float(len(text)), 1.0]
+
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: Fake())
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        root = tmp_path / "proj"
+        (root / "inner").mkdir(parents=True)
+        (root / "outer.py").write_text("def outer():\n    pass\n")
+        (root / "inner" / "deep.py").write_text("def deep():\n    pass\n")
+        return root
+
+    def _index(self, path: Path) -> None:
+        settings = Settings(git=False)
+        search = bootstrap.build_search(replace(settings, federate=False), path)
+        search.build_index(path)
+        search.close()
+
+    def test_a_covering_index_is_found(self, tree: Path, offline) -> None:
+        self._index(tree)
+        found = bootstrap.find_covering_index(Settings(), tree / "inner")
+        assert found is not None and found[0] == tree
+
+    def test_nothing_covers_the_tree_itself(self, tree: Path, offline) -> None:
+        self._index(tree)
+        assert bootstrap.find_covering_index(Settings(), tree) is None
+
+    def test_no_second_index_is_created(self, tree: Path, offline) -> None:
+        self._index(tree)
+        before = sorted(bootstrap.index_dir(Settings()).glob("*.db"))
+        search = bootstrap.build_search(Settings(git=False), tree / "inner")
+        search.build_index(tree / "inner")
+        search.close()
+        assert sorted(bootstrap.index_dir(Settings()).glob("*.db")) == before
+
+    def test_nothing_is_embedded_again(self, tree: Path, offline) -> None:
+        self._index(tree)
+        counted = {"n": 0}
+
+        class Counting:
+            model_id = "fake"
+
+            def embed_documents(self, texts):
+                counted["n"] += len(texts)
+                return [[float(len(t)), 1.0] for t in texts]
+
+            def embed_query(self, text):
+                return [float(len(text)), 1.0]
+
+        original = bootstrap.build_embedder
+        bootstrap.build_embedder = lambda settings: Counting()
+        try:
+            search = bootstrap.build_search(Settings(git=False), tree / "inner")
+            search.build_index(tree / "inner")
+            search.close()
+        finally:
+            bootstrap.build_embedder = original
+        assert counted["n"] == 0
+
+    def test_the_answers_stay_inside_the_path(self, tree: Path, offline) -> None:
+        self._index(tree)
+        search = bootstrap.build_search(Settings(git=False), tree / "inner")
+        try:
+            chunks = search.all_chunks()
+        finally:
+            search.close()
+        assert chunks
+        assert all((tree / "inner") in c.path.parents for c in chunks)
+
+    def test_the_parent_still_sees_everything(self, tree: Path, offline) -> None:
+        """Reading through a child must not narrow the parent."""
+        self._index(tree)
+        search = bootstrap.build_search(Settings(git=False), tree / "inner")
+        search.build_index(tree / "inner")
+        search.close()
+
+        parent = bootstrap.build_search(Settings(git=False), tree)
+        try:
+            symbols = {c.symbol for c in parent.all_chunks()}
+        finally:
+            parent.close()
+        assert symbols == {"outer", "deep"}

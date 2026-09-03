@@ -218,6 +218,31 @@ def find_indexes(settings: Settings, path: Path) -> dict[Path, Path]:
     return found
 
 
+def find_covering_index(settings: Settings, path: Path) -> tuple[Path, Path] | None:
+    """Return the nearest stored index whose tree contains *path*.
+
+    Asking about a directory inside an indexed tree should read what is
+    already there. Building a second index for it would embed every file
+    again, because a vector is shared only within one index file.
+    """
+    from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+    directory = index_dir(settings)
+    if not directory.is_dir():
+        return None
+
+    wanted = path.resolve()
+    best: tuple[Path, Path] | None = None
+    for db_path in sorted(directory.glob("*.db")):
+        tree = SqliteVectorStore.read_root(db_path)
+        if tree is None or tree not in wanted.parents:
+            continue
+        # Prefer the closest ancestor, which describes the path best.
+        if best is None or len(tree.parts) > len(best[0].parts):
+            best = (tree, db_path)
+    return best
+
+
 def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
     """Build the vector store for one scanned tree.
 
@@ -243,6 +268,13 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
     # several indexes reads them rather than starting a new one.
     primary = None
     if resolved in existing or not existing:
+        covering = None if existing else find_covering_index(settings, resolved)
+        if covering is not None:
+            tree, db_path = covering
+            log.info(
+                "Reading the index for %s, which already covers %s", tree, resolved
+            )
+            return open_index(db_path, tree)
         primary = open_index(index_path(settings, resolved), resolved)
 
     others = [open_index(db, tree) for tree, db in existing.items() if tree != resolved]
@@ -288,14 +320,32 @@ def build_scan(settings: Settings, root: Path) -> Scan:
 def build_search(settings: Settings, root: Path) -> Search:
     """Wire the full search use case for one scanned tree."""
     embedder = build_embedder(settings)
+    resolved = root.resolve()
+    keep = build_result_filter(settings, settings_filters(settings))
+
+    # An index that belongs to a tree above this one holds more than was
+    # asked for, so keep the answers inside the path.
+    if not settings.no_cache and find_covering_index(settings, resolved) is not None:
+        keep = _inside(resolved, keep)
+
     return Search(
         scan=build_scan(settings, root),
         embedder=embedder,
         vector_store=build_vector_store(settings, root, embedder),
         reindex=settings.reindex,
         hybrid=not settings.no_hybrid,
-        keep=build_result_filter(settings, settings_filters(settings)),
+        keep=keep,
     )
+
+
+def _inside(root: Path, keep):
+    """Return a filter that also requires a chunk to sit under *root*."""
+
+    def within(chunk) -> bool:
+        path = chunk.path
+        return (path == root or root in path.parents) and (keep is None or keep(chunk))
+
+    return within
 
 
 def refresh_indexes(

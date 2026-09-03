@@ -94,6 +94,11 @@ type_patterns = [
 
 The first match wins; anything unmatched keeps the reading above.
 
+A config beside a subtree adds to the one above it, so a tree settles only
+what it names and inherits the rest. Searching inside an already-indexed tree
+reads that tree's index and narrows the answers to the path, rather than
+starting a second index of the same files.
+
 ```sh
 nvim $(ish -i src/)
 ```
@@ -107,7 +112,7 @@ nvim $(ish -i src/)
 | `-v`, `-vv` | Increase log detail |
 | `--color {auto,always,never}` | Control log color |
 | `--limit N` | Maximum search results |
-| `--ignore DIR ...` | Directory names to skip |
+| `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
 | `--include REGEX ...` | Index only paths matching these patterns |
 | `--exclude REGEX ...` | Never index paths matching these patterns |
 | `--git`, `--no-git` | Skip files git ignores (default: on) |

@@ -310,12 +310,27 @@ def user_config_path() -> Path:
 
 
 def find_project_config(start: Path) -> Path | None:
-    """Search *start* and its parents for a project config file."""
+    """Return the nearest project config file at or above *start*."""
+    found = project_configs(start)
+    return found[-1] if found else None
+
+
+def project_configs(start: Path) -> list[Path]:
+    """Return every project config from *start* upward, outermost first.
+
+    Apply them in that order, so a file beside a subtree settles only
+    the keys it names and inherits the rest. Reading the nearest file
+    alone would make a setting for one tree silently drop what the
+    repository above it had already decided.
+    """
+    found: list[Path] = []
     for directory in [start, *start.parents]:
         for candidate in config_names(directory):
             if candidate.is_file():
-                return candidate
-    return None
+                found.append(candidate)
+                break
+    found.reverse()
+    return found
 
 
 def _from_env(environ: Mapping[str, str]) -> dict[str, Any]:
@@ -345,8 +360,8 @@ def load_settings(
 
     settings = replace(settings, **_read_toml(user_config_path()))
 
-    project = find_project_config(start)
-    if project is not None:
+    # Outermost first, so the nearest file wins key by key.
+    for project in project_configs(start):
         settings = replace(settings, **_read_toml(project))
 
     settings = replace(settings, **_from_env(environ))
