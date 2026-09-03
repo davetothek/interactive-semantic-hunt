@@ -166,11 +166,12 @@ class TestReuse:
 class TestToolDefinitions:
     """Verify what the host is told about the tools."""
 
-    def test_three_tools_are_offered(self, tools: IshTools) -> None:
+    def test_every_tool_is_offered(self, tools: IshTools) -> None:
         assert [t.name for t in tools.tools()] == [
             "search_code",
             "list_chunks",
             "index_status",
+            "refresh_index",
         ]
 
     def test_search_requires_a_query(self, tools: IshTools) -> None:
@@ -475,30 +476,96 @@ class TestAnEditBecomesSearchable:
     """
 
     @pytest.fixture()
-    def quick(self, project: Path, stub_backend, monkeypatch) -> IshTools:
-        """A server that re-checks often enough to watch."""
-        from ish.settings import Settings
-
-        settings = Settings(no_cache=False, git=False, refresh_seconds=0)
-        return IshTools(settings, project)
+    def quick(self, project: Path, stub_backend) -> IshTools:
+        """A server that refreshes only when asked."""
+        return IshTools(Settings(git=False, refresh_seconds=0), project)
 
     def _wait_for(self, tools: IshTools, project: Path, symbol: str) -> bool:
         for _ in range(100):
-            out = tools.search({"query": "gadget", "path": str(project)})
-            if symbol in out:
+            if symbol in tools.search({"query": "gadget", "path": str(project)}):
                 return True
             time.sleep(0.05)
         return False
 
-    def test_a_new_file_is_found_without_restarting(
+    def test_a_new_file_is_found_after_asking(
         self, quick: IshTools, project: Path
     ) -> None:
+        """This is the shape an editor uses: ask when the picker opens."""
         quick.search({"query": "gadget", "path": str(project)})
         (project / "late.py").write_text("def gadget_maker():\n    return 1\n")
+        quick.refresh({"path": str(project)})
         try:
             assert self._wait_for(quick, project, "gadget_maker")
         finally:
             quick.close()
+
+    def test_asking_returns_before_the_work_is_done(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        """Searching must keep working while the index is rebuilt."""
+        quick.search({"query": "config", "path": str(project)})
+        said = quick.refresh({"path": str(project)})
+        try:
+            assert "background" in said
+            assert quick.search({"query": "config", "path": str(project)})
+        finally:
+            quick.close()
+
+    def test_the_status_says_what_is_running(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        quick.search({"query": "config", "path": str(project)})
+        quick._progress[project.resolve()] = "Refreshing 1 of 2: src"
+        try:
+            assert "Refreshing 1 of 2" in quick.index_status({"path": str(project)})
+        finally:
+            quick.close()
+
+    def test_the_status_says_no_when_nothing_runs(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        try:
+            assert "refreshing: no" in quick.index_status({"path": str(project)})
+        finally:
+            quick.close()
+
+    def test_the_tree_is_named_beside_what_it_is_doing(
+        self, quick: IshTools, project: Path, monkeypatch
+    ) -> None:
+        """A count alone does not say which tree is being read."""
+        from ish import bootstrap
+
+        seen: list[str] = []
+
+        def talky(settings, root, on_progress=None, overrides=None):
+            on_progress("Refreshing 1 of 2: src")
+            on_progress("Reading 3 of 9 files")
+            seen.append(quick._progress[root])
+
+        monkeypatch.setattr(bootstrap, "refresh_indexes", talky)
+        quick._refresh_once(project.resolve())
+        assert seen == ["Refreshing 1 of 2: src, Reading 3 of 9 files"]
+
+    def test_a_message_before_any_tree_stands_alone(
+        self, quick: IshTools, project: Path, monkeypatch
+    ) -> None:
+        from ish import bootstrap
+
+        seen: list[str] = []
+
+        def talky(settings, root, on_progress=None, overrides=None):
+            on_progress("Looking for source files")
+            seen.append(quick._progress[root])
+
+        monkeypatch.setattr(bootstrap, "refresh_indexes", talky)
+        quick._refresh_once(project.resolve())
+        assert seen == ["Looking for source files"]
+
+    def test_the_report_is_cleared_when_it_finishes(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        quick._refresh_once(project.resolve())
+        assert project.resolve() not in quick._progress
 
     def test_the_watch_starts_once_for_a_tree(
         self, quick: IshTools, project: Path
@@ -540,7 +607,27 @@ class TestAnEditBecomesSearchable:
 
         monkeypatch.setattr(bootstrap, "refresh_indexes", explode)
         with caplog.at_level("WARNING", logger="ish"):
-            quick.search({"query": "config", "path": str(project)})
-            time.sleep(0.3)
+            quick._refresh_once(project.resolve())
         quick.close()
         assert "Cannot refresh" in caplog.text
+
+    def test_a_timer_wakes_the_watch_on_its_own(
+        self, project: Path, stub_backend, monkeypatch
+    ) -> None:
+        """With an interval set, nobody has to ask."""
+        from ish import bootstrap
+
+        rounds: list[int] = []
+        monkeypatch.setattr(
+            bootstrap, "refresh_indexes", lambda *a, **k: rounds.append(1)
+        )
+        tools = IshTools(Settings(git=False, refresh_seconds=1), project)
+        try:
+            tools.search({"query": "config", "path": str(project)})
+            for _ in range(60):
+                if rounds:
+                    break
+                time.sleep(0.05)
+            assert rounds
+        finally:
+            tools.close()

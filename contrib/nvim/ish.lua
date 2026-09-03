@@ -83,6 +83,55 @@ local function unrender(entry)
   return (plain:gsub(RANK, ''))
 end
 
+-- How often to ask what the index is doing, while it is doing it.
+local WATCH_MS = 700
+-- Give up watching after this long. fzf-lua offers no hook for the
+-- picker closing, so the watch has to end on its own or it would poll
+-- for the life of the session.
+local WATCH_LIMIT_MS = 10 * 60 * 1000
+
+-- Where a statusline can read what the index is doing, empty when idle.
+vim.g.ish_index_status = ''
+
+-- Follow a refresh until it finishes, publishing what it is doing.
+--
+-- The index is brought up to date when the picker opens, not on every
+-- keystroke, and the results improve while it runs. Say so: a picker
+-- that quietly answers from yesterday's index is worse than a slow one.
+local function watch(server, path)
+  local timer = vim.uv.new_timer()
+  local waited, told = 0, false
+
+  local function finish(message)
+    vim.g.ish_index_status = ''
+    if not timer:is_closing() then
+      timer:stop()
+      timer:close()
+    end
+    if message then
+      vim.notify(message, vim.log.levels.INFO)
+    end
+  end
+
+  timer:start(0, WATCH_MS, vim.schedule_wrap(function()
+    waited = waited + WATCH_MS
+    if waited > WATCH_LIMIT_MS then
+      return finish(nil)
+    end
+    server.status(path, function(state)
+      if state.refreshing then
+        told = true
+        vim.g.ish_index_status = 'ish: ' .. state.refreshing
+      elseif state.chunks == nil then
+        finish(nil)                      -- the server stopped answering
+      else
+        finish(told and 'ish: index up to date' or nil)
+      end
+    end)
+  end))
+  return timer
+end
+
 --- Search the whole project by meaning.
 ---
 --- Narrow it by writing a filter into the query: `lang:cpp`, `type:doc`,
@@ -97,6 +146,14 @@ function M.search(opts)
   opts = opts or {}
   opts.cwd = opts.cwd or root()
   local server = require('utils.ish_server')
+
+  -- Look for changes now, once, rather than on every keystroke. The
+  -- search runs against whatever is already stored and improves as the
+  -- refresh lands.
+  if server.ensure() then
+    server.refresh(opts.cwd)
+    watch(server, opts.cwd)
+  end
 
   require('fzf-lua').fzf_live(function(query)
     local text = query_text(query)
@@ -145,6 +202,7 @@ _internal.query_text = query_text
 _internal.command = command
 _internal.render = render
 _internal.unrender = unrender
+_internal.watch = watch
 M._internal = _internal
 
 return M

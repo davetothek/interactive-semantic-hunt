@@ -267,6 +267,13 @@ by serializing.
   parent read from the indexes below it, building all 23,215 chunks only to
   count them — which was most of the cost of an answer: 390 ms through Neovim
   against 135 now.
+- **`refresh_index` asks for a refresh now and returns at once.** An editor
+  opens a picker over code it has been changing, so that is the moment to look,
+  and a keystroke is not. The watch thread waits on an event, so the tool wakes
+  it rather than starting anything new, and `refresh_seconds = 0` means it waits
+  only for the asking. `index_status` reports what the refresh is doing, naming
+  the tree beside the file count, so an interface can say the answers are still
+  improving.
 - **Refreshing through a read-only parent does nothing, so refresh the trees
   beneath it.** A search from a git root federates the indexes below and cannot
   write, so `build_index` there only ever read: an edit was never going to
