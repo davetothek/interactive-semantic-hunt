@@ -29,6 +29,11 @@ from ish.settings import Settings, load_settings
 
 log = logging.getLogger("ish.mcp")
 
+# How long closing waits for a watch to finish what it is doing.
+# Long enough for a refresh between two checks of the flag, short
+# enough that nobody notices.
+WATCH_STOP_SECONDS = 5.0
+
 SERVER_NAME = "ish"
 
 _PATH_PROPERTY = {
@@ -90,12 +95,26 @@ class IshTools:
         # Trees a thread is already keeping current, and what each is
         # doing, so a caller can say so while it reads stale answers.
         self._watched: dict[Path, threading.Event] = {}
+        # The threads themselves, so closing can wait for them.
+        self._watchers: list[threading.Thread] = []
         self._progress: dict[Path, str] = {}
         self._closing = threading.Event()
 
     def close(self) -> None:
-        """Release every index this server opened."""
+        """Release every index this server opened, and stop watching.
+
+        Wait briefly for each watch to notice. A thread that outlives
+        this call would go on writing to wherever it last resolved the
+        index directory to be, which in a test is a directory that has
+        already been taken away.
+        """
         self._closing.set()
+        for wake in self._watched.values():
+            wake.set()
+        for watcher in self._watchers:
+            watcher.join(timeout=WATCH_STOP_SECONDS)
+        self._watchers.clear()
+        self._watched.clear()
         for search in self._by_root.values():
             search.close()
         self._by_root.clear()
@@ -143,12 +162,14 @@ class IshTools:
         wake = threading.Event()
         self._watched[root] = wake
         use_case.build_index(root)
-        threading.Thread(
+        watcher = threading.Thread(
             target=self._refresh_forever,
             args=(root, wake),
             name=f"ish-refresh-{root.name}",
             daemon=True,
-        ).start()
+        )
+        self._watchers.append(watcher)
+        watcher.start()
 
     def _refresh_forever(self, root: Path, wake: threading.Event) -> None:
         """Bring every index under *root* up to date, when asked or in time."""
