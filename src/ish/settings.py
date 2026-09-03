@@ -195,6 +195,13 @@ class Settings:
             action="store_true",
         ),
     )
+    tui_debounce_ms: int = field(
+        default=120,
+        metadata=_opt(
+            "Wait this long after a keystroke before searching, in the TUI.",
+            metavar="MS",
+        ),
+    )
     refresh: bool = field(
         default=False,
         metadata=_opt(

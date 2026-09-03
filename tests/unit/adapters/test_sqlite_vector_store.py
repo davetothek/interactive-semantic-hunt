@@ -679,3 +679,187 @@ class TestTopKScoring:
     def test_a_zero_limit_returns_nothing(self, store: SqliteVectorStore) -> None:
         self._many(store, 5)
         assert store._semantic([1.0, 0.0], 0) == []
+
+
+class TestScoredMatrixCache:
+    """Verify the matrix is kept between queries and dropped on a write.
+
+    Reading every vector out of SQLite cost more than the arithmetic:
+    measured on 23,215 chunks, 118 ms a query against 2 ms.
+    """
+
+    @staticmethod
+    def _chunk(name: str, line: int = 1) -> Chunk:
+        return Chunk(
+            path=Path("/p/a.py"),
+            text=f"def {name}(): pass",
+            kind="function",
+            language="python",
+            symbol=name,
+            start_line=line,
+            end_line=line,
+        )
+
+    def _store(self, tmp_path: Path) -> SqliteVectorStore:
+        store = SqliteVectorStore(tmp_path / "i.db", model_id="m", root=Path("/p"))
+        store.add_vectors({"h1": [1.0, 0.0], "h2": [0.0, 1.0]})
+        store.set_file(
+            Path("/p/a.py"),
+            FileStamp(mtime_ns=1, size=1),
+            [(self._chunk("one", 1), "h1"), (self._chunk("two", 2), "h2")],
+        )
+        return store
+
+    def test_a_repeated_query_reuses_the_matrix(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        try:
+            store.search([1.0, 0.0], limit=1)
+            first = store._matrix_cache
+            store.search([0.0, 1.0], limit=1)
+            assert store._matrix_cache is first
+        finally:
+            store.close()
+
+    def test_a_write_drops_the_matrix(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        try:
+            store.search([1.0, 0.0], limit=1)
+            before = store._matrix_cache
+            store.add_vectors({"h3": [0.5, 0.5]})
+            store.search([1.0, 0.0], limit=1)
+            assert store._matrix_cache is not before
+        finally:
+            store.close()
+
+    def test_a_new_chunk_is_found_after_a_write(self, tmp_path: Path) -> None:
+        """The cache must never hide a chunk that was just added."""
+        store = self._store(tmp_path)
+        try:
+            assert len(store.search([1.0, 0.0], limit=10)) == 2
+            store.add_vectors({"h3": [1.0, 0.0]})
+            store.set_file(
+                Path("/p/b.py"),
+                FileStamp(mtime_ns=1, size=1),
+                [(self._chunk("three", 1), "h3")],
+            )
+            assert len(store.search([1.0, 0.0], limit=10)) == 3
+        finally:
+            store.close()
+
+    def test_removing_a_file_is_seen(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        try:
+            store.search([1.0, 0.0], limit=10)
+            store.remove_files([Path("/p/a.py")])
+            assert store.search([1.0, 0.0], limit=10) == []
+        finally:
+            store.close()
+
+    def test_clearing_is_seen(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        try:
+            store.search([1.0, 0.0], limit=10)
+            store.clear()
+            assert store.search([1.0, 0.0], limit=10) == []
+        finally:
+            store.close()
+
+    def test_another_connection_writing_is_seen(self, tmp_path: Path) -> None:
+        """A second process indexing must not leave a reader stale."""
+        reader = SqliteVectorStore(tmp_path / "i.db", model_id="m", root=Path("/p"))
+        writer = SqliteVectorStore(tmp_path / "i.db", model_id="m", root=Path("/p"))
+        try:
+            writer.add_vectors({"h1": [1.0, 0.0]})
+            writer.set_file(
+                Path("/p/a.py"),
+                FileStamp(mtime_ns=1, size=1),
+                [(self._chunk("one"), "h1")],
+            )
+            assert len(reader.search([1.0, 0.0], limit=10)) == 1
+
+            writer.add_vectors({"h2": [0.0, 1.0]})
+            writer.set_file(
+                Path("/p/b.py"),
+                FileStamp(mtime_ns=1, size=1),
+                [(self._chunk("two"), "h2")],
+            )
+            assert len(reader.search([1.0, 0.0], limit=10)) == 2
+        finally:
+            reader.close()
+            writer.close()
+
+
+class TestFetchDepth:
+    """Verify the store reads no more chunk detail than it needs.
+
+    Reading a chunk's details costs far more than scoring it, so the
+    wider slice is worth fetching only when something will trim it.
+    """
+
+    def _store(self, tmp_path: Path) -> SqliteVectorStore:
+        store = SqliteVectorStore(tmp_path / "d.db", model_id="m", root=Path("/p"))
+        store.add_vectors({f"h{i}": [1.0, float(i) / 200] for i in range(200)})
+        store.set_file(
+            Path("/p/a.py"),
+            FileStamp(mtime_ns=1, size=1),
+            [
+                (
+                    Chunk(
+                        path=Path("/p/a.py"),
+                        text="x",
+                        kind="function",
+                        language="python",
+                        symbol=f"sym{i}",
+                        start_line=i + 1,
+                        end_line=i + 1,
+                    ),
+                    f"h{i}",
+                )
+                for i in range(200)
+            ],
+        )
+        return store
+
+    def test_a_plain_query_builds_only_the_page(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        store = self._store(tmp_path)
+        built = {"n": 0}
+        original = SqliteVectorStore._to_chunk
+
+        def counted(row):
+            built["n"] += 1
+            return original(row)
+
+        monkeypatch.setattr(SqliteVectorStore, "_to_chunk", staticmethod(counted))
+        try:
+            assert len(store.search([1.0, 0.0], limit=10)) == 10
+            assert built["n"] == 10
+        finally:
+            store.close()
+
+    def test_a_filtered_query_looks_deeper(self, tmp_path: Path, monkeypatch) -> None:
+        """A filter trims, so the store must offer it more to trim."""
+        store = self._store(tmp_path)
+        built = {"n": 0}
+        original = SqliteVectorStore._to_chunk
+
+        def counted(row):
+            built["n"] += 1
+            return original(row)
+
+        monkeypatch.setattr(SqliteVectorStore, "_to_chunk", staticmethod(counted))
+        try:
+            store.search([1.0, 0.0], limit=10, keep=lambda chunk: True)
+            assert built["n"] > 10
+        finally:
+            store.close()
+
+    def test_the_answers_are_the_same_either_way(self, tmp_path: Path) -> None:
+        store = self._store(tmp_path)
+        try:
+            plain = store.search([1.0, 0.5], limit=10)
+            kept = store.search([1.0, 0.5], limit=10, keep=lambda chunk: True)
+            assert [c.symbol for c, _ in plain] == [c.symbol for c, _ in kept]
+        finally:
+            store.close()

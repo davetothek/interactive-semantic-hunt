@@ -70,6 +70,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         root_path: Path,
         *,
         limit: int = 50,
+        debounce_ms: int = 120,
         filters: Filters | None = None,
         categorize: Callable[[Chunk], str] | None = None,
     ) -> None:
@@ -77,6 +78,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         self.search_use_case = search_use_case
         self.root_path = root_path
         self.limit = limit
+        self.debounce = debounce_ms / 1000
         # What the command line already narrowed. A filter typed into
         # the query line overrides it for as long as it is typed.
         self._base_filters = filters or Filters()
@@ -208,9 +210,9 @@ class IshApp(App[tuple[Chunk, float] | None]):
     @work(exclusive=True)
     async def do_search(self, query: str) -> None:
         """Perform semantic search with debounce."""
-        # 200ms debounce: if the user types again,
-        # this task is cancelled by exclusive=True
-        await asyncio.sleep(0.2)
+        # Wait out the debounce. Typing again cancels this task, since
+        # the worker is exclusive.
+        await asyncio.sleep(self.debounce)
 
         # Filters may be written into the query, as `lang:cpp under:/src/`.
         # Strip them, so the embedder sees what is wanted rather than how
