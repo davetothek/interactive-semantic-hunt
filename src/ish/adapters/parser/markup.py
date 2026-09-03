@@ -30,12 +30,12 @@ class MarkupParser:
         self._heading = re.compile(rf"^({re.escape(marker)}+)\s+(\S.*)$")
 
     @classmethod
-    def markdown(cls) -> MarkupParser:
+    def markdown(cls) -> "MarkupParser":
         """Build the Markdown flavor."""
         return cls("markdown", frozenset({".md", ".markdown"}), "#")
 
     @classmethod
-    def asciidoc(cls) -> MarkupParser:
+    def asciidoc(cls) -> "MarkupParser":
         """Build the AsciiDoc flavor."""
         return cls("asciidoc", frozenset({".adoc", ".asciidoc", ".asc"}), "=")
 

@@ -39,12 +39,12 @@ class StructuredParser:
         self.suffixes = suffixes
 
     @classmethod
-    def yaml(cls) -> StructuredParser:
+    def yaml(cls) -> "StructuredParser":
         """Build the YAML flavor."""
         return cls("yaml", frozenset({".yaml", ".yml"}))
 
     @classmethod
-    def json(cls) -> StructuredParser:
+    def json(cls) -> "StructuredParser":
         """Build the JSON flavor. YAML is a superset, so one reader serves."""
         return cls("json", frozenset({".json"}))
 

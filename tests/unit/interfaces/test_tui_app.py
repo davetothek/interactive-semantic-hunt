@@ -808,7 +808,7 @@ class TestStaleWorkIsDropped:
 
     def _type(
         self, text: str, gap: float, debounce_ms: int = 60
-    ) -> TestStaleWorkIsDropped.Slow:
+    ) -> "TestStaleWorkIsDropped.Slow":
         slow = self.Slow()
         app = IshApp(slow, Path("."), limit=5, debounce_ms=debounce_ms)
 

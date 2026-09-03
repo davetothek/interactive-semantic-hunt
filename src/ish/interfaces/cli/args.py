@@ -90,7 +90,7 @@ class CliArgs:
     overrides: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_args(cls, argv: list[str] | None = None) -> CliArgs:
+    def from_args(cls, argv: list[str] | None = None) -> "CliArgs":
         """Parse command-line arguments and return a typed data class."""
         parser = argparse.ArgumentParser(
             prog="ish",

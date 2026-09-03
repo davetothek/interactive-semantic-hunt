@@ -197,13 +197,19 @@ class TestFailures:
     def test_file_that_vanishes_mid_scan_is_skipped(
         self, embedder, store, tmp_path: Path, monkeypatch
     ) -> None:
-        """Discovery and stat are separate steps, so a file can disappear."""
+        """Discovery and stat are separate steps, so a file can disappear.
+
+        Raise what a vanishing file raises. A bare ``OSError`` carries no
+        errno, and pathlib re-raises those rather than reading them as an
+        absence, so the test would describe a condition that cannot
+        happen.
+        """
         (tmp_path / "a.py").write_text("alpha\n")
         real_stat = Path.stat
 
         def flaky(self, *args, **kwargs):
             if self.name == "a.py":
-                raise OSError("vanished")
+                raise FileNotFoundError(2, "No such file or directory")
             return real_stat(self, *args, **kwargs)
 
         monkeypatch.setattr(Path, "stat", flaky)

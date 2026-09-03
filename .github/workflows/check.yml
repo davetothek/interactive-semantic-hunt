@@ -13,6 +13,12 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every version the package says it supports. A floor nobody
+        # tests is a guess.
+        python: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
@@ -22,11 +28,11 @@ jobs:
 
       # No extras. The backends that need a compiler are optional, and
       # the tests stand in for them, so a check never builds llama.cpp.
-      - run: uv sync --dev
+      - run: uv sync --dev --python ${{ matrix.python }}
 
-      - run: uv run poe lint
-      - run: uv run poe typecheck
-      - run: uv run poe test
+      - run: uv run --python ${{ matrix.python }} poe lint
+      - run: uv run --python ${{ matrix.python }} poe typecheck
+      - run: uv run --python ${{ matrix.python }} poe test
 
   build:
     runs-on: ubuntu-latest

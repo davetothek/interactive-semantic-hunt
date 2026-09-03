@@ -174,7 +174,7 @@ class Filters:
         """Report whether anything is narrowed."""
         return bool(self.lang or self.under or self.type)
 
-    def or_else(self, other: Filters) -> Filters:
+    def or_else(self, other: "Filters") -> "Filters":
         """Fill each empty field from *other*.
 
         A filter typed into the query wins over the configured one, so
