@@ -351,6 +351,16 @@ For a long-lived interface such as MCP, a call that could set an index-scope opt
 
 A query-scope filter that reached `Scan.accepts()` would make the next run prune everything it excluded, so `ish --lang markdown` would silently delete every Python chunk. Keep them apart: query filters are built by `build_result_filter()` and passed to the store as the `keep` predicate, applied before the limit so a filtered search still returns a full page. `test_the_filter_does_not_shrink_the_index` pins this.
 
+`interfaces/complete.py` finishes a filter word the way a shell does: one
+candidate completes it and adds a space, several complete as far as they agree,
+and nothing matching leaves the text alone, so the key is never destructive.
+`ish-complete` prints the finished query, and `--candidates` prints what a word
+could still become. Neovim binds Tab to `transform-query` for the first and
+`transform-header` for the second, so an ambiguous word names its choices rather
+than appearing to do nothing. The values are not guessable — `lang:` takes a
+parser name or an alias, `under:` takes a path — which is the whole reason to
+complete them.
+
 `Filters` carries the three query-scope narrowings as one value, so adding a
 fourth does not widen the signature of every interface that passes them.
 `Filters.or_else()` sets the precedence: a filter typed into the query beats a

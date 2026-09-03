@@ -63,6 +63,11 @@ type:doc how do I configure this       the prose, not the code
 type:test,doc retry backoff            the tests and what they document
 ```
 
+Press Tab to finish a filter word. `ty` becomes `type:`, `lang:cp` becomes
+`lang:cpp`, and `under:/s` becomes `under:/src/`; a word with several answers
+grows as far as they agree and names the rest. `ish-complete` does the work, so
+any picker can call it.
+
 `lang:`, `under:`, and `type:` work in the query line of every interface —
 the command line, the picker, Neovim, and MCP. The words are taken out
 before the query is embedded, so the model sees the question rather than

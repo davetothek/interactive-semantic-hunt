@@ -35,6 +35,7 @@ dev = [
 [project.scripts]
 ish = "ish.interfaces.cli.main:main"
 ish-mcp = "ish.interfaces.mcp.server:main"
+ish-complete = "ish.interfaces.cli.complete:main"
 
 [tool.uv]
 package = true
