@@ -199,24 +199,45 @@ class TestFailures:
     ) -> None:
         """Discovery and stat are separate steps, so a file can disappear.
 
-        Raise what a vanishing file raises. A bare ``OSError`` carries no
-        errno, and pathlib re-raises those rather than reading them as an
-        absence, so the test would describe a condition that cannot
-        happen.
+        Delete it between the two rather than making stat raise. A patched
+        stat also changes what discovery sees, and differently on each
+        version of pathlib, so the test would describe the plumbing rather
+        than the thing that happens.
         """
-        (tmp_path / "a.py").write_text("alpha\n")
-        real_stat = Path.stat
+        target = tmp_path / "a.py"
+        target.write_text("alpha\n")
+        index = build(embedder, store)
+        found_by = index._scanner.discover
 
-        def flaky(self, *args, **kwargs):
-            if self.name == "a.py":
-                raise FileNotFoundError(2, "No such file or directory")
-            return real_stat(self, *args, **kwargs)
+        def discover_then_vanish(root: Path):
+            paths = found_by(root)
+            target.unlink()
+            return paths
 
-        monkeypatch.setattr(Path, "stat", flaky)
-        stats = build(embedder, store).refresh(tmp_path)
+        monkeypatch.setattr(index._scanner, "discover", discover_then_vanish)
+        stats = index.refresh(tmp_path)
 
         assert stats.files_seen == 0
         assert stats.vectors_embedded == 0
+
+    def test_the_vanished_file_is_reported(
+        self, embedder, store, tmp_path: Path, monkeypatch, caplog
+    ) -> None:
+        """Skipping quietly would hide a tree half of which cannot be read."""
+        target = tmp_path / "a.py"
+        target.write_text("alpha\n")
+        index = build(embedder, store)
+        found_by = index._scanner.discover
+
+        def discover_then_vanish(root: Path):
+            paths = found_by(root)
+            target.unlink()
+            return paths
+
+        monkeypatch.setattr(index._scanner, "discover", discover_then_vanish)
+        with caplog.at_level("WARNING", logger="ish"):
+            index.refresh(tmp_path)
+        assert "Cannot stat" in caplog.text
 
 
 class TestDuplicateText:
