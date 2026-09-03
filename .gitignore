@@ -222,3 +222,6 @@ __marimo__/
 
 # Tool caches (ruff, pytest)
 .cache/
+
+# Planning notes, kept out of the published tree.
+TODO.md
