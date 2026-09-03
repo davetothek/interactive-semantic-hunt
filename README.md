@@ -148,6 +148,10 @@ line, and prints the rank in the leftmost column. `search_lang({'cpp'})`,
 `search_type({'doc'})`, and `search_here()` narrow it, as does a `lang:`,
 `type:`, or `under:` word typed into the query.
 
+While the index refreshes, `require('utils.ish').statusline()` renders a bar
+for a statusline — `ish ███░░░░░ 38%` — and an empty string when idle. It reads
+`vim.g.ish_index_status`, which the picker keeps up to date.
+
 The picker never blocks the editor: results are written as they arrive, so
 typing stays smooth however long a search takes.
 

@@ -93,6 +93,63 @@ local WATCH_LIMIT_MS = 10 * 60 * 1000
 -- Where a statusline can read what the index is doing, empty when idle.
 vim.g.ish_index_status = ''
 
+-- How wide to draw the bar. Narrow enough to sit in a statusline.
+local BAR_WIDTH = 8
+
+--- Read how far along a refresh is, from what it says it is doing.
+---
+--- A refresh walks several trees and reports twice: which tree it is
+--- on, and how far into that tree it has read. Combine them, so the bar
+--- moves smoothly rather than jumping once per tree.
+--- @return number|nil fraction between 0 and 1, or nil when unknown
+function M.fraction(text)
+  if not text or text == '' then
+    return nil
+  end
+  -- Collect every "N of M" the line carries. When a tree is named it
+  -- comes first, and what it is doing within that tree comes after.
+  local counts = {}
+  for done, total in text:gmatch('(%d+) of (%d+)') do
+    counts[#counts + 1] = { tonumber(done), tonumber(total) }
+  end
+  if #counts == 0 then
+    return nil
+  end
+
+  local function share(pair)
+    return pair[2] > 0 and math.min(pair[1] / pair[2], 1) or 0
+  end
+
+  if not text:match('Refreshing %d+ of %d+') then
+    return share(counts[1])
+  end
+  local tree, trees = counts[1][1], math.max(counts[1][2], 1)
+  local within = counts[2] and share(counts[2]) or 0
+  return math.min(((tree - 1) + within) / trees, 1)
+end
+
+--- Render the index progress for a statusline. Empty when idle.
+---
+--- Show a bar when the work can be measured and a plain word when it
+--- cannot, rather than a bar that does not move.
+function M.statusline()
+  local text = vim.g.ish_index_status
+  if not text or text == '' then
+    return ''
+  end
+  local fraction = M.fraction(text)
+  if not fraction then
+    return 'ish …'
+  end
+  local filled = math.floor(fraction * BAR_WIDTH + 0.5)
+  return string.format(
+    'ish %s%s %2d%%',
+    string.rep('█', filled),
+    string.rep('░', BAR_WIDTH - filled),
+    math.floor(fraction * 100 + 0.5)
+  )
+end
+
 -- Follow a refresh until it finishes, publishing what it is doing.
 --
 -- The index is brought up to date when the picker opens, not on every
@@ -102,8 +159,15 @@ local function watch(server, path)
   local timer = vim.uv.new_timer()
   local waited, told = 0, false
 
+  local function show(text)
+    if vim.g.ish_index_status ~= text then
+      vim.g.ish_index_status = text
+      vim.cmd('redrawstatus')
+    end
+  end
+
   local function finish(message)
-    vim.g.ish_index_status = ''
+    show('')
     if not timer:is_closing() then
       timer:stop()
       timer:close()
@@ -121,7 +185,7 @@ local function watch(server, path)
     server.status(path, function(state)
       if state.refreshing then
         told = true
-        vim.g.ish_index_status = 'ish: ' .. state.refreshing
+        show(state.refreshing)
       elseif state.chunks == nil then
         finish(nil)                      -- the server stopped answering
       else
