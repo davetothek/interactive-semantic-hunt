@@ -5,6 +5,7 @@ A fake search use case keeps the tests free of a model and a daemon.
 """
 
 import asyncio
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -756,3 +757,81 @@ class TestListingIsCapped:
                 assert "25 of 500" in app.sub_title
 
         run(body())
+
+
+class TestStaleWorkIsDropped:
+    """Verify that typing does not queue searches nobody wants.
+
+    Cancelling the task that waits on a thread does not stop the thread,
+    so without a check every keystroke's work runs to the end and the
+    newest query waits behind all of it.
+    """
+
+    class Slow:
+        """A use case with a search slow enough to overlap keystrokes."""
+
+        def __init__(self, delay: float = 0.25) -> None:
+            self.delay = delay
+            self.begun: list[str] = []
+            self._chunks = [chunk(f"sym{i}") for i in range(5)]
+
+        def build_index(self, root, on_progress=None):
+            return self._chunks
+
+        def all_chunks(self, keep=None):
+            return self._chunks
+
+        def search(self, query, limit=5, keep=None, hybrid=None):
+            self.begun.append(query)
+            time.sleep(self.delay)
+            return [(c, 0.5) for c in self._chunks[:limit]]
+
+        def close(self) -> None:
+            return None
+
+    def _type(
+        self, text: str, gap: float, debounce_ms: int = 60
+    ) -> TestStaleWorkIsDropped.Slow:
+        slow = self.Slow()
+        app = IshApp(slow, Path("."), limit=5, debounce_ms=debounce_ms)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                for character in text:
+                    await pilot.press(character)
+                    await asyncio.sleep(gap)
+                await asyncio.sleep(1.5)
+
+        run(body())
+        return slow
+
+    def test_typing_faster_than_the_debounce_searches_once(self) -> None:
+        """A burst inside one debounce is one search, not eight."""
+        slow = self._type("abcdefgh", gap=0.0, debounce_ms=600)
+        assert slow.begun == ["abcdefgh"]
+
+    def test_most_overlapping_work_is_dropped(self) -> None:
+        """Only what is still wanted when a thread is free gets done."""
+        slow = self._type("abcdefghij", gap=0.08)
+        assert len(slow.begun) < 10
+        # Whatever ran, the last one is the whole query.
+        assert slow.begun[-1] == "abcdefghij"
+
+    def test_the_search_runs_on_one_thread(self) -> None:
+        """A backend that serves one request at a time gains nothing
+        from several, and loses to queries nobody wants."""
+        app = IshApp(self.Slow(), Path("."), limit=5)
+        assert app._searcher._max_workers == 1
+
+    def test_out_of_date_work_returns_nothing(self) -> None:
+        app = IshApp(self.Slow(), Path("."), limit=5)
+        app._generation = 7
+        assert app._search_if_current(6, "old", None) is None
+        assert app._listing_if_current(6, None) is None
+
+    def test_current_work_is_done(self) -> None:
+        app = IshApp(self.Slow(delay=0.0), Path("."), limit=5)
+        app._generation = 7
+        assert app._search_if_current(7, "now", None) is not None
+        assert app._listing_if_current(7, None) is not None

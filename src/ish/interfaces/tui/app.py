@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from rich.syntax import Syntax
@@ -85,8 +86,20 @@ class IshApp(App[tuple[Chunk, float] | None]):
         # How a chunk is sorted into a type, which a repository may
         # define for itself.
         self._categorize = categorize
+        # Which search is the current one. A cancelled task cannot stop
+        # the thread it already handed work to, so the thread asks.
+        self._generation = 0
+        # Search on one thread. The embedding backend serves one request
+        # at a time anyway, so running several only makes the newest
+        # query wait behind queries nobody wants any more. Queued work
+        # finds itself out of date and returns.
+        self._searcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ish")
         self._current_results: list[tuple[Chunk, float]] = []
         self._all_chunks: list[Chunk] = []
+
+    def on_unmount(self) -> None:
+        """Let the search thread go when the interface closes."""
+        self._searcher.shutdown(wait=False, cancel_futures=True)
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
@@ -226,17 +239,46 @@ class IshApp(App[tuple[Chunk, float] | None]):
             # A half-typed expression is not an error to report.
             return
 
+        self._generation += 1
+        mine = self._generation
+
         if not text:
             # No words to search for, so list what the filters allow.
-            chunks = await asyncio.to_thread(self.search_use_case.all_chunks, keep)
+            chunks = await self._off_loop(self._listing_if_current, mine, keep)
+            if chunks is None:
+                return
             self._show_listing(chunks, filters.describe())
             return
 
-        # Perform the actual ML search in a background thread so UI doesn't freeze
-        results = await asyncio.to_thread(
-            self.search_use_case.search, text, self.limit, keep
+        # Search off the event loop, so the interface keeps drawing.
+        results = await self._off_loop(self._search_if_current, mine, text, keep)
+        if results is None:
+            return
+        self._populate_results(results, show_scores=True)
+
+    def _off_loop(self, function, *arguments):
+        """Run *function* on the search thread, keeping the interface live."""
+        return asyncio.get_running_loop().run_in_executor(
+            self._searcher, function, *arguments
         )
-        self._populate_results(list(results), show_scores=True)
+
+    def _search_if_current(self, generation: int, text: str, keep):
+        """Search, unless a later keystroke has already replaced this one.
+
+        Cancelling the task that waits on a thread does not stop the
+        thread, so work queued for a query nobody wants any more would
+        still be done, and the query that matters would wait behind it.
+        Typing 14 characters ran 14 searches, all of them to the end.
+        """
+        if generation != self._generation:
+            return None
+        return list(self.search_use_case.search(text, self.limit, keep))
+
+    def _listing_if_current(self, generation: int, keep):
+        """List the chunks, unless a later keystroke has replaced this."""
+        if generation != self._generation:
+            return None
+        return self.search_use_case.all_chunks(keep)
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Triggered when the user types in the search bar."""

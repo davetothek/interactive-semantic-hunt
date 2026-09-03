@@ -215,6 +215,15 @@ Measured on one firmware tree, 23,215 chunks over 8 federated indexes: startup 0
 - **The store over-fetches only when something will trim.** A filter and the lexical half both discard, so the wider slice earns its keep there; for a plain query it built 2,311 chunks to return 50.
 - **A recent query is not embedded twice.** Typing walks over the same text as characters come and go, so deleting one costs a lookup rather than 79 ms of inference.
 
+**Searching runs on one thread, and work nobody wants is dropped.** Cancelling
+the task that waits on a thread does not stop the thread, so every keystroke's
+search used to run to the end: typing 24 characters against a slow backend ran
+24 searches, and the query that mattered waited behind all of them. `do_search`
+stamps a generation, the search thread checks it before starting, and a single
+worker means later work queues rather than racing. The same 24 characters now
+run 9. The embedding backend serves one request at a time, so nothing is lost
+by serializing.
+
 `tui_debounce_ms` is 120. The debounce is what remains of the latency, so it is a setting rather than a constant.
 
 - **The listing mounts a page, not the index.** `_show_listing()` caps at
