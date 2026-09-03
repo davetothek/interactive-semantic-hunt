@@ -1,0 +1,123 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "interactive-semantic-hunt"
+version = "0.1.0"
+description = "Interactive semantic search for code, inspired by fzf"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "David Kristiansen", email = "david@kristiansen.tech" }]
+keywords = ["search", "semantic", "embeddings", "code", "fzf", "tui", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development",
+    "Topic :: Text Processing :: Indexing",
+    "Typing :: Typed",
+]
+# The default backend reaches Ollama over HTTP with the standard
+# library, so nothing here compiles. A backend that needs more asks for
+# it as an extra.
+dependencies = [
+    "numpy>=2.5.2",
+    "pyyaml>=6.0",
+    "textual>=0.70.0",
+    "tree-sitter>=0.26.0",
+    "tree-sitter-c>=0.24.2",
+    "tree-sitter-cpp>=0.23.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/davetothek/interactive-semantic-hunt"
+Repository = "https://github.com/davetothek/interactive-semantic-hunt"
+Issues = "https://github.com/davetothek/interactive-semantic-hunt/issues"
+
+[project.optional-dependencies]
+# Runs the model in this process. It builds llama.cpp on install.
+llama = ["llama-cpp-python>=0.2.75", "huggingface-hub>=0.23.0"]
+st = ["sentence-transformers"]
+
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "ty",
+    "pytest",
+    "pytest-cov",
+    "poethepoet",
+]
+
+[project.scripts]
+ish = "ish.interfaces.cli.main:main"
+ish-mcp = "ish.interfaces.mcp.server:main"
+ish-complete = "ish.interfaces.cli.complete:main"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+cache-dir = ".cache/ruff"
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+select = [
+  "TID252", # Disallow relative imports from parent directories (i.e., 'from ..core import x')
+  "E",      # Enforce PEP 8 style guide (whitespace and formatting rules)
+  "F",      # Pyflakes checks for logical errors (e.g., unused variables, undefined names)
+  "I",      # isort ensures imports are sorted properly
+  "W",      # Handle warnings from pycodestyle
+  "B",      # Find common bugs with flake8-bugbear
+  "C4",     # Improve list comprehensions with flake8-comprehensions
+  "UP",     # Utilize pyupgrade for automatic syntax upgrades
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+cache_dir = ".cache/pytest"
+addopts = "--cov=ish --cov-report=term-missing --cov-fail-under=100"
+
+[tool.coverage.run]
+source = ["ish"]
+omit = [
+    "*/interfaces/python/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.poe.tasks]
+test = "pytest"
+lint = "ruff check --fix src tests"
+format = "ruff format src tests"
+typecheck = "ty check src"
+check = ["lint", "typecheck", "test"]
+
+[[tool.ty.overrides]]
+# These two backends are extras, so their imports resolve only where the
+# extra is installed. Each adapter reports the absence itself, and the
+# CLI turns it into a line naming the extra to install.
+include = [
+    "src/ish/adapters/embedder/llama_cpp.py",
+    "src/ish/adapters/embedder/sentence_transformer.py",
+]
+
+[tool.ty.overrides.rules]
+unresolved-import = "ignore"
