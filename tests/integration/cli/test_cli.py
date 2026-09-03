@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ish.interfaces.cli.main import main
+from ish.settings import Settings
 
 
 @pytest.fixture()
@@ -288,3 +289,60 @@ class TestGrepFormat:
     ) -> None:
         main(["", str(project)])
         assert "-" in capsys.readouterr().out.split()[0]
+
+
+class TestRefreshReportsProgress:
+    """Verify a long refresh says what it is doing.
+
+    A command that prints nothing for minutes cannot be told from one
+    that has stopped.
+    """
+
+    def test_a_terminal_sees_a_progress_line(self, monkeypatch, capsys) -> None:
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
+        cli._progress("Refreshing 2 of 8: 10.Specification")
+        cli._progress_done()
+        assert "Refreshing 2 of 8" in capsys.readouterr().err
+
+    def test_a_pipe_stays_quiet(self, monkeypatch, capsys) -> None:
+        """The log already carries it, so do not write it twice."""
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: False, raising=False)
+        cli._progress("Refreshing 2 of 8: 10.Specification")
+        assert capsys.readouterr().err == ""
+
+    def test_the_line_fits_the_terminal(self, monkeypatch, capsys) -> None:
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli, "_width", lambda: 20)
+        cli._progress("x" * 200)
+        written = capsys.readouterr().err
+        assert len(written.replace("\r", "").replace("\033[2K", "")) < 20
+
+    def test_every_tree_is_announced(self, tmp_path, monkeypatch) -> None:
+        from ish import bootstrap
+
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+
+        class Fake:
+            model_id = "fake"
+
+            def embed_documents(self, texts):
+                return [[1.0, 0.0] for _ in texts]
+
+            def embed_query(self, text):
+                return [1.0, 0.0]
+
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: Fake())
+        root = tmp_path / "proj"
+        (root / "a").mkdir(parents=True)
+        (root / "a" / "one.py").write_text("def one():\n    pass\n")
+
+        said: list[str] = []
+        bootstrap.refresh_indexes(Settings(git=False), root, on_progress=said.append)
+        assert any("Refreshing 1 of 1" in line for line in said)

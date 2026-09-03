@@ -4,6 +4,7 @@ Parse arguments, delegate wiring to the bootstrap module, format output.
 """
 
 import logging
+import shutil
 import sys
 
 from ish import bootstrap
@@ -27,6 +28,32 @@ def _render(chunk, shape: str, score: float | None = None) -> str:
     if score is None:
         return format_chunk_line(chunk)
     return format_result_line(chunk, score)
+
+
+def _progress(message: str) -> None:
+    """Show what a long refresh is doing, on one line.
+
+    A first index of a large tree runs for minutes, and a command that
+    prints nothing cannot be told from one that has stopped. Keep it to
+    stderr, so a piped stdout still holds only results.
+    """
+    if not sys.stderr.isatty():
+        # Not a terminal, so the log already carries it at -v.
+        return
+    sys.stderr.write(f"\r\033[2K{message[: _width() - 1]}")
+    sys.stderr.flush()
+
+
+def _progress_done() -> None:
+    """Clear the progress line, leaving the output as it would be."""
+    if sys.stderr.isatty():
+        sys.stderr.write("\r\033[2K")
+        sys.stderr.flush()
+
+
+def _width() -> int:
+    """Return the terminal width, or a sensible guess."""
+    return shutil.get_terminal_size((80, 24)).columns
 
 
 def _run_query(args: CliArgs) -> int:
@@ -113,8 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.settings.refresh:
             bootstrap.refresh_indexes(
-                args.settings, args.path, overrides=args.overrides
+                args.settings,
+                args.path,
+                on_progress=_progress,
+                overrides=args.overrides,
             )
+            _progress_done()
         if args.query:
             return _run_query(args)
         if args.interactive:

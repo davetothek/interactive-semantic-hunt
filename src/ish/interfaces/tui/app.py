@@ -1,8 +1,9 @@
 """Interactive Textual UI for Semantic Search."""
 
 import asyncio
+import queue
+import threading
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from rich.syntax import Syntax
@@ -21,6 +22,50 @@ from ish.application.search import (
 )
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import format_selection, symbol_of
+
+
+class _DaemonWorker:
+    """Run one call at a time on a thread that exit never waits for.
+
+    A thread pool registers an exit hook that joins its threads however
+    it is shut down, so a request in flight held the whole process open.
+    """
+
+    def __init__(self, name: str) -> None:
+        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._thread = threading.Thread(target=self._serve, name=name, daemon=True)
+        self._thread.start()
+
+    def submit(self, loop, function, *arguments):
+        """Return a future for *function*, run on this worker's thread."""
+        future = loop.create_future()
+        self._queue.put((loop, future, function, arguments))
+        return future
+
+    def stop(self) -> None:
+        """Ask the thread to finish. It is a daemon, so exit need not wait."""
+        self._queue.put(None)
+
+    def _serve(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                return
+            loop, future, function, arguments = item
+            try:
+                result = function(*arguments)
+            except BaseException as exc:  # noqa: BLE001 - carried to the caller
+                loop.call_soon_threadsafe(_settle, future.set_exception, exc)
+            else:
+                loop.call_soon_threadsafe(_settle, future.set_result, result)
+
+
+def _settle(setter, value) -> None:
+    """Complete a future unless the caller stopped waiting."""
+    try:
+        setter(value)
+    except asyncio.InvalidStateError:
+        pass
 
 
 class IshApp(App[tuple[Chunk, float] | None]):
@@ -59,6 +104,8 @@ class IshApp(App[tuple[Chunk, float] | None]):
     # so the user never has to leave the input to choose a result.
     BINDINGS = [
         ("escape", "quit", "Quit"),
+        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
         ("down", "move(1)", "Next"),
         ("up", "move(-1)", "Previous"),
         ("ctrl+n", "move(1)", "Next"),
@@ -89,17 +136,23 @@ class IshApp(App[tuple[Chunk, float] | None]):
         # Which search is the current one. A cancelled task cannot stop
         # the thread it already handed work to, so the thread asks.
         self._generation = 0
-        # Search on one thread. The embedding backend serves one request
-        # at a time anyway, so running several only makes the newest
-        # query wait behind queries nobody wants any more. Queued work
-        # finds itself out of date and returns.
-        self._searcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ish")
+        # Set when the interface closes, so a thread stops talking to it.
+        self._leaving = threading.Event()
+        # Search on one daemon thread. The embedding backend serves one
+        # request at a time anyway, so running several only makes the
+        # newest query wait behind queries nobody wants any more, and
+        # queued work finds itself out of date and returns. A daemon
+        # thread is not joined at exit, so a search in flight cannot
+        # hold the interface open: a pool waited for the whole request,
+        # which is why quitting during an embed appeared to hang.
+        self._searcher = _DaemonWorker("ish-search")
         self._current_results: list[tuple[Chunk, float]] = []
         self._all_chunks: list[Chunk] = []
 
     def on_unmount(self) -> None:
-        """Let the search thread go when the interface closes."""
-        self._searcher.shutdown(wait=False, cancel_futures=True)
+        """Let the worker threads go when the interface closes."""
+        self._searcher.stop()
+        self._leaving.set()
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
@@ -118,17 +171,28 @@ class IshApp(App[tuple[Chunk, float] | None]):
         """Start the background indexing task when UI mounts."""
         self.build_index()
 
-    @work(thread=True)
     def build_index(self) -> None:
-        """Scan and embed the directory in a background thread."""
+        """Scan and embed the directory on a thread that never blocks exit."""
+        threading.Thread(
+            target=self._build_index, name="ish-index", daemon=True
+        ).start()
+
+    def _build_index(self) -> None:
+        """Scan and embed, reporting progress into the preview pane."""
         try:
             chunks = self.search_use_case.build_index(
                 self.root_path, self._report_progress
             )
             self._all_chunks = list(chunks) if chunks else []
-            self.call_from_thread(self._on_index_ready)
+            if self._still_here():
+                self.call_from_thread(self._on_index_ready)
         except Exception as e:
-            self.call_from_thread(self._on_index_error, str(e))
+            if self._still_here():
+                self.call_from_thread(self._on_index_error, str(e))
+
+    def _still_here(self) -> bool:
+        """Return False once the interface is closing."""
+        return not self._leaving.is_set()
 
     def _report_progress(self, message: str) -> None:
         """Show what the background index is doing.
@@ -136,7 +200,8 @@ class IshApp(App[tuple[Chunk, float] | None]):
         A first index runs for minutes. Without this the interface looks
         indistinguishable from one that has stopped.
         """
-        self.call_from_thread(self._show_status, message)
+        if self._still_here():
+            self.call_from_thread(self._show_status, message)
 
     def _show_status(self, message: str) -> None:
         """Write a line into the preview pane while there is nothing to preview."""
@@ -258,9 +323,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
 
     def _off_loop(self, function, *arguments):
         """Run *function* on the search thread, keeping the interface live."""
-        return asyncio.get_running_loop().run_in_executor(
-            self._searcher, function, *arguments
-        )
+        return self._searcher.submit(asyncio.get_running_loop(), function, *arguments)
 
     def _search_if_current(self, generation: int, text: str, keep):
         """Search, unless a later keystroke has already replaced this one.
