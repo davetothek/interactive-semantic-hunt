@@ -88,8 +88,8 @@ def compile_categories(
 
     A naming convention is a property of a repository, not of a
     language, so let it be written down rather than guessed. Measured on
-    one firmware tree: `20.Tests` and `30.Verification` match no
-    general rule, which filed 7,395 test chunks as code.
+    one firmware tree that numbers its directories: no general rule
+    matched them, which filed 7,395 test chunks as code.
 
     Try each rule in order against the path and take the first that
     matches. Fall back to the built-in reading, so a rule adds to the

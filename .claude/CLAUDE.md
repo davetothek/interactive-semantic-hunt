@@ -209,7 +209,7 @@ The default backend is Ollama, reached over HTTP with the standard library. Do n
 - **Filters are written into the query itself**, as `lang:cpp under:/src/`, parsed by `parse_query()`. There is no second input and no focus to manage, which is why the query line carries them. The filter words are stripped before the text reaches the embedder, so a vector is built from what the user wants rather than how they narrowed it. Active filters appear in the header through `sub_title`. A filter with no words left lists everything it allows, without searching.
 - Indexing runs on a worker thread and searching on another, so **any store the TUI touches must be safe to use off the thread that opened it**. The SQLite adapter opens with `check_same_thread=False` and guards every statement with one lock. A single-threaded test suite will not catch a regression here; `TestThreadSafety` exists for that.
 
-Measured on one firmware tree, 23,215 chunks over 8 federated indexes: startup 0.77 s, last keystroke to results 0.16 s. It was 0.42 s, and three things paid for the difference.
+Measured on a large firmware tree, 23,215 chunks over 8 federated indexes: startup 0.77 s, last keystroke to results 0.16 s. It was 0.42 s, and three things paid for the difference.
 
 - **The scored matrix is kept between queries.** Reading every vector out of SQLite and joining 71 MB of blobs cost 118 ms a query while the multiplication cost 2. The cache is dropped when this store writes, and when `PRAGMA data_version` shows another connection has committed, so a second process indexing never leaves a reader stale.
 - **The store over-fetches only when something will trim.** A filter and the lexical half both discard, so the wider slice earns its keep there; for a plain query it built 2,311 chunks to return 50.
@@ -236,13 +236,13 @@ by serializing.
 
 - **The listing mounts a page, not the index.** `_show_listing()` caps at
   `tui_limit` and names the total in `sub_title`. One widget per chunk costs
-  seconds: one firmware tree's 11,543 chunks took 2.4 s before the first keystroke, and
+  seconds: a tree of 11,543 chunks took 2.4 s before the first keystroke, and
   0.82 s once capped.
 - **The query field takes typing from the first frame.** Opening an index of a
   large tree takes most of a second, and a field that cannot be typed into reads
   as an interface that has not started. A query typed while the index opens is
   answered by `_on_index_ready` rather than lost, and the progress message stays
-  up meanwhile. Measured on one firmware tree: usable at 0.34 s, against 0.77 s when the
+  up meanwhile. Measured on that tree: usable at 0.34 s, against 0.77 s when the
   field waited for the index.
 - **A skipped file is counted, not named.** A tree of headers holds many that
   declare nothing: one firmware subdirectory printed 12 warnings before any
@@ -383,9 +383,9 @@ registry plus the alias table, so both interfaces accept the same words.
 
 `type_patterns` lets a repository say what its own paths hold, as
 `type:regex`, first match wins, falling back to the built-in reading. A naming
-convention belongs to a repository rather than to a language: one firmware tree numbers
-its trees, so `20.Tests` and `30.Verification` matched no general rule and
-7,395 test chunks were filed as code. `compile_categories()` builds the
+convention belongs to a repository rather than to a language. One firmware
+tree numbers its directories, so names of that shape matched no general rule
+and 7,395 test chunks were filed as code. `compile_categories()` builds the
 function; `bootstrap.build_result_filter()` is the one place that joins it to a
 filter, so no interface has to remember.
 
