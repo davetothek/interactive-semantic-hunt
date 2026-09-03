@@ -261,11 +261,19 @@ by serializing.
 - **Nothing may write to stdout except a protocol message.** stdout is the transport; logging goes to stderr. A test asserts every emitted line parses as JSON.
 - The protocol layer is hand-written on the standard library. MCP over stdio is newline-delimited JSON-RPC 2.0, which is small enough not to justify a dependency that pulls in pydantic and starlette.
 - The server is long-lived, so it holds one `Search` per scanned root and keeps the index warm. That is the whole latency advantage: a query costs a search, not a process start.
-- **A resident server re-checks a tree at most every `refresh_seconds`.** An
-  editor asks on every character, and `build_index` per call walked the tree —
-  for a parent read from the indexes below it, building all 23,215 chunks only
-  to count them. That was most of the cost of an answer: a query through Neovim
-  took 390 ms and now takes 170.
+- **A resident server refreshes on a thread, never on the way to an answer.**
+  The server outlives the files it describes, and an editor asks about code it
+  is in the middle of changing. `build_index` per call walked the tree — for a
+  parent read from the indexes below it, building all 23,215 chunks only to
+  count them — which was most of the cost of an answer: 390 ms through Neovim
+  against 135 now.
+- **Refreshing through a read-only parent does nothing, so refresh the trees
+  beneath it.** A search from a git root federates the indexes below and cannot
+  write, so `build_index` there only ever read: an edit was never going to
+  appear, whatever the interval. The watch calls `refresh_indexes`, which is
+  what brings one into view. `refresh_seconds` sets how far behind the index may
+  fall; the matrix cache sees the refresher commit and rebuilds, so a search
+  never serves what a refresh replaced.
 - A tool failure is reported through `isError`, not a JSON-RPC error, so the host can show the model what went wrong.
 
 Measured: ~58 ms per `search_code` call, against ~190 ms for the same query through the CLI.

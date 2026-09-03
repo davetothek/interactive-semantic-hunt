@@ -1,5 +1,7 @@
 """Test the ish tools exposed over MCP."""
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -420,7 +422,7 @@ class TestQueryOfOnlyFilters:
 
 
 class TestRefreshIsNotPerCall:
-    """Verify a resident server does not re-check on every keystroke.
+    """Verify a question never waits for a walk of the tree.
 
     An editor asks on every character. Re-checking each time walks the
     tree, and for a parent read from the indexes below it builds every
@@ -447,15 +449,15 @@ class TestRefreshIsNotPerCall:
             tools.search({"query": "config", "path": str(project)})
         assert counted == [1]
 
-    def test_it_re_checks_once_the_wait_is_over(
-        self, tools: IshTools, stub_backend, project: Path, monkeypatch
+    def test_the_query_path_never_walks_the_tree_again(
+        self, tools: IshTools, stub_backend, project: Path
     ) -> None:
+        """Freshness is a thread's job, so a question never waits for it."""
         counted = self._counted(tools, project)
-        tools.search({"query": "config", "path": str(project)})
-        # Move past the interval rather than waiting for it.
-        tools._refreshed[project.resolve()] -= tools._settings.refresh_seconds + 1
-        tools.search({"query": "config", "path": str(project)})
-        assert counted == [1, 1]
+        for _ in range(20):
+            tools.search({"query": "config", "path": str(project)})
+        tools.close()
+        assert counted == [1]
 
     def test_the_first_query_always_re_checks(
         self, tools: IshTools, stub_backend, project: Path
@@ -463,3 +465,82 @@ class TestRefreshIsNotPerCall:
         counted = self._counted(tools, project)
         tools.search({"query": "config", "path": str(project)})
         assert counted == [1]
+
+
+class TestAnEditBecomesSearchable:
+    """Verify a file changed while the server runs comes into view.
+
+    The server outlives the files it describes, and an editor asks about
+    code it is in the middle of changing.
+    """
+
+    @pytest.fixture()
+    def quick(self, project: Path, stub_backend, monkeypatch) -> IshTools:
+        """A server that re-checks often enough to watch."""
+        from ish.settings import Settings
+
+        settings = Settings(no_cache=False, git=False, refresh_seconds=0)
+        return IshTools(settings, project)
+
+    def _wait_for(self, tools: IshTools, project: Path, symbol: str) -> bool:
+        for _ in range(100):
+            out = tools.search({"query": "gadget", "path": str(project)})
+            if symbol in out:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_a_new_file_is_found_without_restarting(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        quick.search({"query": "gadget", "path": str(project)})
+        (project / "late.py").write_text("def gadget_maker():\n    return 1\n")
+        try:
+            assert self._wait_for(quick, project, "gadget_maker")
+        finally:
+            quick.close()
+
+    def test_the_watch_starts_once_for_a_tree(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        before = threading.active_count()
+        for _ in range(4):
+            quick.search({"query": "config", "path": str(project)})
+        try:
+            assert threading.active_count() <= before + 1
+        finally:
+            quick.close()
+
+    def test_closing_asks_the_watch_to_stop(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        quick.search({"query": "config", "path": str(project)})
+        quick.close()
+        assert quick._closing.is_set()
+
+    def test_the_watch_thread_is_a_daemon(self, quick: IshTools, project: Path) -> None:
+        """A refresh in flight must never hold the server open."""
+        quick.search({"query": "config", "path": str(project)})
+        try:
+            watchers = [
+                t for t in threading.enumerate() if t.name.startswith("ish-refresh")
+            ]
+            assert watchers and all(t.daemon for t in watchers)
+        finally:
+            quick.close()
+
+    def test_a_failing_refresh_does_not_kill_the_watch(
+        self, quick: IshTools, project: Path, monkeypatch, caplog
+    ) -> None:
+        """A tree that cannot be read must not end the watch silently."""
+        from ish import bootstrap
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("disk gone")
+
+        monkeypatch.setattr(bootstrap, "refresh_indexes", explode)
+        with caplog.at_level("WARNING", logger="ish"):
+            quick.search({"query": "config", "path": str(project)})
+            time.sleep(0.3)
+        quick.close()
+        assert "Cannot refresh" in caplog.text
