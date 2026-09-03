@@ -66,7 +66,7 @@ class Ish:
     # Lifetime
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> Ish:
+    def __enter__(self) -> "Ish":
         return self
 
     def __exit__(

@@ -7,7 +7,7 @@ name = "interactive-semantic-hunt"
 version = "0.1.0"
 description = "Interactive semantic search for code, inspired by fzf"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "David Kristiansen", email = "david@kristiansen.tech" }]
@@ -17,6 +17,8 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development",
     "Topic :: Text Processing :: Indexing",
@@ -63,7 +65,7 @@ ish-complete = "ish.interfaces.cli.complete:main"
 package = true
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py312"
 line-length = 88
 cache-dir = ".cache/ruff"
 

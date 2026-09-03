@@ -238,7 +238,7 @@ class SqliteVectorStore:
         with self._lock:
             self._db.close()
 
-    def __enter__(self) -> SqliteVectorStore:
+    def __enter__(self) -> "SqliteVectorStore":
         return self
 
     def __exit__(self, *exc_info: object) -> None:

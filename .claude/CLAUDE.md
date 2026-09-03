@@ -76,10 +76,10 @@ interfaces → application → domain
 
 ## Tooling
 
-- **Python ≥ 3.14** — required. Use modern import paths:
+- **Python ≥ 3.12** — the floor numpy sets. The suite runs on 3.12, 3.13 and 3.14. Use modern import paths:
   - `collections.abc` for `Sequence`, `Mapping`, `Iterable`, etc. Do not import these from `typing`.
   - `typing` only for `Protocol`, `runtime_checkable`, `TypeAlias`, `TypeVar`, and similar typing-only constructs.
-  - Do not use `from __future__ import annotations`. Python 3.14 defers annotation evaluation natively (PEP 649).
+  - Do not use `from __future__ import annotations`. Quote an annotation that names the class being defined instead — `-> "Filters"` — which reads the same on every version and keeps the import out. Under 3.14 the quotes are unnecessary but harmless; under 3.12 and 3.13 they are what makes the class importable at all.
 - **uv** — package manager. The lock file is `uv.lock`.
 - **ruff** — linter and formatter. Config in `pyproject.toml`. Line length 88, double quotes, space indent. Cache in `.cache/ruff`.
 - **ty** — type checker (dev dependency).
