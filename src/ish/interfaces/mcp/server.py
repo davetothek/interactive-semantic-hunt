@@ -7,6 +7,7 @@ call, so a query costs a search rather than a startup.
 
 import logging
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,8 @@ class IshTools:
         self._settings = settings
         self._root = root
         self._by_root: dict[Path, Search] = {}
+        # When each tree was last re-checked for changes.
+        self._refreshed: dict[Path, float] = {}
 
     def close(self) -> None:
         """Release every index this server opened."""
@@ -117,6 +120,21 @@ class IshTools:
             self._settings, typed.or_else(chain) if typed else chain
         )
 
+    def _keep_current(self, root: Path, use_case: Search) -> None:
+        """Re-check *root* for changes, but not on every call.
+
+        The server is long-lived and an editor asks on every keystroke.
+        Refreshing each time walks the tree, and for a parent read from
+        the indexes below it builds every chunk only to count them:
+        23,215 of them, which is most of the cost of an answer.
+        """
+        now = time.monotonic()
+        last = self._refreshed.get(root)
+        if last is not None and now - last < self._settings.refresh_seconds:
+            return
+        use_case.build_index(root)
+        self._refreshed[root] = now
+
     def _search_for(self, root: Path) -> Search:
         """Return the use case for *root*, building it on first use."""
         if root not in self._by_root:
@@ -143,7 +161,7 @@ class IshTools:
         limit = int(arguments.get("limit") or self._settings.limit)
 
         use_case = self._search_for(root)
-        use_case.build_index(root)
+        self._keep_current(root, use_case)
         keep = self._filter_for(arguments, typed)
         results = use_case.search(query, limit=limit, keep=keep)
         if not results:
