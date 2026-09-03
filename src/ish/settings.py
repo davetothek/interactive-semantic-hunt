@@ -107,6 +107,14 @@ class Settings:
             metavar="REGEX",
         ),
     )
+    type_patterns: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Sort a path into a type, as 'type:regex'. First match wins.",
+            nargs="+",
+            metavar="TYPE:REGEX",
+        ),
+    )
     type: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

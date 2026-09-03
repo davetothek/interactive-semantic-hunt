@@ -1,7 +1,7 @@
 """Interactive Textual UI for Semantic Search."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from rich.syntax import Syntax
@@ -71,6 +71,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         *,
         limit: int = 50,
         filters: Filters | None = None,
+        categorize: Callable[[Chunk], str] | None = None,
     ) -> None:
         super().__init__()
         self.search_use_case = search_use_case
@@ -79,6 +80,9 @@ class IshApp(App[tuple[Chunk, float] | None]):
         # What the command line already narrowed. A filter typed into
         # the query line overrides it for as long as it is typed.
         self._base_filters = filters or Filters()
+        # How a chunk is sorted into a type, which a repository may
+        # define for itself.
+        self._categorize = categorize
         self._current_results: list[tuple[Chunk, float]] = []
         self._all_chunks: list[Chunk] = []
 
@@ -215,7 +219,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         filters = typed.or_else(self._base_filters)
         self.sub_title = filters.describe()
         try:
-            keep = build_result_filter(filters)
+            keep = build_result_filter(filters, self._categorize)
         except ValueError:
             # A half-typed expression is not an error to report.
             return

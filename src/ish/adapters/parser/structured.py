@@ -20,14 +20,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from ish.adapters.parser.limits import MAX_CHUNK_CHARS
 from ish.application.ports.parser import ParseError
 from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
-# Roughly the text an 8192-token context holds, with room to spare.
-# Beyond this an embedding carries only the opening of the document.
-MAX_CHUNK_CHARS = 20_000
 
 # Keys whose value names the document, in the order they are preferred.
 _TITLE_KEYS = ("title", "name", "description", "purpose")
