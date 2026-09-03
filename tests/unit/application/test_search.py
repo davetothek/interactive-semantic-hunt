@@ -568,7 +568,7 @@ class TestConfigurableCategories:
         assert sort_into(self._chunk("/p/README.md", "markdown")) == "doc"
 
     def test_the_filter_uses_the_patterns(self) -> None:
-        sort_into = compile_categories(("test:Testing/",))
+        sort_into = compile_categories(("test:Tests/",))
         chunk = self._chunk("/p/20.Tests/case.yaml", "yaml")
         keep = build_result_filter(Filters(type=("test",)), sort_into)
         assert keep is not None and keep(chunk)
