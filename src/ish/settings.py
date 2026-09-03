@@ -195,6 +195,13 @@ class Settings:
             action="store_true",
         ),
     )
+    refresh_seconds: int = field(
+        default=30,
+        metadata=_opt(
+            "How often a resident server re-checks a tree for changes.",
+            metavar="SECONDS",
+        ),
+    )
     tui_debounce_ms: int = field(
         default=120,
         metadata=_opt(

@@ -417,3 +417,49 @@ class TestQueryOfOnlyFilters:
         self, tools: IshTools, stub_backend, project: Path
     ) -> None:
         assert tools.search({"query": "lang:python config", "path": str(project)})
+
+
+class TestRefreshIsNotPerCall:
+    """Verify a resident server does not re-check on every keystroke.
+
+    An editor asks on every character. Re-checking each time walks the
+    tree, and for a parent read from the indexes below it builds every
+    chunk only to count them.
+    """
+
+    def _counted(self, tools: IshTools, project: Path) -> list[int]:
+        counted: list[int] = []
+        use_case = tools._search_for(project.resolve())
+        original = use_case.build_index
+
+        def watched(root, on_progress=None):
+            counted.append(1)
+            return original(root, on_progress)
+
+        use_case.build_index = watched
+        return counted
+
+    def test_a_burst_of_queries_re_checks_once(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        counted = self._counted(tools, project)
+        for _ in range(5):
+            tools.search({"query": "config", "path": str(project)})
+        assert counted == [1]
+
+    def test_it_re_checks_once_the_wait_is_over(
+        self, tools: IshTools, stub_backend, project: Path, monkeypatch
+    ) -> None:
+        counted = self._counted(tools, project)
+        tools.search({"query": "config", "path": str(project)})
+        # Move past the interval rather than waiting for it.
+        tools._refreshed[project.resolve()] -= tools._settings.refresh_seconds + 1
+        tools.search({"query": "config", "path": str(project)})
+        assert counted == [1, 1]
+
+    def test_the_first_query_always_re_checks(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        counted = self._counted(tools, project)
+        tools.search({"query": "config", "path": str(project)})
+        assert counted == [1]
