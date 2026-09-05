@@ -107,10 +107,11 @@ exclude_lines = [
 
 [tool.poe.tasks]
 test = "pytest"
-lint = "ruff check --fix src tests"
-format = "ruff format src tests"
-typecheck = "ty check src"
+lint = "ruff check --fix src tests scripts"
+format = "ruff format src tests scripts"
+typecheck = "ty check src scripts"
 check = ["lint", "typecheck", "test"]
+release = "python scripts/release.py"
 
 [[tool.ty.overrides]]
 # These two backends are extras, so their imports resolve only where the
