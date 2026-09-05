@@ -348,6 +348,71 @@ class TestRefreshReportsProgress:
         assert any("Refreshing 1 of 1" in line for line in said)
 
 
+class TestTerminalSizeForPiping:
+    """Verify `nvim $(ish -i src/)` sees the real terminal, not a pipe.
+
+    Textual measures the terminal through stdout, which command
+    substitution redirects to a pipe. COLUMNS and LINES override that
+    reading, so the picker must set them from a stream that is still the
+    terminal.
+    """
+
+    def test_a_terminal_on_stdout_is_left_alone(self, monkeypatch) -> None:
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.delenv("COLUMNS", raising=False)
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True, raising=False)
+        cli._sync_terminal_size()
+        assert "COLUMNS" not in cli.os.environ
+
+    def test_a_piped_stdout_reads_stdin_s_terminal(self, monkeypatch) -> None:
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.delenv("COLUMNS", raising=False)
+        monkeypatch.delenv("LINES", raising=False)
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "fileno", lambda: 0, raising=False)
+        monkeypatch.setattr(
+            cli.os, "get_terminal_size", lambda fd: cli.os.terminal_size((132, 43))
+        )
+        cli._sync_terminal_size()
+        assert cli.os.environ["COLUMNS"] == "132"
+        assert cli.os.environ["LINES"] == "43"
+
+    def test_falls_back_to_stderr_s_terminal(self, monkeypatch) -> None:
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.delenv("COLUMNS", raising=False)
+        monkeypatch.delenv("LINES", raising=False)
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False, raising=False)
+        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli.sys.stderr, "fileno", lambda: 2, raising=False)
+        monkeypatch.setattr(
+            cli.os, "get_terminal_size", lambda fd: cli.os.terminal_size((100, 30))
+        )
+        cli._sync_terminal_size()
+        assert cli.os.environ["COLUMNS"] == "100"
+        assert cli.os.environ["LINES"] == "30"
+
+    def test_no_terminal_anywhere_leaves_no_trace(self, monkeypatch) -> None:
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.delenv("COLUMNS", raising=False)
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "fileno", lambda: 0, raising=False)
+        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: False, raising=False)
+
+        def boom(fd):
+            raise OSError("not a terminal")
+
+        monkeypatch.setattr(cli.os, "get_terminal_size", boom)
+        cli._sync_terminal_size()
+        assert "COLUMNS" not in cli.os.environ
+
+
 class TestRefreshFromTheCommandLine:
     """Verify --refresh visits the trees before the query runs."""
 
