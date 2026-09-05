@@ -1,5 +1,6 @@
 """Integration test — run the CLI against a temporary project."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -357,19 +358,42 @@ class TestTerminalSizeForPiping:
     terminal.
     """
 
-    def test_a_terminal_on_stdout_is_left_alone(self, monkeypatch) -> None:
+    @pytest.fixture(autouse=True)
+    def _clean_environ(self, monkeypatch) -> None:
+        """Give each test an environment of its own.
+
+        ``monkeypatch.delenv`` records nothing to undo for a variable
+        that was already absent, so a COLUMNS written by the code under
+        test would outlive the test and decide what a later one measures.
+        """
         from ish.interfaces.cli import main as cli
 
-        monkeypatch.delenv("COLUMNS", raising=False)
+        monkeypatch.setattr(
+            cli.os,
+            "environ",
+            {k: v for k, v in os.environ.items() if k not in ("COLUMNS", "LINES")},
+        )
+
+    def test_a_terminal_on_stdout_is_left_alone(self, monkeypatch) -> None:
+        """Leave a terminal Textual can already measure alone.
+
+        Answer as a terminal on stdin as well, so that losing the stdout
+        guard fails here: without it, stdin is what would be measured.
+        """
+        from ish.interfaces.cli import main as cli
+
         monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "fileno", lambda: 0, raising=False)
+        monkeypatch.setattr(
+            cli.os, "get_terminal_size", lambda fd: cli.os.terminal_size((132, 43))
+        )
         cli._sync_terminal_size()
         assert "COLUMNS" not in cli.os.environ
 
     def test_a_piped_stdout_reads_stdin_s_terminal(self, monkeypatch) -> None:
         from ish.interfaces.cli import main as cli
 
-        monkeypatch.delenv("COLUMNS", raising=False)
-        monkeypatch.delenv("LINES", raising=False)
         monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False, raising=False)
         monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
         monkeypatch.setattr(cli.sys.stdin, "fileno", lambda: 0, raising=False)
@@ -383,8 +407,6 @@ class TestTerminalSizeForPiping:
     def test_falls_back_to_stderr_s_terminal(self, monkeypatch) -> None:
         from ish.interfaces.cli import main as cli
 
-        monkeypatch.delenv("COLUMNS", raising=False)
-        monkeypatch.delenv("LINES", raising=False)
         monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False, raising=False)
         monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False, raising=False)
         monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
@@ -396,10 +418,11 @@ class TestTerminalSizeForPiping:
         assert cli.os.environ["COLUMNS"] == "100"
         assert cli.os.environ["LINES"] == "30"
 
-    def test_no_terminal_anywhere_leaves_no_trace(self, monkeypatch) -> None:
+    def test_a_stream_that_cannot_be_measured_is_skipped(self, monkeypatch) -> None:
+        """Treat a stream that claims a terminal but cannot be measured
+        as no terminal at all."""
         from ish.interfaces.cli import main as cli
 
-        monkeypatch.delenv("COLUMNS", raising=False)
         monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False, raising=False)
         monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
         monkeypatch.setattr(cli.sys.stdin, "fileno", lambda: 0, raising=False)
@@ -409,6 +432,16 @@ class TestTerminalSizeForPiping:
             raise OSError("not a terminal")
 
         monkeypatch.setattr(cli.os, "get_terminal_size", boom)
+        cli._sync_terminal_size()
+        assert "COLUMNS" not in cli.os.environ
+
+    def test_no_terminal_anywhere_leaves_no_trace(self, monkeypatch) -> None:
+        """Write nothing when no stream names a terminal at all."""
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False, raising=False)
+        monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False, raising=False)
+        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: False, raising=False)
         cli._sync_terminal_size()
         assert "COLUMNS" not in cli.os.environ
 
