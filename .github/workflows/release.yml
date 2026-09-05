@@ -48,3 +48,32 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      # Only this job writes to the repository. The publish job keeps
+      # id-token alone, so a token that can write is never in scope
+      # where a package is signed.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # Take the body from CHANGELOG.md. A release page and a changelog
+      # written separately drift, and the release gets written twice.
+      - name: Take the notes from the changelog
+        run: python3 scripts/release.py --notes "$GITHUB_REF_NAME" > notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          # Publish the files PyPI received. Building again would make
+          # a wheel that is not the one anybody installed.
+          files: dist/*
+          # A tag naming anything but X.Y.Z is not the current version.
+          prerelease: ${{ contains(github.ref_name, '-') }}

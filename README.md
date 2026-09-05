@@ -202,8 +202,8 @@ resident, so a query costs about 58 ms rather than a process start.
 
 A call may narrow one search with `lang`, `under`, `type`, and `limit`, or
 write the same filters into the query text. It cannot change
-what is indexed — those settings come from `ish.toml` only, so no single call can
-shrink an index that another call depends on.
+what is indexed — those settings come from the config file only, so no single
+call can shrink an index that another call depends on.
 
 ## Index
 
@@ -233,8 +233,9 @@ means they always show the current content.
 
 ## Configure
 
-Every command-line option is also a key in `ish.toml`, under the same name.
-Put project settings in `ish.toml` at the root of your repository:
+Every command-line option is also a key in the config file, under the same
+name. Put project settings in `.ish/config.toml` at the root of your
+repository:
 
 ```toml
 embedder = "ollama"
@@ -252,6 +253,48 @@ matches at any depth and alternation works. `exclude` wins over `include`.
 `--git` is on by default, so anything a `.gitignore` covers stays out of the
 index. Pass `--no-git` to index it anyway.
 
+### Keep generated code out
+
+Generated code is the one thing worth excluding by hand. It is large, it is
+repetitive, and nobody searches it by meaning. On one firmware tree, generated
+headers were **99% of the oversized C and C++ text**: 10.3 MB of 10.4 MB, and
+the largest single definition held 2,949,177 characters. A 26 MB generated JSON
+register map produced 32,768 chunks and took 76 seconds to parse.
+
+Embedding costs about one chunk per second, so that is hours of work for text
+no query wants.
+
+Name the patterns in `exclude`:
+
+```toml
+exclude = [
+    "/generated/",           # a directory that holds nothing written by hand
+    "_pb2\\.py$",             # protobuf
+    "\\.g\\.(c|h|cpp)$",       # a generator's own suffix
+    "/build/",               # anything a build wrote
+    "register_map.*\\.json$", # a generated register map
+]
+```
+
+Two things to know:
+
+- `exclude` is index scope, so it decides what is *in* the index. Narrowing it
+  later does not remove what a wider run already stored; run `--reindex` for
+  that.
+- A pattern is a regular expression searched against the whole path, so
+  `/generated/` matches at any depth and needs no wildcards.
+
+Check a pattern before you pay to index it. An empty query lists what the
+filter allows, and `--no-cache` keeps the trial out of the stored index:
+
+```sh
+ish "" . --no-cache | wc -l                          # everything today
+ish "" . --no-cache --exclude '/generated/' | wc -l  # what the pattern leaves
+```
+
+If most of a tree is generated, it is usually less work to exclude the
+directory than to name each suffix.
+
 `--lang` and `--under` narrow what a search *returns*. They never change what is
 indexed, so a narrowed query cannot shrink the index:
 
@@ -261,11 +304,26 @@ ish "installation steps" --lang markdown asciidoc
 ish "parse a header" --under '/include/'
 ```
 
-User-level defaults go in `~/.config/ish/ish.toml`. Later sources win:
+User-level defaults go in `~/.config/ish/config.toml`, which honors
+`XDG_CONFIG_HOME`. Later sources win:
 
 ```
-defaults < ~/.config/ish/ish.toml < ./ish.toml < ISH_* environment < command line
+defaults
+  < ~/.config/ish/config.toml
+  < .ish/config.toml            (every one from the target path upward)
+  < ISH_* environment
+  < command line
 ```
+
+A flat `ish.toml` is still read, beside `.ish/config.toml` and in the user
+directory alike, so a file written before this keeps working. Prefer
+`.ish/config.toml`: it keeps a tree's settings beside anything else the tool
+leaves there.
+
+**Every** config file from the target path upward applies, outermost first, and
+each settles only the keys it names. So a file beside a subtree adds to the one
+above it rather than replacing it — a subtree can set `git = false` for itself
+and still inherit the `type_patterns` the repository above it set.
 
 Set any option from the environment with the `ISH_` prefix, for example
 `ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.
