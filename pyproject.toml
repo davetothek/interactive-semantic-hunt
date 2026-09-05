@@ -38,6 +38,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/davetothek/interactive-semantic-hunt"
+Changelog = "https://github.com/davetothek/interactive-semantic-hunt/blob/main/CHANGELOG.md"
 Repository = "https://github.com/davetothek/interactive-semantic-hunt"
 Issues = "https://github.com/davetothek/interactive-semantic-hunt/issues"
 

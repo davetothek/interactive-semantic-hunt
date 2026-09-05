@@ -55,3 +55,37 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  version:
+    # A version bump is a release, and a release is its own pull request.
+    # Bundling one with the work it was cut for is what put the 0.1.1
+    # bump in the same pull request as the fix it shipped.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Refuse a version bump outside a release
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git diff "$BASE_SHA...HEAD" -- pyproject.toml |
+               grep -q '^[+-]version = '; then
+            echo "This pull request leaves the version alone."
+            exit 0
+          fi
+          case "$HEAD_REF" in
+            release/*|hotfix/*) echo "A release branch may set it."; exit 0 ;;
+          esac
+          case ",$LABELS," in
+            *,release,*) echo "The release label says this is one."; exit 0 ;;
+          esac
+          echo "::error::This pull request changes the version in pyproject.toml."
+          echo "A version bump belongs in its own pull request, opened once"
+          echo "everything for the release already sits on main. Cut it from a"
+          echo "release/X.Y.Z or hotfix/X.Y.Z branch, or add the release label."
+          exit 1

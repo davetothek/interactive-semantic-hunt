@@ -89,6 +89,19 @@ def repository(tmp_path, monkeypatch):
     """Build a throwaway repository declaring 0.1.1, and work inside it."""
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.1"\n')
     (tmp_path / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n"
+        "\n"
+        "## Unreleased\n"
+        "\n"
+        "### Fixed\n"
+        "\n"
+        "- Stop the crash.\n"
+        "\n"
+        "## 0.1.1 - 2026-09-05\n"
+        "\n"
+        "- Shipped.\n"
+    )
     monkeypatch.chdir(tmp_path)
     release.git("init", "-q")
     release.git("config", "user.email", "test@example.com")
@@ -170,3 +183,148 @@ class TestTheRealProjectFile:
     def test_reads_this_project_s_version(self) -> None:
         text = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
         assert release.SEMVER.match(release.read_version(text))
+
+
+class TestSection:
+    """Verify the changelog entry a version answers to."""
+
+    CHANGELOG = (
+        "# Changelog\n"
+        "\n"
+        "## Unreleased\n"
+        "\n"
+        "- Not out yet.\n"
+        "\n"
+        "## 0.1.10 - 2026-10-01\n"
+        "\n"
+        "- The tenth patch.\n"
+        "\n"
+        "## 0.1.1 - 2026-09-05\n"
+        "\n"
+        "- The first patch.\n"
+    )
+
+    def test_reads_the_entry_under_a_version(self) -> None:
+        assert release.section(self.CHANGELOG, "## 0.1.1") == "- The first patch."
+
+    def test_stops_at_the_next_heading(self) -> None:
+        assert release.section(self.CHANGELOG, "## Unreleased") == "- Not out yet."
+
+    def test_a_shorter_version_does_not_answer_for_a_longer_one(self) -> None:
+        """Keep 0.1.1 from reading 0.1.10's entry.
+
+        The two headings share a prefix, so a match that ignored what
+        follows the version would take whichever came first.
+        """
+        assert release.section(self.CHANGELOG, "## 0.1.10") == "- The tenth patch."
+
+    def test_reads_the_last_entry_to_the_end_of_the_file(self) -> None:
+        assert release.section(self.CHANGELOG, "## 0.1.1").endswith("patch.")
+
+    def test_a_version_with_no_entry_reads_as_nothing(self) -> None:
+        assert release.section(self.CHANGELOG, "## 9.9.9") == ""
+
+
+class TestPromote:
+    """Verify what naming an Unreleased heading writes."""
+
+    STARTING = "# Changelog\n\n## Unreleased\n\n- Stop the crash.\n"
+
+    def test_names_the_entries_for_the_version(self) -> None:
+        after = release.promote(self.STARTING, "0.1.2", "2026-09-05")
+        assert "## 0.1.2 - 2026-09-05" in after
+        assert release.section(after, "## 0.1.2") == "- Stop the crash."
+
+    def test_leaves_an_empty_unreleased_heading_above(self) -> None:
+        """Give the next change somewhere to go without anyone making it."""
+        after = release.promote(self.STARTING, "0.1.2", "2026-09-05")
+        assert release.section(after, "## Unreleased") == ""
+        assert after.index("## Unreleased") < after.index("## 0.1.2")
+
+    def test_refuses_a_changelog_with_no_unreleased_heading(self) -> None:
+        with pytest.raises(release.ReleaseError, match="no ## Unreleased"):
+            release.promote("# Changelog\n", "0.1.2", "2026-09-05")
+
+    def test_refuses_an_unreleased_heading_holding_nothing(self) -> None:
+        """A release that says nothing is a forgotten line, not an empty release."""
+        with pytest.raises(release.ReleaseError, match="nothing under"):
+            release.promote(
+                "# Changelog\n\n## Unreleased\n\n## 0.1.1 - 2026-09-05\n\n- Old.\n",
+                "0.1.2",
+                "2026-09-05",
+            )
+
+    def test_names_only_the_first_unreleased_heading(self) -> None:
+        after = release.promote(self.STARTING, "0.1.2", "2026-09-05")
+        assert after.count("## Unreleased") == 1
+
+
+class TestCutWritesTheChangelog:
+    """Verify what a release does to CHANGELOG.md."""
+
+    def test_names_the_entries_for_the_version_it_cuts(self, repository) -> None:
+        release.cut("0.1.2")
+        text = (repository / "CHANGELOG.md").read_text()
+        assert release.section(text, "## 0.1.2") == "### Fixed\n\n- Stop the crash."
+        assert release.section(text, "## Unreleased") == ""
+
+    def test_refuses_a_release_that_says_nothing(self, repository) -> None:
+        (repository / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n")
+        release.git("commit", "-qam", "Empty the changelog")
+        with pytest.raises(release.ReleaseError, match="nothing under"):
+            release.cut("0.1.2")
+
+    def test_a_release_that_says_nothing_writes_no_version(self, repository) -> None:
+        """Leave pyproject.toml alone when the changelog stops the release."""
+        (repository / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n")
+        release.git("commit", "-qam", "Empty the changelog")
+        with pytest.raises(release.ReleaseError):
+            release.cut("0.1.2")
+        assert 'version = "0.1.1"' in (repository / "pyproject.toml").read_text()
+
+    def test_refuses_a_missing_changelog(self, repository) -> None:
+        (repository / "CHANGELOG.md").unlink()
+        release.git("commit", "-qam", "Drop the changelog")
+        with pytest.raises(release.ReleaseError, match="CHANGELOG.md is missing"):
+            release.cut("0.1.2")
+
+    def test_a_declared_version_needs_an_entry_of_its_own(self, repository) -> None:
+        """Refuse to tag a prepared release whose changelog was never named."""
+        (repository / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## Unreleased\n\n- Stop the crash.\n"
+        )
+        release.git("commit", "-qam", "Take the entry away")
+        with pytest.raises(release.ReleaseError, match="no entry for 0.1.1"):
+            release.cut("0.1.1")
+
+    def test_a_declared_version_with_an_entry_is_tagged(self, repository) -> None:
+        assert release.cut("0.1.1") == "0.1.1"
+        assert release.git("tag", "--list", "v0.1.1") == "v0.1.1"
+
+    def test_a_declared_version_leaves_the_changelog_alone(self, repository) -> None:
+        """Name nothing again: the entry was written when the version was set."""
+        before = (repository / "CHANGELOG.md").read_text()
+        release.cut("0.1.1")
+        assert (repository / "CHANGELOG.md").read_text() == before
+
+
+class TestNotes:
+    """Verify the entry the release workflow takes for a release body."""
+
+    def test_prints_the_entry_for_a_version(self, repository, capsys) -> None:
+        (repository / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## 0.1.1 - 2026-09-05\n\n- Shipped.\n"
+        )
+        assert release.main(["--notes", "0.1.1"]) == 0
+        assert capsys.readouterr().out.strip() == "- Shipped."
+
+    def test_a_leading_v_names_the_same_version(self, repository, capsys) -> None:
+        """Take the tag name as the workflow has it, without trimming it first."""
+        (repository / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## 0.1.1 - 2026-09-05\n\n- Shipped.\n"
+        )
+        assert release.main(["--notes", "v0.1.1"]) == 0
+        assert capsys.readouterr().out.strip() == "- Shipped."
+
+    def test_reports_a_version_the_changelog_does_not_name(self, repository) -> None:
+        assert release.main(["--notes", "9.9.9"]) == 1

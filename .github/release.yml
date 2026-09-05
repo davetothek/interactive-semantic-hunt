@@ -1,0 +1,18 @@
+# Group the notes GitHub generates under the labels this repository
+# already uses. CHANGELOG.md stays the source of a release body; this is
+# a cross-check, so a generated list that disagrees with the written
+# entry says a change reached main without a line.
+changelog:
+  exclude:
+    labels: ["release"]
+  categories:
+    - title: Indexing
+      labels: ["indexing"]
+    - title: Speed
+      labels: ["speed"]
+    - title: Interfaces
+      labels: ["interfaces"]
+    - title: Project
+      labels: ["project"]
+    - title: Other
+      labels: ["*"]

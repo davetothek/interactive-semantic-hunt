@@ -20,12 +20,35 @@ there is no token to leak or rotate.
 3. In GitHub, open **Settings → Environments** and add an environment
    named `pypi`. Require a reviewer if a release should need approval.
 
+## Every pull request
+
+Write the change into `CHANGELOG.md`, under `## Unreleased`, in the pull
+request that makes it. One line, for a reader of the tool rather than a
+reviewer of the diff. A pull request title says what the work was; a
+changelog line says what the release gives.
+
+Label the pull request `indexing`, `speed`, `interfaces`, or `project`.
+The release page groups the generated list under those headings, which
+is what makes a missing changelog line visible.
+
+Never change the version. A version bump is its own pull request, opened
+once everything for the release already sits on `main`; it does not
+travel with the work that motivated it. The `version` check refuses any
+other pull request that touches it, so the rule is enforced rather than
+remembered. A `release/*` or `hotfix/*` branch, or the `release` label,
+says a pull request is the bump.
+
 ## Each release
 
 `poe release` cuts one. It refuses a working tree with changes in it,
-writes the version into `pyproject.toml`, brings `uv.lock` in step, runs
-`poe check`, then commits and tags. A check that fails puts both files
-back and commits nothing.
+names the `## Unreleased` heading for the version and dates it, writes
+the version into `pyproject.toml`, brings `uv.lock` in step, runs
+`poe check`, then commits and tags. A check that fails puts all three
+files back and commits nothing.
+
+It also refuses a release with nothing under `## Unreleased`. A release
+that says nothing is either empty or missing a line, and both need a
+person to decide which.
 
 ```sh
 poe release 0.2.0   # the version a milestone names
@@ -36,16 +59,43 @@ Naming the version `pyproject.toml` already declares tags that version
 instead of raising it. A release prepared and never tagged is a release
 still owed, and it takes the same checks as any other.
 
-It does not push. Pushing the tag is the decision to publish, and it is
-the only thing that reaches PyPI:
+It does not push, and the bump does not reach `main` on its own. A
+version bump is its own pull request, like any other change:
 
 ```sh
-git push origin main v0.2.0
+git switch -c release/0.2.0
+poe release 0.2.0
+git push origin release/0.2.0        # the branch, not the tag
+gh pr create --label release
+```
+
+The `release/` prefix, and the `release` label, are what let the
+`version` check accept a pull request that changes the version.
+
+**Merge it with a merge commit.** `poe release` tags the commit it made,
+so a squash or a rebase would leave the tag naming a commit that is not
+on `main`. Prove it before pushing:
+
+```sh
+git switch main && git pull
+git merge-base --is-ancestor v0.2.0 main && echo "the tag is on main"
+```
+
+Pushing the tag is the decision to publish, and it is the only thing
+that reaches PyPI:
+
+```sh
+git push origin v0.2.0
 ```
 
 Watch the run. The publish job waits on the build job, so a failing
 check never reaches PyPI, and the workflow refuses a tag whose name
 disagrees with the version it finds in `pyproject.toml`.
+
+The release job runs last and publishes the GitHub release page: the
+same wheel and sdist PyPI received, and a body taken from this version's
+`CHANGELOG.md` entry. Nothing is built a second time, so the files on
+the release page are the files people install.
 
 Nothing releases on its own. Closing a milestone says the work is done;
 running `poe release` says to ship it.
