@@ -1,0 +1,77 @@
+name: release-on-milestone
+
+# Ships whatever a closed milestone names. Closing a milestone is the
+# decision to release it, the same way pushing a tag is the decision to
+# publish it — nothing here runs on any other event.
+on:
+  milestone:
+    types: [closed]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MILESTONE_TITLE: ${{ github.event.milestone.title }}
+      MILESTONE_NUMBER: ${{ github.event.milestone.number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Read the version from the milestone title
+        run: |
+          if ! [[ "$MILESTONE_TITLE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Milestone title '$MILESTONE_TITLE' is not a plain X.Y.Z version; refusing to release." >&2
+            exit 1
+          fi
+          echo "VERSION=$MILESTONE_TITLE" >> "$GITHUB_ENV"
+
+      - name: Refuse a milestone that still has open issues
+        run: |
+          open=$(gh api "repos/${{ github.repository }}/milestones/$MILESTONE_NUMBER" --jq .open_issues)
+          if [ "$open" -ne 0 ]; then
+            echo "Milestone $MILESTONE_TITLE still has $open open issue(s); refusing to release." >&2
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Write the version into pyproject.toml, and relock
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+
+          version = os.environ["VERSION"]
+          path = pathlib.Path("pyproject.toml")
+          text = path.read_text()
+          new_text, count = re.subn(
+              r'(?m)^version = ".*"$', f'version = "{version}"', text, count=1
+          )
+          if count != 1:
+              raise SystemExit("Could not find a version line in pyproject.toml")
+          path.write_text(new_text)
+          PY
+          uv lock
+
+      - run: uv sync --dev
+      - run: uv run poe check
+
+      - name: Commit, tag, and push straight to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock
+          git commit -m "Release $VERSION"
+          git tag "v$VERSION"
+          git push origin main
+          git push origin "v$VERSION"
