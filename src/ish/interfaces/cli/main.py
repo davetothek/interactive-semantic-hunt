@@ -4,6 +4,7 @@ Parse arguments, delegate wiring to the bootstrap module, format output.
 """
 
 import logging
+import os
 import shutil
 import sys
 
@@ -77,6 +78,29 @@ def _run_query(args: CliArgs) -> int:
     return 0
 
 
+def _sync_terminal_size() -> None:
+    """Tell Textual the real terminal size when stdout is not it.
+
+    Textual measures the terminal through stdout, which
+    `nvim $(ish -i src/)` redirects to a pipe for the selection. Reading
+    COLUMNS and LINES comes first, before Textual ever queries stdout, so
+    setting them from the terminal that stdin still faces keeps the
+    picker sized to the real window instead of a frozen 80x24 fallback.
+    """
+    if sys.stdout.isatty():
+        return
+    for stream in (sys.stdin, sys.stderr):
+        try:
+            if not stream.isatty():
+                continue
+            size = os.get_terminal_size(stream.fileno())
+        except OSError:
+            continue
+        os.environ.setdefault("COLUMNS", str(size.columns))
+        os.environ.setdefault("LINES", str(size.lines))
+        return
+
+
 def _run_tui(args: CliArgs) -> int:
     """Run the interactive TUI and print the selection to stdout.
 
@@ -85,6 +109,7 @@ def _run_tui(args: CliArgs) -> int:
     """
     from ish.interfaces.tui.app import IshApp
 
+    _sync_terminal_size()
     search_use_case = bootstrap.build_search(args.settings, args.path)
     try:
         app = IshApp(
