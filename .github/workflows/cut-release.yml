@@ -1,11 +1,15 @@
-name: release-on-milestone
+name: cut-release
 
-# Ships whatever a closed milestone names. Closing a milestone is the
-# decision to release it, the same way pushing a tag is the decision to
-# publish it — nothing here runs on any other event.
+# Ships a version named by a closed milestone, or a patch bump run by
+# hand for a fix that cannot wait for one — a milestone still open is
+# not a gap in the process, it is most of development, so nothing here
+# infers a release from that on its own. Both paths land on the same
+# bump-relock-check-tag-push pipeline; only how the version is decided
+# differs.
 on:
   milestone:
     types: [closed]
+  workflow_dispatch: {}
 
 concurrency:
   group: release
@@ -26,15 +30,27 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Read the version from the milestone title
+      - name: Decide the version to release
         run: |
-          if ! [[ "$MILESTONE_TITLE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Milestone title '$MILESTONE_TITLE' is not a plain X.Y.Z version; refusing to release." >&2
+          if [ "${{ github.event_name }}" = "milestone" ]; then
+            VERSION="$MILESTONE_TITLE"
+          else
+            current=$(grep -m1 '^version = "' pyproject.toml | sed -E 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/')
+            if [ -z "$current" ]; then
+              echo "Could not read the current version out of pyproject.toml." >&2
+              exit 1
+            fi
+            IFS='.' read -r major minor patch <<< "$current"
+            VERSION="$major.$minor.$((patch + 1))"
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version '$VERSION' is not a plain X.Y.Z; refusing to release." >&2
             exit 1
           fi
-          echo "VERSION=$MILESTONE_TITLE" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Refuse a milestone that still has open issues
+        if: github.event_name == 'milestone'
         run: |
           open=$(gh api "repos/${{ github.repository }}/milestones/$MILESTONE_NUMBER" --jq .open_issues)
           if [ "$open" -ne 0 ]; then

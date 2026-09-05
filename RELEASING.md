@@ -22,7 +22,7 @@ there is no token to leak or rotate.
 
 ## Each release
 
-Close the milestone. `release-on-milestone.yml` reads the version from the
+Close the milestone. `cut-release.yml` reads the version from the
 milestone's own title (it must be a plain `X.Y.Z`, so a milestone that
 is not meant as a release cannot be closed by mistake into one), refuses
 if the milestone still has open issues, writes that version into
@@ -30,9 +30,19 @@ if the milestone still has open issues, writes that version into
 tag to `main` itself. `release.yml` then takes over from the tag, exactly
 as it would for a tag pushed by hand.
 
-A release that does not correspond to a milestone — a hotfix, or a patch
-made outside the current cycle — has no milestone to close, so do the
-same four steps yourself:
+## A release outside the milestone
+
+A fix that cannot wait for the milestone it belongs to has no milestone to
+close. Merge it to `main` as a normal PR, then run `cut-release.yml` by
+hand from the **Actions** tab (or `gh workflow run cut-release.yml`). With
+no milestone behind it, it reads the current version out of
+`pyproject.toml` and bumps the patch number itself — `0.1.1` becomes
+`0.1.2` — then runs the same relock-check-tag-push pipeline. Nothing
+infers *whether* to release this way; that is still a decision someone
+makes by running the workflow. It only removes the hand-editing once
+that decision is made.
+
+If the workflow itself cannot run, fall back to its four steps by hand:
 
 1. Decide the version and set it in `pyproject.toml`.
 2. `uv run poe check` — the release workflow runs it again, and refuses
@@ -40,8 +50,8 @@ same four steps yourself:
 3. Commit, then tag and push:
 
    ```sh
-   git commit -am "Release 0.1.1"
-   git tag v0.1.1
+   git commit -am "Release 0.1.2"
+   git tag v0.1.2
    git push origin main --tags
    ```
 
