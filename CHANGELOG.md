@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.1.2 - 2026-09-05
+
 ### Added
 
 - Keep this changelog. `poe release` names the `Unreleased` heading for the
