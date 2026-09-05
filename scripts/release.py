@@ -3,6 +3,10 @@
     poe release          # raise the patch number
     poe release 0.2.0    # release exactly this version
 
+Naming the version pyproject.toml already declares tags that version
+rather than raising it, because a release prepared and never tagged is
+a release still owed.
+
 Leave the tag unpushed. Pushing it is the decision to publish, and
 `release.yml` takes over from there.
 
@@ -58,6 +62,13 @@ def next_patch(version: str) -> str:
     return f"{major}.{minor}.{int(patch) + 1}"
 
 
+def is_after(version: str, other: str) -> bool:
+    """Return whether *version* stands later than *other*."""
+    return tuple(int(part) for part in version.split(".")) > tuple(
+        int(part) for part in other.split(".")
+    )
+
+
 def git(*arguments: str) -> str:
     """Run one git command and return what it said."""
     done = subprocess.run(
@@ -93,8 +104,18 @@ def cut(asked: str | None) -> str:
     if git("tag", "--list", f"v{version}"):
         raise ReleaseError(f"v{version} exists already")
 
-    print(f"Releasing {current} -> {version}\n")
-    PYPROJECT.write_text(set_version(text, version), encoding="utf-8")
+    # A version already declared is a release that was prepared and never
+    # tagged. Prove it and tag it: there is nothing left to write.
+    bumping = version != current
+    if bumping and not is_after(version, current):
+        raise ReleaseError(f"{version} does not come after the declared {current}")
+
+    if bumping:
+        print(f"Releasing {current} -> {version}\n")
+        PYPROJECT.write_text(set_version(text, version), encoding="utf-8")
+    else:
+        print(f"{version} is declared already, so proving it and tagging it\n")
+
     try:
         lock()
         check()
@@ -104,7 +125,10 @@ def cut(asked: str | None) -> str:
         git("checkout", "--", str(PYPROJECT), "uv.lock")
         raise
 
-    git("commit", "-am", f"Release {version}")
+    # Commit whatever changed. A version already declared leaves nothing to
+    # commit, unless relocking moved the lock file.
+    if git("status", "--porcelain"):
+        git("commit", "-am", f"Release {version}")
     git("tag", f"v{version}")
     return version
 

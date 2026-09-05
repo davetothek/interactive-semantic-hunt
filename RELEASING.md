@@ -32,6 +32,10 @@ poe release 0.2.0   # the version a milestone names
 poe release         # raise the patch number
 ```
 
+Naming the version `pyproject.toml` already declares tags that version
+instead of raising it. A release prepared and never tagged is a release
+still owed, and it takes the same checks as any other.
+
 It does not push. Pushing the tag is the decision to publish, and it is
 the only thing that reaches PyPI:
 

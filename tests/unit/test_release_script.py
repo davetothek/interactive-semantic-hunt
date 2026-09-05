@@ -68,6 +68,102 @@ class TestSetVersion:
             release.set_version('name = "x"\n', "0.2.0")
 
 
+class TestIsAfter:
+    """Verify which way round two versions stand."""
+
+    def test_a_later_patch_comes_after(self) -> None:
+        assert release.is_after("0.1.2", "0.1.1")
+
+    def test_a_later_minor_comes_after(self) -> None:
+        assert release.is_after("0.2.0", "0.1.9")
+
+    def test_the_same_version_comes_after_nothing(self) -> None:
+        assert not release.is_after("0.1.1", "0.1.1")
+
+    def test_an_earlier_version_does_not(self) -> None:
+        assert not release.is_after("0.1.0", "0.2.0")
+
+
+@pytest.fixture()
+def repository(tmp_path, monkeypatch):
+    """Build a throwaway repository declaring 0.1.1, and work inside it."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.1.1"\n')
+    (tmp_path / "uv.lock").write_text("version = 1\n")
+    monkeypatch.chdir(tmp_path)
+    release.git("init", "-q")
+    release.git("config", "user.email", "test@example.com")
+    release.git("config", "user.name", "Test")
+    release.git("add", ".")
+    release.git("commit", "-qm", "First")
+    # Neither belongs in a test: one reaches the network, the other runs
+    # the whole suite again.
+    monkeypatch.setattr(release, "lock", lambda: None)
+    monkeypatch.setattr(release, "check", lambda: None)
+    return tmp_path
+
+
+class TestCut:
+    """Verify what a release writes, commits, and tags."""
+
+    def test_a_version_already_declared_is_tagged_not_raised(self, repository) -> None:
+        """Tag a release that was prepared and never tagged.
+
+        Committing is what used to fail here: nothing had changed, so git
+        refused, and the release could not be cut at all.
+        """
+        before = release.git("rev-parse", "HEAD")
+
+        assert release.cut("0.1.1") == "0.1.1"
+
+        assert release.git("tag", "--list") == "v0.1.1"
+        assert release.git("rev-parse", "HEAD") == before, "committed with no change"
+        assert 'version = "0.1.1"' in (repository / "pyproject.toml").read_text()
+
+    def test_a_leading_v_names_the_same_version(self, repository) -> None:
+        assert release.cut("v0.1.1") == "0.1.1"
+        assert release.git("tag", "--list") == "v0.1.1"
+
+    def test_raising_the_patch_writes_and_commits(self, repository) -> None:
+        before = release.git("rev-parse", "HEAD")
+
+        assert release.cut(None) == "0.1.2"
+
+        assert release.git("tag", "--list") == "v0.1.2"
+        assert release.git("rev-parse", "HEAD") != before
+        assert release.git("log", "-1", "--pretty=%s") == "Release 0.1.2"
+        assert 'version = "0.1.2"' in (repository / "pyproject.toml").read_text()
+
+    def test_refuses_to_go_backwards(self, repository) -> None:
+        with pytest.raises(release.ReleaseError, match="does not come after"):
+            release.cut("0.1.0")
+        assert release.git("tag", "--list") == ""
+
+    def test_refuses_a_tag_that_exists(self, repository) -> None:
+        release.git("tag", "v0.2.0")
+        with pytest.raises(release.ReleaseError, match="exists already"):
+            release.cut("0.2.0")
+
+    def test_refuses_a_working_tree_with_changes(self, repository) -> None:
+        (repository / "pyproject.toml").write_text('[project]\nversion = "0.9.9"\n')
+        with pytest.raises(release.ReleaseError, match="commit or stash"):
+            release.cut(None)
+
+    def test_a_failing_check_writes_nothing(self, repository, monkeypatch) -> None:
+        """Leave the tree as it was found when the checks do not pass."""
+
+        def boom() -> None:
+            raise release.ReleaseError("poe check failed")
+
+        monkeypatch.setattr(release, "check", boom)
+
+        with pytest.raises(release.ReleaseError, match="poe check failed"):
+            release.cut(None)
+
+        assert 'version = "0.1.1"' in (repository / "pyproject.toml").read_text()
+        assert release.git("tag", "--list") == ""
+        assert release.git("status", "--porcelain") == ""
+
+
 class TestTheRealProjectFile:
     """Verify the script reads the file it is actually pointed at."""
 
