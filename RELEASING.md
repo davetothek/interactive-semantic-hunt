@@ -59,11 +59,33 @@ Naming the version `pyproject.toml` already declares tags that version
 instead of raising it. A release prepared and never tagged is a release
 still owed, and it takes the same checks as any other.
 
-It does not push. Pushing the tag is the decision to publish, and it is
-the only thing that reaches PyPI:
+It does not push, and the bump does not reach `main` on its own. A
+version bump is its own pull request, like any other change:
 
 ```sh
-git push origin main v0.2.0
+git switch -c release/0.2.0
+poe release 0.2.0
+git push origin release/0.2.0        # the branch, not the tag
+gh pr create --label release
+```
+
+The `release/` prefix, and the `release` label, are what let the
+`version` check accept a pull request that changes the version.
+
+**Merge it with a merge commit.** `poe release` tags the commit it made,
+so a squash or a rebase would leave the tag naming a commit that is not
+on `main`. Prove it before pushing:
+
+```sh
+git switch main && git pull
+git merge-base --is-ancestor v0.2.0 main && echo "the tag is on main"
+```
+
+Pushing the tag is the decision to publish, and it is the only thing
+that reaches PyPI:
+
+```sh
+git push origin v0.2.0
 ```
 
 Watch the run. The publish job waits on the build job, so a failing
