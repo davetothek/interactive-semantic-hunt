@@ -22,14 +22,26 @@ there is no token to leak or rotate.
 
 ## Each release
 
+Close the milestone. `release-on-milestone.yml` reads the version from the
+milestone's own title (it must be a plain `X.Y.Z`, so a milestone that
+is not meant as a release cannot be closed by mistake into one), refuses
+if the milestone still has open issues, writes that version into
+`pyproject.toml`, relocks, runs `poe check`, and pushes the commit and
+tag to `main` itself. `release.yml` then takes over from the tag, exactly
+as it would for a tag pushed by hand.
+
+A release that does not correspond to a milestone — a hotfix, or a patch
+made outside the current cycle — has no milestone to close, so do the
+same four steps yourself:
+
 1. Decide the version and set it in `pyproject.toml`.
 2. `uv run poe check` — the release workflow runs it again, and refuses
    a tag whose name disagrees with the version it finds.
 3. Commit, then tag and push:
 
    ```sh
-   git commit -am "Release 0.1.0"
-   git tag v0.1.0
+   git commit -am "Release 0.1.1"
+   git tag v0.1.1
    git push origin main --tags
    ```
 
