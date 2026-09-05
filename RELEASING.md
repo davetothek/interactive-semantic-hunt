@@ -22,31 +22,50 @@ there is no token to leak or rotate.
 
 ## Each release
 
-Close the milestone. `release-on-milestone.yml` reads the version from the
-milestone's own title (it must be a plain `X.Y.Z`, so a milestone that
-is not meant as a release cannot be closed by mistake into one), refuses
-if the milestone still has open issues, writes that version into
-`pyproject.toml`, relocks, runs `poe check`, and pushes the commit and
-tag to `main` itself. `release.yml` then takes over from the tag, exactly
-as it would for a tag pushed by hand.
+`poe release` cuts one. It refuses a working tree with changes in it,
+writes the version into `pyproject.toml`, brings `uv.lock` in step, runs
+`poe check`, then commits and tags. A check that fails puts both files
+back and commits nothing.
 
-A release that does not correspond to a milestone — a hotfix, or a patch
-made outside the current cycle — has no milestone to close, so do the
-same four steps yourself:
+```sh
+poe release 0.2.0   # the version a milestone names
+poe release         # raise the patch number
+```
 
-1. Decide the version and set it in `pyproject.toml`.
-2. `uv run poe check` — the release workflow runs it again, and refuses
-   a tag whose name disagrees with the version it finds.
-3. Commit, then tag and push:
+It does not push. Pushing the tag is the decision to publish, and it is
+the only thing that reaches PyPI:
 
-   ```sh
-   git commit -am "Release 0.1.1"
-   git tag v0.1.1
-   git push origin main --tags
-   ```
+```sh
+git push origin main v0.2.0
+```
 
-4. Watch the run. The publish job waits on the build job, so a failing
-   check never reaches PyPI.
+Watch the run. The publish job waits on the build job, so a failing
+check never reaches PyPI, and the workflow refuses a tag whose name
+disagrees with the version it finds in `pyproject.toml`.
+
+Nothing releases on its own. Closing a milestone says the work is done;
+running `poe release` says to ship it.
+
+## A fix that cannot wait for the milestone
+
+A release cut from `main` carries everything merged since the last tag,
+so a patch cut there would also ship whatever half-built milestone work
+is sitting on `main`. That is not what a patch number promises.
+
+Cut it from the release it fixes instead. The fix reaches `main` first,
+through a pull request like any other, and the patch takes a copy:
+
+```sh
+git switch -c hotfix/0.1.2 v0.1.1
+git cherry-pick <the fix, already on main>
+poe release
+git push origin hotfix/0.1.2 v0.1.2
+git switch main && git merge hotfix/0.1.2
+```
+
+That patch holds the fix and nothing else. There is no standing branch
+to keep in step for it, because the branch only has to exist for as long
+as the fix does.
 
 ## What ships
 
