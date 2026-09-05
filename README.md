@@ -202,8 +202,8 @@ resident, so a query costs about 58 ms rather than a process start.
 
 A call may narrow one search with `lang`, `under`, `type`, and `limit`, or
 write the same filters into the query text. It cannot change
-what is indexed — those settings come from `ish.toml` only, so no single call can
-shrink an index that another call depends on.
+what is indexed — those settings come from the config file only, so no single
+call can shrink an index that another call depends on.
 
 ## Index
 
@@ -233,8 +233,9 @@ means they always show the current content.
 
 ## Configure
 
-Every command-line option is also a key in `ish.toml`, under the same name.
-Put project settings in `ish.toml` at the root of your repository:
+Every command-line option is also a key in the config file, under the same
+name. Put project settings in `.ish/config.toml` at the root of your
+repository:
 
 ```toml
 embedder = "ollama"
@@ -303,11 +304,26 @@ ish "installation steps" --lang markdown asciidoc
 ish "parse a header" --under '/include/'
 ```
 
-User-level defaults go in `~/.config/ish/ish.toml`. Later sources win:
+User-level defaults go in `~/.config/ish/config.toml`, which honors
+`XDG_CONFIG_HOME`. Later sources win:
 
 ```
-defaults < ~/.config/ish/ish.toml < ./ish.toml < ISH_* environment < command line
+defaults
+  < ~/.config/ish/config.toml
+  < .ish/config.toml            (every one from the target path upward)
+  < ISH_* environment
+  < command line
 ```
+
+A flat `ish.toml` is still read, beside `.ish/config.toml` and in the user
+directory alike, so a file written before this keeps working. Prefer
+`.ish/config.toml`: it keeps a tree's settings beside anything else the tool
+leaves there.
+
+**Every** config file from the target path upward applies, outermost first, and
+each settles only the keys it names. So a file beside a subtree adds to the one
+above it rather than replacing it — a subtree can set `git = false` for itself
+and still inherit the `type_patterns` the repository above it set.
 
 Set any option from the environment with the `ISH_` prefix, for example
 `ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.

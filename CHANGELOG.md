@@ -28,6 +28,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 ### Documentation
 
 - Say how to keep generated code out of an index, with a worked pattern.
+- Name the config file correctly. The documentation said `ish.toml`, which is
+  read second for compatibility; the file to write is `.ish/config.toml`, and
+  `~/.config/ish/config.toml` for a user default. Say also that every config
+  file from the target path upward applies, each settling only the keys it
+  names.
 
 ## 0.1.1 - 2026-09-05
 
