@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "interactive-semantic-hunt"
-version = "0.1.0"
+version = "0.1.1"
 description = "Interactive semantic search for code, inspired by fzf"
 readme = "README.md"
 requires-python = ">=3.12"
