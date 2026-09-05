@@ -252,6 +252,48 @@ matches at any depth and alternation works. `exclude` wins over `include`.
 `--git` is on by default, so anything a `.gitignore` covers stays out of the
 index. Pass `--no-git` to index it anyway.
 
+### Keep generated code out
+
+Generated code is the one thing worth excluding by hand. It is large, it is
+repetitive, and nobody searches it by meaning. On one firmware tree, generated
+headers were **99% of the oversized C and C++ text**: 10.3 MB of 10.4 MB, and
+the largest single definition held 2,949,177 characters. A 26 MB generated JSON
+register map produced 32,768 chunks and took 76 seconds to parse.
+
+Embedding costs about one chunk per second, so that is hours of work for text
+no query wants.
+
+Name the patterns in `exclude`:
+
+```toml
+exclude = [
+    "/generated/",           # a directory that holds nothing written by hand
+    "_pb2\\.py$",             # protobuf
+    "\\.g\\.(c|h|cpp)$",       # a generator's own suffix
+    "/build/",               # anything a build wrote
+    "register_map.*\\.json$", # a generated register map
+]
+```
+
+Two things to know:
+
+- `exclude` is index scope, so it decides what is *in* the index. Narrowing it
+  later does not remove what a wider run already stored; run `--reindex` for
+  that.
+- A pattern is a regular expression searched against the whole path, so
+  `/generated/` matches at any depth and needs no wildcards.
+
+Check a pattern before you pay to index it. An empty query lists what the
+filter allows, and `--no-cache` keeps the trial out of the stored index:
+
+```sh
+ish "" . --no-cache | wc -l                          # everything today
+ish "" . --no-cache --exclude '/generated/' | wc -l  # what the pattern leaves
+```
+
+If most of a tree is generated, it is usually less work to exclude the
+directory than to name each suffix.
+
 `--lang` and `--under` narrow what a search *returns*. They never change what is
 indexed, so a narrowed query cannot shrink the index:
 
