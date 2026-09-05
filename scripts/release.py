@@ -20,14 +20,17 @@ from that tag rather than from main:
 """
 
 import argparse
+import datetime
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 PYPROJECT = Path("pyproject.toml")
+CHANGELOG = Path("CHANGELOG.md")
 VERSION_LINE = re.compile(r'(?m)^version = "(.*)"$')
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+UNRELEASED = "## Unreleased"
 
 
 class ReleaseError(Exception):
@@ -67,6 +70,42 @@ def is_after(version: str, other: str) -> bool:
     return tuple(int(part) for part in version.split(".")) > tuple(
         int(part) for part in other.split(".")
     )
+
+
+def section(text: str, heading: str) -> str:
+    """Return what stands under *heading*, up to the next one.
+
+    Match the heading and its version alone, so `## 0.1.1 - 2026-09-05`
+    answers to `## 0.1.1` and `## 0.1.10 - ...` does not. The rest of the
+    heading line must start with a space, which is what keeps one version
+    from answering for a longer one that begins with it.
+    """
+    wanted = re.compile(
+        rf"(?m)^{re.escape(heading)}(?: [^\n]*)?\n(.*?)(?=^## |\Z)", re.DOTALL
+    )
+    found = wanted.search(text)
+    return found.group(1).strip() if found else ""
+
+
+def promote(text: str, version: str, today: str) -> str:
+    """Return *text* with the Unreleased entries named for *version*.
+
+    Leave an empty Unreleased heading above, so the next change has
+    somewhere to go without anyone making the heading first.
+    """
+    if UNRELEASED not in text:
+        raise ReleaseError(f"CHANGELOG.md has no {UNRELEASED} heading")
+    if not section(text, UNRELEASED):
+        raise ReleaseError(
+            f"CHANGELOG.md has nothing under {UNRELEASED}; "
+            "a release says what it changed"
+        )
+    return text.replace(UNRELEASED, f"{UNRELEASED}\n\n## {version} - {today}", 1)
+
+
+def today() -> str:
+    """Return today's date, as a changelog heading writes it."""
+    return datetime.date.today().isoformat()
 
 
 def git(*arguments: str) -> str:
@@ -110,10 +149,19 @@ def cut(asked: str | None) -> str:
     if bumping and not is_after(version, current):
         raise ReleaseError(f"{version} does not come after the declared {current}")
 
+    if not CHANGELOG.exists():
+        raise ReleaseError("CHANGELOG.md is missing, so this release says nothing")
+    notes = CHANGELOG.read_text(encoding="utf-8")
+
     if bumping:
         print(f"Releasing {current} -> {version}\n")
+        # Name the entries before writing the version, so a changelog with
+        # nothing under Unreleased stops the release with the tree untouched.
+        CHANGELOG.write_text(promote(notes, version, today()), encoding="utf-8")
         PYPROJECT.write_text(set_version(text, version), encoding="utf-8")
     else:
+        if not section(notes, f"## {version}"):
+            raise ReleaseError(f"CHANGELOG.md has no entry for {version}")
         print(f"{version} is declared already, so proving it and tagging it\n")
 
     try:
@@ -122,7 +170,7 @@ def cut(asked: str | None) -> str:
     except ReleaseError:
         # Put back only what this script just wrote. The tree was clean
         # above, so there is nothing else here to lose.
-        git("checkout", "--", str(PYPROJECT), "uv.lock")
+        git("checkout", "--", str(PYPROJECT), "uv.lock", str(CHANGELOG))
         raise
 
     # Commit whatever changed. A version already declared leaves nothing to
@@ -144,7 +192,23 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         help="Version to release. Omit it to raise the patch number.",
     )
+    parser.add_argument(
+        "--notes",
+        metavar="VERSION",
+        help="Print this version's changelog entry and stop. The release "
+        "workflow takes a release body from it, so the page and the file "
+        "cannot disagree.",
+    )
     arguments = parser.parse_args(argv)
+
+    if arguments.notes:
+        wanted = arguments.notes.removeprefix("v")
+        found = section(CHANGELOG.read_text(encoding="utf-8"), f"## {wanted}")
+        if not found:
+            print(f"release: CHANGELOG.md has no entry for {wanted}", file=sys.stderr)
+            return 1
+        print(found)
+        return 0
 
     try:
         version = cut(arguments.version)
