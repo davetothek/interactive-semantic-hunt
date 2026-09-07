@@ -129,8 +129,12 @@ class Scan:
     def parse_file(self, path: Path) -> Sequence[Chunk] | None:
         """Read and parse one discovered file.
 
-        Return None when the file cannot be read or parsed, after
-        reporting the reason. The caller skips it and continues.
+        Return no chunks when the file was read but holds nothing this
+        parser can use, and None when the file could not be read at
+        all. The two answers differ for the index: a file that yields
+        nothing is described by that answer and is stamped, while a
+        file nobody could read is unknown and is asked about again.
+        Report the reason for either, and continue.
         """
         log.debug("Parsing %s", path)
         try:
@@ -145,7 +149,7 @@ class Scan:
         except ParseError as exc:
             self._unparsed.append(path)
             log.info("Cannot parse %s: %s", path, exc)
-            return None
+            return ()
 
     def discover(self, root: Path) -> list[Path]:
         """Recursively find parseable files, skipping ignored directories.
