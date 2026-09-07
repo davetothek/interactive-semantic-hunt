@@ -147,6 +147,90 @@ class TestIncrementalRefresh:
         assert stats.files_seen == 2
 
 
+class TestRefreshSettles:
+    """Verify that a repeated refresh redoes no work.
+
+    Count what the scan was asked to parse rather than reading
+    ``IndexStats``. ``files_parsed`` counts the files that yielded
+    chunks, so a file parsed again and skipped again leaves every
+    number at zero while the reading is done on every run.
+    """
+
+    class CountingScan(Scan):
+        """Record every file the index asks for."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.parsed: list[Path] = []
+
+        def parse_file(self, path: Path):
+            self.parsed.append(path)
+            return super().parse_file(path)
+
+    def build_counting(self, embedder, store) -> tuple[Index, "CountingScan"]:
+        scan = self.CountingScan(parsers=[LineParser()])
+        index = Index(scan=scan, embedder=embedder, vector_store=store)
+        return index, scan
+
+    def test_an_unparseable_file_is_read_once(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.py").write_text("alpha\n")
+        (tmp_path / "bad.py").write_text("BROKEN\n")
+        index, scan = self.build_counting(embedder, store)
+
+        index.refresh(tmp_path)
+        scan.parsed.clear()
+        index.refresh(tmp_path)
+        index.refresh(tmp_path)
+
+        assert scan.parsed == []
+
+    def test_an_unparseable_file_holds_no_chunks(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        (tmp_path / "bad.py").write_text("BROKEN\n")
+        build(embedder, store).refresh(tmp_path)
+
+        assert store.chunks() == []
+        assert set(store.file_stamps()) == {tmp_path / "bad.py"}
+
+    def test_an_edited_unparseable_file_is_read_again(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "bad.py"
+        target.write_text("BROKEN\n")
+        index, scan = self.build_counting(embedder, store)
+        index.refresh(tmp_path)
+        scan.parsed.clear()
+
+        target.write_text("alpha\n")
+        index.refresh(tmp_path)
+
+        assert scan.parsed == [target]
+        assert [chunk.symbol for chunk in store.chunks()] == ["alpha"]
+
+    def test_an_unreadable_file_is_asked_about_again(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        """A file nobody could read is unknown, not known to hold nothing.
+
+        Stamping it would leave it out of the index until something
+        edits it, which a repaired permission does not do.
+        """
+        target = tmp_path / "locked.py"
+        target.write_text("alpha\n")
+        target.chmod(0o000)
+        index, scan = self.build_counting(embedder, store)
+        index.refresh(tmp_path)
+        scan.parsed.clear()
+
+        index.refresh(tmp_path)
+
+        assert scan.parsed == [target]
+        assert store.file_stamps() == {}
+
+
 class TestOrphans:
     """Verify that vanished files leave the index."""
 
@@ -184,15 +268,22 @@ class TestOrphans:
 class TestFailures:
     """Verify that a bad file is skipped, not fatal."""
 
-    def test_unparseable_file_is_skipped(self, embedder, store, tmp_path: Path) -> None:
+    def test_unparseable_file_contributes_nothing(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        """A file the parser rejects holds no chunks, and stops nothing.
+
+        It is recorded as read, so the next refresh leaves it alone.
+        """
         (tmp_path / "good.py").write_text("alpha\n")
         (tmp_path / "bad.py").write_text("BROKEN\n")
 
         stats = build(embedder, store).refresh(tmp_path)
 
         assert stats.files_seen == 2
-        assert stats.files_parsed == 1
+        assert stats.chunks_indexed == 1
         assert [c.symbol for c in store.chunks()] == ["alpha"]
+        assert set(store.file_stamps()) == {tmp_path / "good.py", tmp_path / "bad.py"}
 
     def test_file_that_vanishes_mid_scan_is_skipped(
         self, embedder, store, tmp_path: Path, monkeypatch
