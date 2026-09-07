@@ -293,6 +293,49 @@ class TestSchemaVersion:
         assert row[0] == SCHEMA_VERSION
 
 
+class TestOpeningWritesNothing:
+    """Verify that opening an unchanged index leaves it alone.
+
+    A search, a status report, and a refresh of an unchanged tree all
+    open the index. A write there takes the write lock, so it queues
+    behind any run that is indexing, and it moves the data version,
+    which costs every other process the scored matrix it holds.
+    """
+
+    def test_reopening_with_the_same_root_writes_nothing(
+        self, db_path: Path, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "tree"
+        SqliteVectorStore(db_path, model_id="m", root=root).close()
+
+        # One connection, because the data version only moves for a
+        # connection that did not make the change itself.
+        watcher = sqlite3.connect(db_path)
+        try:
+            before = watcher.execute("PRAGMA data_version").fetchone()[0]
+            for _ in range(3):
+                SqliteVectorStore(db_path, model_id="m", root=root).close()
+            after = watcher.execute("PRAGMA data_version").fetchone()[0]
+        finally:
+            watcher.close()
+
+        assert after == before
+
+    def test_a_different_root_is_recorded(self, db_path: Path, tmp_path: Path) -> None:
+        SqliteVectorStore(db_path, model_id="m", root=tmp_path / "one").close()
+        SqliteVectorStore(db_path, model_id="m", root=tmp_path / "two").close()
+
+        assert SqliteVectorStore.read_root(db_path) == tmp_path / "two"
+
+    def test_the_root_is_recorded_on_a_new_index(
+        self, db_path: Path, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "tree"
+        SqliteVectorStore(db_path, model_id="m", root=root).close()
+
+        assert SqliteVectorStore.read_root(db_path) == root
+
+
 class TestConcurrentReaders:
     """Verify that MCP, nvim, and the CLI can query the same index at once."""
 

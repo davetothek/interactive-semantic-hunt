@@ -8,6 +8,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixed
+
+- Stop writing to an index that is only being opened. A search, a status
+  report, and a refresh of a tree nothing changed all wrote the tree path
+  back over itself, which queued them behind any run that was indexing and
+  made every other process rebuild the scored matrix it held.
+- Read a file the parser rejects once, rather than on every refresh. Such a
+  file is now recorded as holding nothing, and is read again when it changes.
+  A file that could not be read at all is still asked about on the next run.
+
 ## 0.1.2 - 2026-09-05
 
 ### Added
