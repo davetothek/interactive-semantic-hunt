@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.1.4 - 2026-09-07
+
 ### Changed
 
 - Answer a search sooner while an index run is going. The daemon serves one
