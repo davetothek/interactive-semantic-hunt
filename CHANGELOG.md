@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.1.3 - 2026-09-07
+
 ### Fixed
 
 - Stop writing to an index that is only being opened. A search, a status
