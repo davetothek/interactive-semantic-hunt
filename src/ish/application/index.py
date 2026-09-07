@@ -174,7 +174,13 @@ class Index:
     def _reindex(
         self, stale: Sequence[Path], found: dict[Path, FileStamp]
     ) -> tuple[dict[Path, list[tuple[Chunk, str]]], int]:
-        """Parse stale files, embed unseen texts, and write the result."""
+        """Parse stale files, embed unseen texts, and write the result.
+
+        Stamp a file that yields no chunks, so that a file holding
+        nothing to index is read once rather than on every refresh.
+        Skip only a file that could not be read, because nothing was
+        learned about it and the next run must ask again.
+        """
         parsed: dict[Path, list[tuple[Chunk, str]]] = {}
         texts: dict[str, str] = {}
 
