@@ -74,7 +74,7 @@ class PrefixingEmbedder:
             return held
 
         _, prefix = prefixes_for(self.model_name)
-        vectors = self._embed([f"{prefix}{text}" if prefix else text])
+        vectors = self._embed_interactive([f"{prefix}{text}" if prefix else text])
         vector = vectors[0] if vectors else []
 
         cache[text] = vector
@@ -85,3 +85,11 @@ class PrefixingEmbedder:
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode already-prepared texts. Implemented by each adapter."""
         raise NotImplementedError
+
+    def _embed_interactive(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        """Encode text a person is waiting for.
+
+        Take the same path as a stored text. A backend that can wait
+        differently for a request somebody is watching overrides this.
+        """
+        return self._embed(texts)
