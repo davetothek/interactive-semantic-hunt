@@ -8,6 +8,18 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- Answer a search sooner while an index run is going. The daemon serves one
+  embedding request at a time, so a query waits for the request in flight;
+  sending fewer texts per request cuts that wait from about 97 s to about
+  12 s. The whole run costs the same, and the vectors are unchanged.
+
+### Fixed
+
+- Report a busy embedding backend rather than waiting ten minutes for it. A
+  query now says that an index run holds the daemon, and says it in a minute.
+
 ## 0.1.3 - 2026-09-07
 
 ### Fixed

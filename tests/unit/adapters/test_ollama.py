@@ -133,6 +133,67 @@ class TestEmbed:
         OllamaEmbedder(batch_size=0).embed_documents(["a", "b"])
         assert [len(r["input"]) for r in recorder.requests] == [1, 1]
 
+    def test_the_default_batch_keeps_a_request_short(
+        self, recorder: Recorder
+    ) -> None:
+        """The daemon serves one request at a time.
+
+        A batch is therefore how long a search waits while an index run
+        is going, so the default splits rather than sending everything
+        as one request nothing can queue ahead of.
+        """
+        OllamaEmbedder().embed_documents([f"text {n}" for n in range(64)])
+
+        assert len(recorder.requests) > 1
+        assert max(len(r["input"]) for r in recorder.requests) <= 8
+
+
+class TestWaiting:
+    """Verify that a query does not wait as long as an index run."""
+
+    class TimingRecorder(Recorder):
+        """Record the timeout asked of each request."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.timeouts: list[float] = []
+
+        def __call__(self, request, timeout=None):
+            self.timeouts.append(timeout)
+            return super().__call__(request, timeout=timeout)
+
+    def _record(self, monkeypatch) -> "TestWaiting.TimingRecorder":
+        rec = self.TimingRecorder()
+        monkeypatch.setattr(urllib.request, "urlopen", rec)
+        return rec
+
+    def test_a_query_waits_less_than_a_stored_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rec = self._record(monkeypatch)
+        embedder = OllamaEmbedder("all-minilm")
+
+        embedder.embed_documents(["stored"])
+        embedder.embed_query("asked")
+
+        stored, asked = rec.timeouts
+        assert asked < stored
+
+    def test_a_slow_daemon_is_reported_rather_than_waited_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(request, timeout=None):  # noqa: ARG001
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            OllamaEmbedder().embed_query("anything")
+
+        message = str(exc_info.value)
+        assert "did not answer" in message
+        assert "one embedding request at a time" in message
+
 
 class TestFailures:
     """Verify that every failure explains what to do next."""

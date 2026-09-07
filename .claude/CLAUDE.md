@@ -181,6 +181,23 @@ The index persists in SQLite, one file per scanned tree, under `$XDG_CACHE_HOME/
   cores. Raising `OLLAMA_NUM_PARALLEL` changes nothing, because Ollama pins an
   embedding model to one slot. Throughput is about 270 tokens per second, so
   chunk size, not concurrency, sets the cost of an index.
+- **The request batch is how long a search waits during an index run.** One
+  slot means a query queues behind the request in flight, and behind that one
+  only. So `DEFAULT_BATCH_SIZE` in the Ollama adapter sets the wait: measured
+  over 64 definitions, 97 s at 64, 23 s at 16, 12 s at 8, while the whole run
+  cost 97.2, 95.8, and 96.9 s. The batch is 8. **It carries no accuracy cost**
+  — each text is embedded on its own, so vectors are bit-identical at every
+  size, verified over 32 texts from 17 to 8,409 characters. Nothing about a
+  stored vector changes, so this needs no `SCHEMA_VERSION` bump.
+- **A query waits a minute; an index run waits ten.** `QUERY_TIMEOUT_SECONDS`
+  is separate from `TIMEOUT_SECONDS` because somebody is watching one of them.
+  A wait of minutes at a picker is a failure to report, not an answer worth
+  serving, and the message names the index run that holds the daemon.
+- Searching during an index run is supported at the storage layer and always
+  was: under WAL a reader is never blocked by a writer. Measured against a
+  writer committing 168k vectors, a second process opened in 0.4 ms, searched
+  in 120 ms, and listed chunks in under 1 ms. When a search feels blocked, the
+  embedding queue is what to look at, not SQLite.
 
 Measured on this repo (33 files, 104 chunks): a cold index costs ~87s with Ollama, ~51s with llama.cpp, which parallelizes bulk embedding better. A warm query costs ~0.20s.
 
