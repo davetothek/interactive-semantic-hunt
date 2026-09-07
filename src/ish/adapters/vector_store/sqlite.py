@@ -199,14 +199,28 @@ class SqliteVectorStore:
 
         The file name carries only a hash of the path, so without this
         no one can tell which tree an index describes.
+
+        Write only when the stored tree differs. Opening an index is
+        what a search, a status report, and a refresh of an unchanged
+        tree all do, and a write there takes the write lock of every
+        index the caller touches. It also moves ``PRAGMA data_version``,
+        which makes a reader in another process discard the scored
+        matrix it holds.
         """
         if self._root is None:
             return
-        with self._lock, self._db:
-            self._db.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES ('root', ?)",
-                (str(self._root),),
-            )
+        text = str(self._root)
+        with self._lock:
+            row = self._db.execute(
+                "SELECT value FROM meta WHERE key = 'root'"
+            ).fetchone()
+            if row is not None and row[0] == text:
+                return
+            with self._db:
+                self._db.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('root', ?)",
+                    (text,),
+                )
 
     @staticmethod
     def read_root(db_path: Path) -> Path | None:
