@@ -11,6 +11,7 @@ from ish.application.ports.embedder import Embedder
 from ish.application.ports.vector_store import VectorStore
 from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 
 log = logging.getLogger(__name__)
 
@@ -334,7 +335,7 @@ class Search:
         limit: int = 5,
         keep: Callable[[Chunk], bool] | None = None,
         hybrid: bool | None = None,
-    ) -> Sequence[tuple[Chunk, float]]:
+    ) -> Sequence[Match]:
         """Query the vector store with the semantic query.
 
         Accept a filter for this call alone, so a long-lived interface
@@ -360,7 +361,7 @@ class Search:
         query: str,
         limit: int = 5,
         keep: Callable[[Chunk], bool] | None = None,
-    ) -> Sequence[tuple[Chunk, float]]:
+    ) -> Sequence[Match]:
         """Find the best matching chunks for a semantic query."""
         if self.build_index(root) is None:
             return []

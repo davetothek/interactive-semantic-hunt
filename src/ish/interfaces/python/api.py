@@ -28,11 +28,10 @@ from ish.application.search import (
     parse_query,
 )
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 from ish.settings import Settings, load_settings
 
 log = logging.getLogger(__name__)
-
-Result = tuple[Chunk, float]
 
 
 class Ish:
@@ -127,7 +126,7 @@ class Ish:
         under: str = "",
         type: Sequence[str] = (),
         hybrid: bool | None = None,
-    ) -> list[Result]:
+    ) -> list[Match]:
         """Return the best matching chunks, most similar first.
 
         Read `lang:`, `under:`, and `type:` out of *query* as well as

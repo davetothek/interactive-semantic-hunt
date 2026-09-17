@@ -10,11 +10,13 @@ must never rewrite, prune, or delete what belongs to a subtree.
 """
 
 import logging
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
 from ish.application.ports.vector_store import FileStamp, VectorStore
+from ish.application.ranking import ResultFilter
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 
 log = logging.getLogger(__name__)
 
@@ -93,8 +95,8 @@ class FederatedVectorStore:
         query_vector: Sequence[float],
         query_text: str = "",
         limit: int = 5,
-        keep: Callable[[Chunk], bool] | None = None,
-    ) -> Sequence[tuple[Chunk, float]]:
+        keep: ResultFilter = None,
+    ) -> Sequence[Match]:
         """Merge the best results from every index.
 
         Ask each index for a full page, then keep the best overall. Every
@@ -109,7 +111,7 @@ class FederatedVectorStore:
                     best[chunk] = score
 
         ranked = sorted(best.items(), key=lambda pair: pair[1], reverse=True)
-        return ranked[:limit]
+        return [Match(chunk, score) for chunk, score in ranked[:limit]]
 
     def close(self) -> None:
         """Release every index."""
