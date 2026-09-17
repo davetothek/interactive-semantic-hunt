@@ -1,7 +1,8 @@
-"""Logging setup for ish.
+"""Configure logging for every interface.
 
-All output goes to stderr so stdout stays clean for piped output.
-Verbosity 0 = silent (WARNING only, effectively nothing in normal use).
+Send every record to stderr, so stdout stays clean for piped output and
+for the MCP transport. Verbosity 0 shows warnings only, which in normal
+use is nothing at all.
 """
 
 import logging
@@ -19,24 +20,27 @@ class _Ansi:
 
 
 class _DeltaFormatter(logging.Formatter):
-    """Compact formatter: delta timestamp + colored message to stderr."""
+    """Stamp the first record with the clock and every later one with the delta.
 
-    _first: float | None = None
+    A run is read as one story, so the time since it began says more
+    than the time of day on every line.
+    """
 
     def __init__(self, use_color: bool = True) -> None:
         super().__init__(datefmt="%H:%M:%S")
         self._color = use_color
+        self._first: float | None = None
 
     def _prefix(self, record: logging.LogRecord) -> str:
-        if _DeltaFormatter._first is None:
-            _DeltaFormatter._first = record.created
+        if self._first is None:
+            self._first = record.created
             ts = self.formatTime(record, self.datefmt)
             tag = f"{ts:>9s}"
             if self._color:
                 return f"{_Ansi.GREY}{tag}{_Ansi.RESET}"
             return tag
 
-        delta = record.created - _DeltaFormatter._first
+        delta = record.created - self._first
         m, s = divmod(int(delta), 60)
         h, m = divmod(m, 60)
         tag = f"+{h:02d}:{m:02d}:{s:02d}"
@@ -128,9 +132,6 @@ def setup_logging(
 ) -> None:
     """Configure the ish logger. Call once at startup."""
     level = _VERBOSITY_MAP.get(verbosity, TRACE)
-
-    # Reset the delta reference so each invocation measures from its own start.
-    _DeltaFormatter._first = None
 
     handler = _StderrHandler()
     handler.setFormatter(_DeltaFormatter(use_color=color))

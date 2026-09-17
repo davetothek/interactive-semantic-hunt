@@ -15,8 +15,8 @@ from typing import Any
 from ish import bootstrap
 from ish.application.categories import TYPES
 from ish.application.progress import Progress
-from ish.interfaces.cli.log import setup_logging
 from ish.interfaces.format import render
+from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings, choices_of, load_settings

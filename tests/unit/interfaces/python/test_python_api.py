@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from ish.application.progress import Progress
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings
 
@@ -101,6 +102,22 @@ class TestReading:
         with _ish(project) as ish:
             ish.index()
             assert ish.chunks(lang=["md"]) == ish.chunks(lang=["markdown"])
+
+
+class TestRefreshAll:
+    def test_visits_the_tree_and_lets_go_of_the_index(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        """A refresh may change which indexes a search should read."""
+        monkeypatch.setenv("XDG_DATA_HOME", str(project / ".data"))
+        ish = Ish(project, settings=Settings(git=False))
+        ish.index()
+        assert ish._search is not None
+
+        said: list[Progress] = []
+        assert ish.refresh_all(said.append) == [project.resolve()]
+        assert ish._search is None
+        assert said and said[0].tree == project.resolve()
 
 
 class TestSharedSession:

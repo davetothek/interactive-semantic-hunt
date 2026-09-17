@@ -1,39 +1,36 @@
-"""llama.cpp adapter for the Embedder protocol."""
+"""llama.cpp adapter for the Embedder protocol.
+
+Run the model in this process. The package is an extra, so import it
+only when the backend is built, and let the composition root turn a
+missing module into a line that names the extra to install.
+"""
 
 from collections.abc import Sequence
 
+from ish.adapters.embedder.hub import quiet_hub
 from ish.adapters.embedder.prefixes import PrefixingEmbedder
+
+DEFAULT_REPO = "nomic-ai/nomic-embed-text-v1.5-GGUF"
+DEFAULT_FILE = "nomic-embed-text-v1.5.Q4_K_M.gguf"
 
 
 class LlamaCppEmbedder(PrefixingEmbedder):
-    """Generate embeddings using a local GGUF model via llama.cpp.
+    """Generate embeddings with a local GGUF model through llama.cpp.
 
-    Automatically downloads `nomic-embed-text` from Hugging Face if not present.
+    Fetch the model from the Hugging Face hub when it is not on disk.
     """
 
     def __init__(
-        self,
-        repo_id: str = "nomic-ai/nomic-embed-text-v1.5-GGUF",
-        filename: str = "nomic-embed-text-v1.5.Q4_K_M.gguf",
+        self, repo_id: str = DEFAULT_REPO, filename: str = DEFAULT_FILE
     ) -> None:
         super().__init__(f"{repo_id}/{filename}")
-
-        import os
-
-        from huggingface_hub.utils.logging import set_verbosity_error
-
-        # Suppress huggingface_hub network warnings
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-        set_verbosity_error()
+        quiet_hub()
 
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
 
-        # 1. Download/find the model on disk
         model_path = hf_hub_download(repo_id=repo_id, filename=filename)
-
-        # 2. Instantiate the engine. verbose=False hides the massive C++ startup logs.
+        # verbose=False keeps the engine's start-up log off the terminal.
         self._model = Llama(model_path=model_path, embedding=True, verbose=False)
 
     @classmethod
@@ -50,13 +47,6 @@ class LlamaCppEmbedder(PrefixingEmbedder):
         return cls(repo_id=repo_id, filename=filename)
 
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
-        """Encode texts into vectors via llama.cpp."""
-        text_list = list(texts)
-
-        # create_embedding accepts a single string or a list of strings
-        result = self._model.create_embedding(text_list)
-
-        from typing import cast
-
-        embeddings = [item["embedding"] for item in result["data"]]
-        return cast("Sequence[Sequence[float]]", embeddings)
+        """Encode texts into vectors."""
+        result = self._model.create_embedding(list(texts))
+        return [item["embedding"] for item in result["data"]]

@@ -4,8 +4,9 @@ Semantic search for code, inspired by `fzf`. Point `ish` at a directory. It pars
 each source file into named chunks, embeds them with a local model, and ranks them
 against your query. Everything runs on your machine.
 
-Languages: Python, C and C++, Markdown, and AsciiDoc. Documentation is indexed
-beside the code it describes, so one query searches both.
+Languages: Python, C and C++, Markdown, AsciiDoc, YAML, and JSON. Documentation
+and configuration are indexed beside the code they describe, so one query
+searches all of it.
 
 ## Install
 
@@ -334,5 +335,5 @@ Set any option from the environment with the `ISH_` prefix, for example
 uv run poe check   # lint, typecheck, test
 ```
 
-The architecture is ports and adapters. `spec.md` holds the requirements, and
-`.claude/CLAUDE.md` describes the layers and the composition root.
+The architecture is ports and adapters. `.claude/CLAUDE.md` describes the
+layers, the composition root, and the decisions behind them.
