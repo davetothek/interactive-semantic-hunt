@@ -2,13 +2,13 @@
 
 ## What this project is
 
-`ish` (Interactive Semantic Hunt) is an interactive semantic search tool for code, inspired by `fzf`. The full spec lives in `spec.md` at the project root — read it before doing substantial work.
+`ish` (Interactive Semantic Hunt) is an interactive semantic search tool for code, inspired by `fzf`. This guide and `src/` are the source of truth; read both before doing substantial work.
 
 ## Current state
 
-Released. Every slice the spec describes is built, and the file listing that
-used to sit here went stale faster than the code; read `src/` instead. The
-table under **Key locations** is the map worth keeping.
+Released. Every planned slice is built, and the file listing that used to sit
+here went stale faster than the code; read `src/` instead. The table under
+**Key locations** is the map worth keeping.
 
 What is deliberately not built: an HTTP API, and any interface beyond the four
 below.
@@ -24,6 +24,12 @@ below.
 
 `ish-complete` is a fifth entry point, but it finishes a filter word rather
 than searching.
+
+**`Ish` is the session the other three are built on.** It resolves the filter
+chain, opens the index once, and joins settings to use cases. The CLI is three
+calls into it, the TUI draws what it answers, and the MCP server keeps one per
+root. Anything that every interface must do the same way goes there, not into
+each interface.
 
 ## Architecture
 
@@ -50,28 +56,44 @@ interfaces → application → domain
 
 | Layer | Path | Purpose |
 |---|---|---|
-| Domain | `src/ish/domain/chunk.py` | `Chunk` dataclass |
-| Composition | `src/ish/bootstrap.py` | Composition root — all wiring and registries |
+| Domain | `src/ish/domain/chunk.py` | `Chunk`, one named region of a file |
+| Domain | `src/ish/domain/match.py` | `Match`, a chunk with its score |
+| Composition | `src/ish/bootstrap.py` | Composition root — wiring and the two registries |
 | Composition | `src/ish/settings.py` | Option set — one source of truth for CLI flags and TOML keys |
 | Port | `src/ish/application/ports/parser.py` | `Parser` Protocol and `ParseError` |
 | Port | `src/ish/application/ports/embedder.py` | `Embedder` Protocol |
-| Port | `src/ish/application/ports/vector_store.py` | `VectorStore` Protocol |
-| Application | `src/ish/application/scan.py` | Scan use case (orchestration) |
-| Application | `src/ish/application/index.py` | Index use case (staleness, orphans, embedding) |
-| Application | `src/ish/application/search.py` | Search use case (refresh, then query) |
+| Port | `src/ish/application/ports/vector_store.py` | `VectorReader` and `VectorStore` Protocols |
+| Application | `src/ish/application/scan.py` | Scan use case: discover, accept, parse |
+| Application | `src/ish/application/index.py` | Index use case: staleness, orphans, embedding |
+| Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
+| Application | `src/ish/application/ranking.py` | The one ranking policy every store runs |
+| Application | `src/ish/application/filters.py` | `Filters`, `parse_query()`, the result filter |
+| Application | `src/ish/application/categories.py` | `type:` — code, doc, test, config |
+| Application | `src/ish/application/languages.py` | Language aliases |
+| Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |
+| Application | `src/ish/application/preview.py` | Read the source a chunk points at |
 | Adapter | `src/ish/adapters/parser/python.py` | Python AST parser |
 | Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
 | Adapter | `src/ish/adapters/parser/tree_sitter.py` | Tree-sitter parser, C and C++ flavor |
-| Adapter | `src/ish/adapters/embedder/` | Embedding backends and disk cache |
+| Adapter | `src/ish/adapters/parser/structured.py` | YAML and JSON documents |
+| Adapter | `src/ish/adapters/parser/limits.py` | `SizeLimited`, the chunk size cap |
+| Adapter | `src/ish/adapters/parser/plugins.py` | Parsers a user wrote |
+| Adapter | `src/ish/adapters/embedder/` | Embedding backends, task prefixes, query cache |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
-| Interface | `src/ish/interfaces/format.py` | Shared CLI/TUI output formatting |
+| Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
+| Adapter | `src/ish/adapters/vector_store/catalog.py` | Which index file describes which tree |
+| Adapter | `src/ish/adapters/vcs/git.py` | Ask git what it ignores |
+| Interface | `src/ish/interfaces/python/api.py` | `Ish`, the session every interface shares |
+| Interface | `src/ish/interfaces/format.py` | Shared output formatting |
+| Interface | `src/ish/interfaces/log.py` | Logging setup, shared by every entry point |
+| Interface | `src/ish/interfaces/completion.py` | Finish a filter word |
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
+| Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |
 | Interface | `src/ish/interfaces/mcp/protocol.py` | MCP stdio JSON-RPC transport |
 | Interface | `src/ish/interfaces/mcp/server.py` | MCP tools (`ish-mcp`) |
-| Interface | `src/ish/interfaces/python/api.py` | Python API (future) |
 
 
 ## Tooling
@@ -100,7 +122,7 @@ interfaces → application → domain
 
 ## Testing conventions
 
-- Unit tests go in `tests/unit/` mirroring the source tree (`tests/unit/application/`, `tests/unit/adapters/`).
+- Unit tests go in `tests/unit/` mirroring the source tree down to the subpackage: `tests/unit/adapters/parser/`, `tests/unit/interfaces/mcp/`, and so on.
 - Integration tests go in `tests/integration/cli/`.
 - Use fake/stub implementations when testing application orchestration. Do not couple application tests to the real parser.
 - Test the parser adapter against known Python source strings. Cover: functions, async functions, classes, methods, async methods, multiple definitions, qualified names, line numbers, source text extraction, and syntax error handling.
@@ -118,10 +140,12 @@ src/foo.py:35-42  method    ConfigLoader.load
 
 `src/ish/bootstrap.py` is the composition root. It is the only module that imports both application code and concrete adapters, and it owns the registries:
 
-- `EMBEDDERS` — embedding backends by CLI name. Register new backends here; the `--embedder` choices derive from this dict.
-- `PARSERS` — source parsers by language name. Register new parsers (Tree-sitter, AsciiDoc, ...) here; file discovery derives its suffix set from each parser's `suffixes`, and the `languages` option selects which are built.
+- `EMBEDDERS` — embedding backends by CLI name. Register new backends here; the `--embedder` choices derive from this dict. Each backend has a `from_option(model)` classmethod that reads the `model` option the way that backend needs.
+- `PARSERS` — source parsers by language name. Register new parsers here; file discovery derives its suffix set from each parser's `suffixes`, and the `languages` option selects which are built.
 
-Registered languages: `python`, `markdown`, `asciidoc`, `cpp`.
+Both registries hold dotted names, `module:attribute`, resolved on first call. An unused grammar or an uninstalled extra is never imported, and the registry reads as the table it is.
+
+Registered languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`.
 
 - **A YAML or JSON document is split at the first list of things it holds.** A sequence of mappings is a list of distinct things and each deserves its own vector; a mapping is the attributes of one thing and splitting it would scatter that thing. Splitting stops at those things, so an entry's own fields do not become chunks. Measured on 40 queries against 110 real specifications: one chunk per test case rather than per file moved top-1 retrieval from **30% to 90%** and MRR from 0.393 to 0.914, with keyword queries that shared no exact string with any stored name. Size was never the problem; a single embedding standing for ten unrelated purposes was.
 - **Every parser is wrapped in `SizeLimited`**, in `build_parsers()`, so a chunk no language can shorten is divided on line boundaries before it reaches the embedder. Applying it in one place means a plugin gets it without asking. This was a real gap: the cap lived only in the structured parser, and C and C++ lost 53 percent of their characters past the window — one generated struct held 2,949,177 characters and was read to 8,000. It now splits into 374 pieces.
@@ -134,7 +158,9 @@ Registered languages: `python`, `markdown`, `asciidoc`, `cpp`.
 
 Adding a language is one new module under `adapters/parser/` plus one `PARSERS` entry. It must not require a change to `Scan`, the `Parser` port, or any interface. A parser declares `language` (its identity, stamped onto every chunk it emits) and `suffixes`. Two parsers claiming one suffix is a hard error; resolve it with the `languages` option.
 
-Interfaces call `bootstrap.build_scan(settings)` / `bootstrap.build_search(settings)` and never construct adapters themselves. No dependency injection framework.
+Interfaces go through `Ish`, which calls `bootstrap.build_scan()` and `bootstrap.build_search()`; nothing outside `bootstrap` constructs an adapter. No dependency injection framework.
+
+`bootstrap.build_stores()` returns two things: the index a refresh may write, or None when a search reads several indexes and may write to none, and the reader a search consults. `Search` takes the reader and an optional `Index`; a federated reader never sees a write, by type rather than by convention.
 
 ## Configuration
 
@@ -323,7 +349,9 @@ Most of what remains is interpreter and library startup, paid once per process. 
 
 ## Ranking
 
-Search fuses two rankings with weighted Reciprocal Rank Fusion: the vector order, and a BM25 order from an FTS5 table kept in step with `chunks` by triggers.
+Search fuses two rankings with weighted Reciprocal Rank Fusion: the vector order, and a BM25 order from an FTS5 table kept in step with `chunks` by triggers. The policy lives once, in `application/ranking.py`; a store supplies the two primitives, `_semantic()` and `_lexical()`, and nothing else about ranking.
+
+**The result filter is applied inside the primitives, before the top slice.** A filter applied to the top slice starved a narrow filter: measured on one index, `--type code` returned nothing at a limit of 20 and two results at a limit of 100, because no code chunk sat in the slice. The SQLite store walks the scored order a page at a time until the filter has let the page through, and reads details only for the pages it walked.
 
 **The lexical half runs only when `is_code_like(query)` says the query names something** — an underscore, an all-capital word, or mixed case. This gate is not a nicety. Measured on this repo over 20 queries:
 
@@ -435,7 +463,6 @@ These rules are mandatory. They add to the STE skill (`.claude/skills/ste-writin
 
 ## Ground rules
 
-- **Read `spec.md` first** for any substantial work. It is the source of truth for requirements.
 - **Do not add out-of-scope features.** An HTTP API stays out: the MCP server already serves a resident interface, and a second one would be a second thing to keep in step. A new language is one module and one registry entry, and needs no discussion.
 - **Do not silently swallow errors.** Parse failures must surface — either skip the file and report to stderr, or return a structured error.
 - **Keep the domain model clean.** No embedding vectors, AST nodes, parser internals, or UI state in `Chunk`.

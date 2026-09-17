@@ -508,6 +508,16 @@ class TestHybridSearch:
         assert store._lexical("", limit=5) == []
         assert store._lexical("!!!", limit=5) == []
 
+    def test_lexical_stops_at_the_limit(self, store: SqliteVectorStore) -> None:
+        """A page holding more hits than asked for is cut, not returned whole."""
+        store.add_vectors({f"h{i}": [0.0, 1.0] for i in range(5)})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk(f"alpha_{i}", line=i + 1), f"h{i}") for i in range(5)],
+        )
+        assert len(store._lexical("alpha", limit=2)) == 2
+
     def test_removed_file_leaves_the_lexical_index(
         self, store: SqliteVectorStore
     ) -> None:
@@ -607,6 +617,46 @@ class TestResultFilter:
             [1.0, 0.0], "alpha_thing", limit=5, keep=lambda c: c.language == "markdown"
         )
         assert all(c.language == "markdown" for c, _ in results)
+
+    def test_a_narrow_filter_still_fills_the_page(
+        self, store: SqliteVectorStore
+    ) -> None:
+        """The filter runs before the top slice, not after it.
+
+        Measured on one index, ``--type code`` returned nothing at a
+        limit of 20 and two results at 100, because the few code chunks
+        sat below every test chunk in the vector order.
+        """
+        count = 1000
+        store.add_vectors({f"h{i}": [1.0, float(i) / count] for i in range(count)})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [
+                (
+                    Chunk(
+                        path=Path("a.py"),
+                        text="",
+                        # Only the three worst-ranked chunks are wanted.
+                        kind="rare" if i < 3 else "common",
+                        language="python",
+                        symbol=f"s{i}",
+                        start_line=i + 1,
+                        end_line=i + 1,
+                    ),
+                    f"h{i}",
+                )
+                for i in range(count)
+            ],
+        )
+
+        results = store.search([1.0, 1.0], limit=3, keep=lambda c: c.kind == "rare")
+        assert [c.symbol for c, _ in results] == ["s2", "s1", "s0"]
+
+        by_name = store.search(
+            [1.0, 1.0], "s0_s1", limit=3, keep=lambda c: c.kind == "rare"
+        )
+        assert {c.symbol for c, _ in by_name} == {"s0", "s1", "s2"}
 
 
 class TestRecordedRoot:

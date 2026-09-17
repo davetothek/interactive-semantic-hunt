@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from ish.application.progress import Progress
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings
 
@@ -25,7 +26,7 @@ def offline(monkeypatch) -> None:
     from ish import bootstrap
 
     class Fake:
-        model_id = "fake"
+        model_name = "fake"
 
         def embed_documents(self, texts):
             return [[float(len(t)), 1.0] for t in texts]
@@ -101,6 +102,73 @@ class TestReading:
         with _ish(project) as ish:
             ish.index()
             assert ish.chunks(lang=["md"]) == ish.chunks(lang=["markdown"])
+
+
+class TestRefreshAll:
+    def test_visits_the_tree_and_lets_go_of_the_index(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        """A refresh may change which indexes a search should read."""
+        monkeypatch.setenv("XDG_DATA_HOME", str(project / ".data"))
+        ish = Ish(project, settings=Settings(git=False))
+        ish.index()
+        assert ish._search is not None
+
+        said: list[Progress] = []
+        assert ish.refresh_all(said.append) == [project.resolve()]
+        assert ish._search is None
+        assert said and said[0].tree == project.resolve()
+
+
+class TestSharedSession:
+    """Verify the behavior every interface relies on the session for."""
+
+    def test_the_index_is_brought_up_to_date_once(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        """A resident interface must not walk the tree for every question."""
+        with _ish(project) as ish:
+            counted: list[int] = []
+            original = ish._use_case.build_index
+            monkeypatch.setattr(
+                ish._use_case,
+                "build_index",
+                lambda path, on_progress=None: counted.append(1) or original(path),
+            )
+            ish.search("configure")
+            ish.search("configure")
+            ish.chunks()
+            assert counted == [1]
+            ish.index()
+            assert counted == [1, 1]
+
+    def test_a_query_of_only_filters_is_refused(self, project: Path, offline) -> None:
+        with _ish(project) as ish, pytest.raises(ValueError, match="only filters"):
+            ish.search("lang:python type:code")
+
+    def test_filters_rank_query_then_argument_then_configuration(
+        self, project: Path
+    ) -> None:
+        ish = Ish(project, settings=Settings(no_cache=True, git=False, type=("test",)))
+        assert ish.filters_of().type == ("test",)
+        assert ish.filters_of(type=["doc"]).type == ("doc",)
+        assert ish.filters_of("type:code x", type=["doc"]).type == ("code",)
+
+    def test_a_filter_word_alone_lists_what_it_allows(
+        self, project: Path, offline
+    ) -> None:
+        with _ish(project) as ish:
+            assert {c.language for c in ish.chunks("lang:markdown")} == {"markdown"}
+
+    def test_scan_reads_the_tree_without_a_backend(self, project: Path) -> None:
+        """A listing must not need an embedding model."""
+        ish = _ish(project)
+        names = {c.path.name for c in ish.scan()}
+        assert names == {"app.py", "guide.md", "test_app.py"}
+        assert ish._search is None
+
+    def test_scan_applies_the_result_filter(self, project: Path) -> None:
+        assert {c.path.name for c in _ish(project).scan(type=["doc"])} == {"guide.md"}
 
 
 class TestStatus:

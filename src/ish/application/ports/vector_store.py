@@ -1,81 +1,20 @@
-"""Vector Store protocol definition.
+"""Vector store protocol definitions.
 
-Satisfied by adapters that hold chunks with their embeddings, answer
-similarity searches, and track enough state to refresh an index without
-re-embedding unchanged work.
+Two contracts, because two use cases need different halves. A search
+reads: it lists, counts, and ranks. A refresh also writes: it stamps
+files, stores vectors, and prunes. A store that federates several
+indexes can only read, so it satisfies the reader alone, and a search
+over it needs no special case.
 """
 
-import re
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from ish.application.ranking import ResultFilter
 from ish.domain.chunk import Chunk
-
-# Rank constant from the Reciprocal Rank Fusion paper. Large enough that
-# no single list can dominate on its top hit alone.
-RRF_K = 60
-
-# Weights for the fused rankings. The vector ranking is the stronger
-# signal on this kind of corpus, so it carries three times the lexical
-# weight. Measured on this repository over 20 queries: equal weights cost
-# 10 points of top-1 accuracy, and 3 to 1 costs none.
-SEMANTIC_WEIGHT = 3.0
-LEXICAL_WEIGHT = 1.0
-
-_WORD = re.compile(r"[A-Za-z0-9]+")
-_CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
-_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-
-def is_code_like(query: str) -> bool:
-    """Return True when the query names something rather than describes it.
-
-    Lexical matching earns its place only for a query that carries an
-    identifier. Fusing it into a plain description costs accuracy,
-    because the vector ranking is already the better signal there.
-    """
-    for token in _TOKEN.findall(query):
-        if "_" in token:
-            return True
-        if len(token) > 2 and token.isupper():
-            return True
-        # Mixed case, such as IshApp or HTTPServer. An all-capital word is
-        # already handled above, so a short one stays ordinary prose.
-        if not token.isupper() and any(char.isupper() for char in token[1:]):
-            return True
-    return False
-
-
-def split_identifier(name: str) -> str:
-    """Split an identifier into the words it is built from.
-
-    Turn ``PythonParser.parse`` into ``Python Parser parse`` so a lexical
-    search matches a word inside a name, not only the whole name.
-    """
-    words: list[str] = []
-    for part in _WORD.findall(name or ""):
-        words.extend(_CAMEL.findall(part))
-    return " ".join(words)
-
-
-def fuse_rankings(
-    rankings: Sequence[tuple[Sequence[Chunk], float]], limit: int
-) -> list[Chunk]:
-    """Merge weighted ranked lists with Reciprocal Rank Fusion.
-
-    Score each chunk by ``weight / (RRF_K + rank)`` in every list it
-    appears in. A chunk that both retrievers rank well beats one that
-    only a single retriever loves, which is the point of running two.
-    """
-    scores: dict[Chunk, float] = {}
-    for ranking, weight in rankings:
-        for rank, chunk in enumerate(ranking, 1):
-            scores[chunk] = scores.get(chunk, 0.0) + weight / (RRF_K + rank)
-
-    ordered = sorted(scores, key=lambda chunk: -scores[chunk])
-    return ordered[:limit]
+from ish.domain.match import Match
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +30,51 @@ class FileStamp:
 
 
 @runtime_checkable
-class VectorStore(Protocol):
-    """Contract for storing and searching vector embeddings."""
+class VectorReader(Protocol):
+    """Contract for listing and searching stored chunks."""
+
+    def chunks(self) -> Sequence[Chunk]:
+        """Return every chunk the store holds, for a plain listing.
+
+        A returned chunk may carry no text. A store records where a
+        chunk is, and a caller that needs the source reads the file.
+        """
+        ...
+
+    def count(self) -> int:
+        """Return how many chunks the store holds, without building them."""
+        ...
+
+    def search(
+        self,
+        query_vector: Sequence[float],
+        query_text: str = "",
+        limit: int = 5,
+        keep: ResultFilter = None,
+    ) -> Sequence[Match]:
+        """Find the *limit* best chunks for a query.
+
+        Rank by vector similarity alone when *query_text* is empty.
+        Otherwise also rank the text lexically and fuse the two orders,
+        which recovers exact identifiers that a vector alone can miss.
+
+        Apply *keep* before the limit, so a filtered search still
+        returns a full page of results.
+
+        Return matches in rank order. The score stays the cosine
+        similarity, so it means the same thing whether or not the
+        lexical half ran.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release any resource the store holds."""
+        ...
+
+
+@runtime_checkable
+class VectorStore(VectorReader, Protocol):
+    """Contract for a store a refresh may also write to."""
 
     def file_stamps(self) -> Mapping[Path, FileStamp]:
         """Return the stamp held for every indexed file."""
@@ -126,40 +108,6 @@ class VectorStore(Protocol):
         """Drop everything held for *paths*, for files that no longer exist."""
         ...
 
-    def chunks(self) -> Sequence[Chunk]:
-        """Return every chunk the store holds, for a plain listing.
-
-        A returned chunk may carry no text. A store records where a
-        chunk is, and a caller that needs the source reads the file.
-        """
-        ...
-
-    def search(
-        self,
-        query_vector: Sequence[float],
-        query_text: str = "",
-        limit: int = 5,
-        keep: Callable[[Chunk], bool] | None = None,
-    ) -> Sequence[tuple[Chunk, float]]:
-        """Find the *limit* best chunks for a query.
-
-        Rank by vector similarity alone when *query_text* is empty.
-        Otherwise also rank the text lexically and fuse the two orders,
-        which recovers exact identifiers that a vector alone can miss.
-
-        Apply *keep* before the limit, so a filtered search still
-        returns a full page of results.
-
-        Return (Chunk, similarity_score) tuples in rank order. The score
-        stays the cosine similarity, so it means the same thing whether
-        or not the lexical half ran.
-        """
-        ...
-
     def clear(self) -> None:
         """Discard every indexed file, so the next refresh rebuilds."""
-        ...
-
-    def close(self) -> None:
-        """Release any resource the store holds."""
         ...

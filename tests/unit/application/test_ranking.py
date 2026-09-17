@@ -4,14 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from ish.application.ports.vector_store import (
+from ish.application.ranking import (
     LEXICAL_WEIGHT,
+    MIN_FUSION_WIDTH,
     SEMANTIC_WEIGHT,
     fuse_rankings,
+    fusion_width,
     is_code_like,
+    rank,
     split_identifier,
 )
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 
 
 def chunk(symbol: str) -> Chunk:
@@ -114,3 +118,62 @@ class TestFuseRankings:
         a, b = chunk("a"), chunk("b")
         fused = fuse_rankings([([a], SEMANTIC_WEIGHT), ([b], LEXICAL_WEIGHT)], 2)
         assert fused == [a, b]
+
+
+class TestRank:
+    """Verify the policy every store shares, against recorded primitives."""
+
+    def _primitives(self, order: list[str], by_name: list[str]):
+        asked: dict[str, tuple] = {}
+
+        def semantic(vector, top, keep):
+            asked["semantic"] = (top, keep)
+            return [Match(chunk(name), 1.0 - n / 10) for n, name in enumerate(order)][
+                :top
+            ]
+
+        def lexical(text, top, keep):
+            asked["lexical"] = (text, top, keep)
+            return [chunk(name) for name in by_name][:top]
+
+        return semantic, lexical, asked
+
+    def test_prose_asks_the_vector_half_for_the_page_only(self) -> None:
+        semantic, lexical, asked = self._primitives(["a", "b", "c"], ["c"])
+        keep = lambda c: True  # noqa: E731
+
+        found = rank(
+            [1.0], "a plain description", 2, keep, semantic=semantic, lexical=lexical
+        )
+
+        assert [m.chunk.symbol for m in found] == ["a", "b"]
+        assert asked == {"semantic": (2, keep)}
+
+    def test_an_identifier_fuses_both_halves(self) -> None:
+        semantic, lexical, asked = self._primitives(["a", "b", "c"], ["c"])
+
+        found = rank([1.0], "some_name", 2, None, semantic=semantic, lexical=lexical)
+
+        # c is ranked by both halves, so it beats a, which only one saw.
+        assert [m.chunk.symbol for m in found] == ["c", "a"]
+        assert asked["semantic"][0] == fusion_width(2) == MIN_FUSION_WIDTH
+        assert asked["lexical"] == ("some_name", MIN_FUSION_WIDTH, None)
+
+    def test_the_score_stays_the_cosine(self) -> None:
+        semantic, lexical, _ = self._primitives(["a", "b"], ["b"])
+        found = rank([1.0], "some_name", 2, None, semantic=semantic, lexical=lexical)
+        assert {m.chunk.symbol: m.score for m in found} == {"a": 1.0, "b": 0.9}
+
+    def test_a_chunk_only_the_lexical_half_knows_scores_zero(self) -> None:
+        semantic, lexical, _ = self._primitives(["a"], ["z"])
+        found = rank([1.0], "some_name", 5, None, semantic=semantic, lexical=lexical)
+        assert [(m.chunk.symbol, m.score) for m in found] == [("a", 1.0), ("z", 0.0)]
+
+    def test_no_lexical_hit_keeps_the_vector_order(self) -> None:
+        semantic, lexical, _ = self._primitives(["a", "b", "c"], [])
+        found = rank([1.0], "some_name", 2, None, semantic=semantic, lexical=lexical)
+        assert [m.chunk.symbol for m in found] == ["a", "b"]
+
+    def test_the_fusion_width_grows_with_the_page(self) -> None:
+        assert fusion_width(1) == MIN_FUSION_WIDTH
+        assert fusion_width(100) == 400

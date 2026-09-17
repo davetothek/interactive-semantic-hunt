@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
+from ish.application.languages import language_names
 from ish.settings import Settings, load_settings
 
 # Options whose accepted values come from a registry rather than a literal.
@@ -24,8 +25,6 @@ _DYNAMIC_CHOICES = {
 
 def _language_choices() -> list[str]:
     """Return the language names a flag accepts, aliases included."""
-    from ish.application.search import language_names
-
     registered = bootstrap.all_parsers(Settings())
     return sorted(set(registered) | set(language_names()))
 

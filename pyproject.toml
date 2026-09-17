@@ -94,9 +94,6 @@ addopts = "--cov=ish --cov-report=term-missing --cov-fail-under=100"
 
 [tool.coverage.run]
 source = ["ish"]
-omit = [
-    "*/interfaces/python/*",
-]
 
 [tool.coverage.report]
 show_missing = true

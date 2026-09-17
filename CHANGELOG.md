@@ -8,6 +8,21 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- Bring the index up to date once per session in the Python API, on the first
+  question, rather than on every call. Call `index()` to bring it up to date
+  again. `chunks()` reads filter words out of a query line, and `scan()` lists
+  what is on disk without an embedding backend.
+- Show the embedding rate beside the count while `--refresh` runs, so a
+  blocked run and a slow one no longer look the same.
+
+### Fixed
+
+- Apply `--type`, `--under` and `--lang` before the top slice of the ranking,
+  so a narrow filter still fills its page. A filter applied after the slice
+  returned nothing at a limit of 20 and two results at 100.
+
 ## 0.1.4 - 2026-09-07
 
 ### Changed

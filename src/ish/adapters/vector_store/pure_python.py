@@ -7,18 +7,13 @@ no trace on disk.
 
 import math
 import re
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
-from ish.application.ports.vector_store import (
-    LEXICAL_WEIGHT,
-    SEMANTIC_WEIGHT,
-    FileStamp,
-    fuse_rankings,
-    is_code_like,
-    split_identifier,
-)
+from ish.application.ports.vector_store import FileStamp
+from ish.application.ranking import ResultFilter, rank, split_identifier
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
@@ -104,43 +99,45 @@ class PurePythonVectorStore:
         found.sort(key=lambda c: (str(c.path), c.start_line))
         return found
 
+    def count(self) -> int:
+        """Return how many chunks the store holds."""
+        return sum(len(entries) for entries in self._chunks.values())
+
     def search(
         self,
         query_vector: Sequence[float],
         query_text: str = "",
         limit: int = 5,
-        keep: Callable[[Chunk], bool] | None = None,
-    ) -> Sequence[tuple[Chunk, float]]:
+        keep: ResultFilter = None,
+    ) -> Sequence[Match]:
         """Rank chunks by vector similarity, fused with a lexical order."""
-        results: list[tuple[Chunk, float]] = []
-        for entries in self._chunks.values():
-            for chunk, digest in entries:
-                vector = self._vectors.get(digest)
-                if vector is None:
-                    continue
-                results.append((chunk, cosine_similarity(query_vector, vector)))
-
-        results.sort(key=lambda pair: pair[1], reverse=True)
-        if keep is not None:
-            results = [pair for pair in results if keep(pair[0])]
-        if not query_text or not is_code_like(query_text):
-            return results[:limit]
-
-        lexical = self._lexical(query_text, limit=max(limit * 4, 20))
-        if keep is not None:
-            lexical = [chunk for chunk in lexical if keep(chunk)]
-        if not lexical:
-            return results[:limit]
-
-        candidates = [chunk for chunk, _ in results[: max(limit * 4, 20)]]
-        by_chunk = dict(results)
-        fused = fuse_rankings(
-            [(candidates, SEMANTIC_WEIGHT), (lexical, LEXICAL_WEIGHT)], limit
+        return rank(
+            query_vector,
+            query_text,
+            limit,
+            keep,
+            semantic=self._semantic,
+            lexical=self._lexical,
         )
-        return [(chunk, by_chunk.get(chunk, 0.0)) for chunk in fused]
 
-    def _lexical(self, query_text: str, limit: int) -> list[Chunk]:
-        """Rank chunks by how many query words they contain."""
+    def _semantic(
+        self, query_vector: Sequence[float], top: int, keep: ResultFilter = None
+    ) -> list[Match]:
+        """Return the *top* chunks *keep* allows, most similar first."""
+        scored = [
+            Match(chunk, cosine_similarity(query_vector, vector))
+            for entries in self._chunks.values()
+            for chunk, digest in entries
+            if (vector := self._vectors.get(digest)) is not None
+            and (keep is None or keep(chunk))
+        ]
+        scored.sort(key=lambda match: match.score, reverse=True)
+        return scored[:top]
+
+    def _lexical(
+        self, query_text: str, limit: int, keep: ResultFilter = None
+    ) -> list[Chunk]:
+        """Return the *limit* chunks *keep* allows, most query words first."""
         wanted = _words(query_text)
         if not wanted:
             return []
@@ -148,6 +145,8 @@ class PurePythonVectorStore:
         scored: list[tuple[int, Chunk]] = []
         for entries in self._chunks.values():
             for chunk, _digest in entries:
+                if keep is not None and not keep(chunk):
+                    continue
                 haystack = _words(f"{chunk.symbol or ''} {chunk.text}")
                 overlap = len(wanted & haystack)
                 if overlap:

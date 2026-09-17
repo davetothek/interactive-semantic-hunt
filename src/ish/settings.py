@@ -230,6 +230,18 @@ def option_names() -> tuple[str, ...]:
     return tuple(f.name for f in fields(Settings))
 
 
+def choices_of(name: str) -> tuple[str, ...]:
+    """Return the values option *name* accepts, or nothing when any string will do.
+
+    Let an interface describe an option from the one place that defines
+    it, rather than repeating the list.
+    """
+    for f in fields(Settings):
+        if f.name == name:
+            return tuple(f.metadata["cli"].get("choices", ()))
+    raise KeyError(name)
+
+
 def query_scope_names() -> tuple[str, ...]:
     """Return the options an interface may accept for a single call.
 

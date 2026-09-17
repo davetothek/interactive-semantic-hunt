@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ish.application.progress import DISCOVER, READ, REFRESH, Progress
 from ish.interfaces.mcp.server import IshTools, main
 from ish.settings import Settings
 
@@ -432,14 +433,14 @@ class TestRefreshIsNotPerCall:
 
     def _counted(self, tools: IshTools, project: Path) -> list[int]:
         counted: list[int] = []
-        use_case = tools._search_for(project.resolve())
-        original = use_case.build_index
+        session = tools._session_for(project.resolve())
+        original = session.index
 
-        def watched(root, on_progress=None):
+        def watched(on_progress=None):
             counted.append(1)
-            return original(root, on_progress)
+            return original(on_progress)
 
-        use_case.build_index = watched
+        session.index = watched
         return counted
 
     def test_a_burst_of_queries_re_checks_once(
@@ -538,8 +539,8 @@ class TestAnEditBecomesSearchable:
         seen: list[str] = []
 
         def talky(settings, root, on_progress=None, overrides=None):
-            on_progress("Refreshing 1 of 2: src")
-            on_progress("Reading 3 of 9 files")
+            on_progress(Progress(REFRESH).within(Path("/p/src"), 1, 2))
+            on_progress(Progress(READ, 3, 9).within(Path("/p/src"), 1, 2))
             seen.append(quick._progress[root])
 
         monkeypatch.setattr(bootstrap, "refresh_indexes", talky)
@@ -554,7 +555,7 @@ class TestAnEditBecomesSearchable:
         seen: list[str] = []
 
         def talky(settings, root, on_progress=None, overrides=None):
-            on_progress("Looking for source files")
+            on_progress(Progress(DISCOVER))
             seen.append(quick._progress[root])
 
         monkeypatch.setattr(bootstrap, "refresh_indexes", talky)

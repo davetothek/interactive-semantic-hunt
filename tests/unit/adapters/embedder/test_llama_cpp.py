@@ -59,6 +59,25 @@ class TestLlamaCppEmbedder:
             model_path="/fake/path/model.gguf", embedding=True, verbose=False
         )
 
+    def test_the_model_option_splits_repo_and_file(
+        self, mock_llama_cpp: tuple[MagicMock, MagicMock]
+    ) -> None:
+        mock_hf, _ = mock_llama_cpp
+        LlamaCppEmbedder.from_option("org/repo-GGUF/weights.gguf")
+        mock_hf.hf_hub_download.assert_called_once_with(
+            repo_id="org/repo-GGUF", filename="weights.gguf"
+        )
+
+    def test_an_empty_model_option_means_the_default(
+        self, mock_llama_cpp: tuple[MagicMock, MagicMock]
+    ) -> None:
+        mock_hf, _ = mock_llama_cpp
+        LlamaCppEmbedder.from_option("")
+        mock_hf.hf_hub_download.assert_called_once_with(
+            repo_id="nomic-ai/nomic-embed-text-v1.5-GGUF",
+            filename="nomic-embed-text-v1.5.Q4_K_M.gguf",
+        )
+
     def test_embed_empty(self, mock_llama_cpp: tuple[MagicMock, MagicMock]) -> None:
         """Confirm empty input returns empty output without calling the engine."""
         _, mock_instance = mock_llama_cpp
