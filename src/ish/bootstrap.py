@@ -20,6 +20,7 @@ from ish.application.languages import canonical_language
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import VectorReader, VectorStore
+from ish.application.progress import REFRESH, Progress, ProgressCallback
 from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
@@ -379,7 +380,7 @@ def _inside(root: Path, keep: ResultFilter) -> ResultFilter:
 def refresh_indexes(
     settings: Settings,
     root: Path,
-    on_progress=None,
+    on_progress: ProgressCallback | None = None,
     overrides: Mapping[str, Any] | None = None,
 ) -> list[Path]:
     """Bring every stored index at or below *root* up to date.
@@ -403,8 +404,10 @@ def refresh_indexes(
     trees = sorted(find_indexes(settings, resolved)) or [resolved]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
+        within = None
         if on_progress is not None:
-            on_progress(f"Refreshing {number} of {len(trees)}: {tree.name}")
+            within = _placed(on_progress, tree, number, len(trees))
+            within(Progress(REFRESH))
         # Each tree writes to its own index, so federation must be off.
         per_tree = replace(
             load_settings(overrides or {}, start=tree),
@@ -413,10 +416,25 @@ def refresh_indexes(
         )
         search = build_search(per_tree, tree)
         try:
-            search.build_index(tree, on_progress)
+            search.build_index(tree, within)
         finally:
             search.close()
     return trees
+
+
+def _placed(
+    report: ProgressCallback, tree: Path, number: int, count: int
+) -> ProgressCallback:
+    """Return *report*, told which tree of how many each step belongs to.
+
+    A count of files says nothing about which tree they are in, and a
+    refresh walks several.
+    """
+
+    def within(step: Progress) -> None:
+        report(step.within(tree, number, count))
+
+    return within
 
 
 def build_categorizer(settings: Settings) -> Categorizer:

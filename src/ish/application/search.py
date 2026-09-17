@@ -1,12 +1,13 @@
 """Implement the search use case — refresh the index, then query it."""
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 from ish.application.index import Index
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.vector_store import VectorReader
+from ish.application.progress import ProgressCallback
 from ish.application.ranking import ResultFilter
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
@@ -43,7 +44,7 @@ class Search:
         self._reader.close()
 
     def build_index(
-        self, root: Path, on_progress: Callable[[str], None] | None = None
+        self, root: Path, on_progress: ProgressCallback | None = None
     ) -> int:
         """Bring the index in step with *root*. Return how many chunks it holds.
 

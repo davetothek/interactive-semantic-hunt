@@ -14,6 +14,7 @@ from typing import Any
 
 from ish import bootstrap
 from ish.application.filters import Filters, parse_query
+from ish.application.progress import Progress
 from ish.application.search import Search
 from ish.interfaces.cli.log import setup_logging
 from ish.interfaces.format import (
@@ -181,20 +182,9 @@ class IshTools:
     def _refresh_once(self, root: Path) -> None:
         """Refresh *root*, recording what it is doing as it goes."""
         self._progress[root] = "starting"
-        tree = ""
 
-        def note(message: str) -> None:
-            """Keep the tree being visited beside what it is doing.
-
-            A count of files says nothing about which tree they are in,
-            and a refresh walks several.
-            """
-            nonlocal tree
-            if message.startswith("Refreshing "):
-                tree = message
-                self._progress[root] = message
-            else:
-                self._progress[root] = f"{tree}, {message}" if tree else message
+        def note(step: Progress) -> None:
+            self._progress[root] = str(step)
 
         try:
             bootstrap.refresh_indexes(self._settings, root, on_progress=note)
