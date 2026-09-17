@@ -13,11 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
-from ish.application.search import (
-    Filters,
-    Search,
-    parse_query,
-)
+from ish.application.filters import Filters, parse_query
+from ish.application.search import Search
 from ish.interfaces.cli.log import setup_logging
 from ish.interfaces.format import (
     format_chunk_line,

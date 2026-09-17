@@ -674,7 +674,7 @@ class TestQueryLineFilters:
 
     def test_a_command_line_filter_still_applies(self) -> None:
         """A narrowing passed as --type holds until the query overrides it."""
-        from ish.application.search import Filters
+        from ish.application.filters import Filters
 
         app = IshApp(
             FakeSearch(self._mixed()), Path("."), filters=Filters(type=("doc",))
@@ -690,7 +690,7 @@ class TestQueryLineFilters:
         run(body())
 
     def test_the_query_line_overrides_the_command_line(self) -> None:
-        from ish.application.search import Filters
+        from ish.application.filters import Filters
 
         app = IshApp(
             FakeSearch(self._mixed()), Path("."), filters=Filters(type=("doc",))
