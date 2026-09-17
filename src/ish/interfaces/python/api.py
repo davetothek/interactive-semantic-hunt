@@ -16,13 +16,14 @@ free of layer imports, and `tests/unit/test_package.py` enforces that.
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 
 from ish import bootstrap
 from ish.application.filters import Filters, parse_query
+from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
@@ -90,7 +91,7 @@ class Ish:
     # Indexing
     # ------------------------------------------------------------------
 
-    def index(self, on_progress: Callable[[str], None] | None = None) -> int:
+    def index(self, on_progress: ProgressCallback | None = None) -> int:
         """Bring this tree's index up to date. Return the chunks it holds.
 
         Report progress through *on_progress*, since a first index of a
@@ -98,9 +99,7 @@ class Ish:
         """
         return self._use_case.build_index(self.path, on_progress)
 
-    def refresh_all(
-        self, on_progress: Callable[[str], None] | None = None
-    ) -> list[Path]:
+    def refresh_all(self, on_progress: ProgressCallback | None = None) -> list[Path]:
         """Bring every index at or below this tree up to date.
 
         A search of a parent reads the indexes beneath it and writes to

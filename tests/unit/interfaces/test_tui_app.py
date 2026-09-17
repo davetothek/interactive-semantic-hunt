@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from textual.widgets import Input, OptionList, Static
 
+from ish.application.progress import EMBED, Progress
 from ish.domain.chunk import Chunk
 from ish.interfaces.tui.app import IshApp
 
@@ -44,7 +45,7 @@ class FakeSearch:
 
     def build_index(self, root: Path, on_progress=None) -> Sequence[Chunk] | None:
         if on_progress is not None:
-            on_progress("Embedding 1 of 2 chunks")
+            on_progress(Progress(EMBED, done=1, total=2))
         if self._fail:
             raise RuntimeError(self._fail)
         return self._chunks
@@ -578,7 +579,7 @@ class TestIndexProgress:
         class Held(FakeSearch):
             def build_index(self, root, on_progress=None):
                 if on_progress:
-                    on_progress("Embedding 120 of 274 chunks")
+                    on_progress(Progress(EMBED, done=120, total=274))
                 # Wait rather than sleep, so the test never races a clock.
                 release.wait(timeout=5)
                 return self._chunks
@@ -876,7 +877,7 @@ class TestQuittingIsImmediate:
 
         def build_index(self, root, on_progress=None):
             if on_progress is not None:
-                on_progress("Embedding 1 of 100000 chunks")
+                on_progress(Progress(EMBED, done=1, total=100000))
             self.entered.set()
             time.sleep(30)
             return []
@@ -956,7 +957,7 @@ class TestTypingBeforeTheIndexOpens:
 
         def build_index(self, root, on_progress=None):
             if on_progress is not None:
-                on_progress("Embedding 1 of 2 chunks")
+                on_progress(Progress(EMBED, done=1, total=2))
             time.sleep(self.delay)
             return self._chunks
 
@@ -1028,7 +1029,7 @@ class TestTypingBeforeTheIndexOpens:
                 await pilot.pause()
                 await pilot.press(*"alpha")
                 await asyncio.sleep(0.3)
-                assert "Embedding 1 of 2 chunks" in preview_text(app)
+                assert "Embedded 1 of 2 chunks" in preview_text(app)
 
         run(body())
 

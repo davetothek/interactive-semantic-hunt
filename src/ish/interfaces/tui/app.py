@@ -16,6 +16,7 @@ from textual.widgets.option_list import Option
 from ish.application.categories import Categorizer
 from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.application.preview import load_text
+from ish.application.progress import Progress
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
@@ -198,14 +199,14 @@ class IshApp(App[Match | None]):
         """Return False once the interface is closing."""
         return not self._leaving.is_set()
 
-    def _report_progress(self, message: str) -> None:
+    def _report_progress(self, step: Progress) -> None:
         """Show what the background index is doing.
 
         A first index runs for minutes. Without this the interface looks
         indistinguishable from one that has stopped.
         """
         if self._still_here():
-            self.call_from_thread(self._show_status, message)
+            self.call_from_thread(self._show_status, str(step))
 
     def _show_status(self, message: str) -> None:
         """Write a line into the preview pane while there is nothing to preview."""

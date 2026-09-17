@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ish.application.progress import DISCOVER, READ, REFRESH, Progress
 from ish.interfaces.mcp.server import IshTools, main
 from ish.settings import Settings
 
@@ -538,8 +539,8 @@ class TestAnEditBecomesSearchable:
         seen: list[str] = []
 
         def talky(settings, root, on_progress=None, overrides=None):
-            on_progress("Refreshing 1 of 2: src")
-            on_progress("Reading 3 of 9 files")
+            on_progress(Progress(REFRESH).within(Path("/p/src"), 1, 2))
+            on_progress(Progress(READ, 3, 9).within(Path("/p/src"), 1, 2))
             seen.append(quick._progress[root])
 
         monkeypatch.setattr(bootstrap, "refresh_indexes", talky)
@@ -554,7 +555,7 @@ class TestAnEditBecomesSearchable:
         seen: list[str] = []
 
         def talky(settings, root, on_progress=None, overrides=None):
-            on_progress("Looking for source files")
+            on_progress(Progress(DISCOVER))
             seen.append(quick._progress[root])
 
         monkeypatch.setattr(bootstrap, "refresh_indexes", talky)

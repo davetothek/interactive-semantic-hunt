@@ -7,9 +7,11 @@ import logging
 import os
 import shutil
 import sys
+import time
 
 from ish import bootstrap
 from ish.application.filters import parse_query
+from ish.application.progress import EMBED, Progress
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.cli.log import resolve_color, setup_logging
 from ish.interfaces.format import (
@@ -31,25 +33,46 @@ def _render(chunk, shape: str, score: float | None = None) -> str:
     return format_result_line(chunk, score)
 
 
-def _progress(message: str) -> None:
-    """Show what a long refresh is doing, on one line.
+class ProgressLine:
+    """Show what a long refresh is doing, on one line of the terminal.
 
     A first index of a large tree runs for minutes, and a command that
     prints nothing cannot be told from one that has stopped. Keep it to
-    stderr, so a piped stdout still holds only results.
+    stderr, so a piped stdout still holds only results. Say how fast
+    the embedding goes, because a blocked run and a slow one otherwise
+    look the same.
     """
-    if not sys.stderr.isatty():
-        # Not a terminal, so the log already carries it at -v.
-        return
-    sys.stderr.write(f"\r\033[2K{message[: _width() - 1]}")
-    sys.stderr.flush()
 
+    def __init__(self) -> None:
+        self._embedding_began: float | None = None
 
-def _progress_done() -> None:
-    """Clear the progress line, leaving the output as it would be."""
-    if sys.stderr.isatty():
-        sys.stderr.write("\r\033[2K")
+    def show(self, step: Progress) -> None:
+        """Rewrite the line with *step*."""
+        if not sys.stderr.isatty():
+            # Not a terminal, so the log already carries it at -v.
+            return
+        sys.stderr.write(f"\r\033[2K{self.render(step)[: _width() - 1]}")
         sys.stderr.flush()
+
+    def render(self, step: Progress) -> str:
+        """Return the line for *step*, with a rate while embedding."""
+        text = str(step)
+        if step.stage != EMBED:
+            self._embedding_began = None
+            return text
+        if step.done == 0 or self._embedding_began is None:
+            self._embedding_began = time.monotonic()
+            return text
+        elapsed = time.monotonic() - self._embedding_began
+        if elapsed <= 0:
+            return text
+        return f"{text}, {step.done / elapsed:.1f} chunks/s"
+
+    def clear(self) -> None:
+        """Clear the line, leaving the output as it would be."""
+        if sys.stderr.isatty():
+            sys.stderr.write("\r\033[2K")
+            sys.stderr.flush()
 
 
 def _width() -> int:
@@ -164,13 +187,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.settings.refresh:
+            line = ProgressLine()
             bootstrap.refresh_indexes(
                 args.settings,
                 args.path,
-                on_progress=_progress,
+                on_progress=line.show,
                 overrides=args.overrides,
             )
-            _progress_done()
+            line.clear()
         if args.query:
             return _run_query(args)
         if args.interactive:

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ish.application.progress import EMBED, READY, REFRESH, Progress
 from ish.interfaces.cli.main import main
 from ish.settings import Settings
 
@@ -299,20 +300,27 @@ class TestRefreshReportsProgress:
     that has stopped.
     """
 
+    @staticmethod
+    def _step() -> Progress:
+        return Progress(REFRESH).within(Path("/p/10.Specification"), 2, 8)
+
     def test_a_terminal_sees_a_progress_line(self, monkeypatch, capsys) -> None:
         from ish.interfaces.cli import main as cli
 
         monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
-        cli._progress("Refreshing 2 of 8: 10.Specification")
-        cli._progress_done()
-        assert "Refreshing 2 of 8" in capsys.readouterr().err
+        line = cli.ProgressLine()
+        line.show(self._step())
+        line.clear()
+        assert "Refreshing 2 of 8: 10.Specification" in capsys.readouterr().err
 
     def test_a_pipe_stays_quiet(self, monkeypatch, capsys) -> None:
         """The log already carries it, so do not write it twice."""
         from ish.interfaces.cli import main as cli
 
         monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: False, raising=False)
-        cli._progress("Refreshing 2 of 8: 10.Specification")
+        line = cli.ProgressLine()
+        line.show(self._step())
+        line.clear()
         assert capsys.readouterr().err == ""
 
     def test_the_line_fits_the_terminal(self, monkeypatch, capsys) -> None:
@@ -320,9 +328,36 @@ class TestRefreshReportsProgress:
 
         monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
         monkeypatch.setattr(cli, "_width", lambda: 20)
-        cli._progress("x" * 200)
+        cli.ProgressLine().show(Progress(EMBED, total=10**9, reused=10**9))
         written = capsys.readouterr().err
         assert len(written.replace("\r", "").replace("\033[2K", "")) < 20
+
+    def test_the_embedding_rate_is_shown(self, monkeypatch) -> None:
+        """A blocked run and a slow one must not look the same."""
+        from ish.interfaces.cli import main as cli
+
+        clock = iter([100.0, 110.0])
+        monkeypatch.setattr(cli.time, "monotonic", lambda: next(clock))
+        line = cli.ProgressLine()
+
+        assert (
+            line.render(Progress(EMBED, total=40)) == "Embedding 40 chunks (0 reused)"
+        )
+        assert (
+            line.render(Progress(EMBED, done=25, total=40))
+            == "Embedded 25 of 40 chunks, 2.5 chunks/s"
+        )
+        # Another stage ends the measurement.
+        assert line.render(Progress(READY, total=3)) == "Index ready: 3 files"
+
+    def test_a_rate_needs_a_beginning(self, monkeypatch) -> None:
+        """Progress that starts mid-way is shown without a rate, not a wrong one."""
+        from ish.interfaces.cli import main as cli
+
+        monkeypatch.setattr(cli.time, "monotonic", lambda: 5.0)
+        line = cli.ProgressLine()
+        assert line.render(Progress(EMBED, done=3, total=9)) == "Embedded 3 of 9 chunks"
+        assert line.render(Progress(EMBED, done=4, total=9)) == "Embedded 4 of 9 chunks"
 
     def test_every_tree_is_announced(self, tmp_path, monkeypatch) -> None:
         from ish import bootstrap
@@ -344,9 +379,10 @@ class TestRefreshReportsProgress:
         (root / "a").mkdir(parents=True)
         (root / "a" / "one.py").write_text("def one():\n    pass\n")
 
-        said: list[str] = []
+        said: list[Progress] = []
         bootstrap.refresh_indexes(Settings(git=False), root, on_progress=said.append)
-        assert any("Refreshing 1 of 1" in line for line in said)
+        assert any("Refreshing 1 of 1: proj" == str(step) for step in said)
+        assert all(step.tree == root.resolve() for step in said)
 
 
 class TestTerminalSizeForPiping:
