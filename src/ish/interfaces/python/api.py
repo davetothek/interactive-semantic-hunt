@@ -22,11 +22,8 @@ from pathlib import Path
 from types import TracebackType
 
 from ish import bootstrap
-from ish.application.search import (
-    Filters,
-    Search,
-    parse_query,
-)
+from ish.application.filters import Filters, parse_query
+from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.settings import Settings, load_settings

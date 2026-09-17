@@ -3,7 +3,7 @@
 import asyncio
 import queue
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 from rich.syntax import Syntax
@@ -13,13 +13,10 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from ish.application.categories import Categorizer
+from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.application.preview import load_text
-from ish.application.search import (
-    Filters,
-    Search,
-    build_result_filter,
-    parse_query,
-)
+from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.interfaces.format import format_selection, symbol_of
@@ -121,7 +118,7 @@ class IshApp(App[Match | None]):
         limit: int = 50,
         debounce_ms: int = 120,
         filters: Filters | None = None,
-        categorize: Callable[[Chunk], str] | None = None,
+        categorize: Categorizer | None = None,
     ) -> None:
         super().__init__()
         self.search_use_case = search_use_case

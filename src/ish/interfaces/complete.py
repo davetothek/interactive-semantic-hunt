@@ -14,7 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ish import bootstrap
-from ish.application.search import TYPES, language_names
+from ish.application.categories import TYPES
+from ish.application.languages import language_names
 from ish.settings import Settings
 
 # The filters a query may carry. `parse_query()` reads these same words.

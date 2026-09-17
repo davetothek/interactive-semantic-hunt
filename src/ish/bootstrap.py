@@ -12,10 +12,16 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from ish.application.categories import Categorizer, compile_categories
+from ish.application.filters import Filters
+from ish.application.filters import build_result_filter as make_result_filter
+from ish.application.languages import canonical_language
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
+from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
+from ish.domain.chunk import Chunk
 from ish.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -125,8 +131,6 @@ def build_parsers(settings: Settings) -> list[Parser]:
     Build every registered parser when the ``languages`` option is empty.
     Otherwise build only the languages it names, in that order.
     """
-    from ish.application.search import canonical_language
-
     available = all_parsers(settings)
     # Accept the same spellings the query line accepts, so `--languages c`
     # and `lang:c` name one parser.
@@ -338,10 +342,10 @@ def build_search(settings: Settings, root: Path) -> Search:
     )
 
 
-def _inside(root: Path, keep):
+def _inside(root: Path, keep: ResultFilter) -> ResultFilter:
     """Return a filter that also requires a chunk to sit under *root*."""
 
-    def within(chunk) -> bool:
+    def within(chunk: Chunk) -> bool:
         path = chunk.path
         return (path == root or root in path.parents) and (keep is None or keep(chunk))
 
@@ -391,22 +395,16 @@ def refresh_indexes(
     return trees
 
 
-def build_categorizer(settings: Settings):
+def build_categorizer(settings: Settings) -> Categorizer:
     """Return the function that sorts a chunk into a type."""
-    from ish.application.search import compile_categories
-
     return compile_categories(settings.type_patterns)
 
 
-def build_result_filter(settings: Settings, filters):
+def build_result_filter(settings: Settings, filters: Filters) -> ResultFilter:
     """Build the result filter, using the types the settings define."""
-    from ish.application.search import build_result_filter as make
-
-    return make(filters, build_categorizer(settings))
+    return make_result_filter(filters, build_categorizer(settings))
 
 
-def settings_filters(settings: Settings):
+def settings_filters(settings: Settings) -> Filters:
     """Return the result filters the configuration asks for."""
-    from ish.application.search import Filters
-
     return Filters(settings.lang, settings.under, settings.type)

@@ -9,7 +9,7 @@ import shutil
 import sys
 
 from ish import bootstrap
-from ish.application.search import parse_query
+from ish.application.filters import parse_query
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.cli.log import resolve_color, setup_logging
 from ish.interfaces.format import (
