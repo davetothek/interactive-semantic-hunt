@@ -127,10 +127,12 @@ class TestCLIEdgeCases:
     ) -> None:
         """A backend failure yields exit code 1 and no traceback on stdout."""
 
-        def boom() -> None:
+        def boom(model: str) -> None:
             raise ConnectionError("Failed to connect to Ollama")
 
-        monkeypatch.setattr("ish.adapters.embedder.ollama.OllamaEmbedder", boom)
+        monkeypatch.setattr(
+            "ish.adapters.embedder.ollama.OllamaEmbedder.from_option", boom
+        )
         (tmp_path / "app.py").write_text("pass\n")
 
         exit_code = main(["find stuff", str(tmp_path), "--embedder", "ollama"])
@@ -147,11 +149,12 @@ class TestCLIEdgeCases:
     ) -> None:
         """A missing optional dependency yields a clean install hint."""
 
-        def boom() -> None:
+        def boom(model: str) -> None:
             raise ModuleNotFoundError("No module named 'sentence_transformers'")
 
         monkeypatch.setattr(
-            "ish.adapters.embedder.sentence_transformer.SentenceTransformerEmbedder",
+            "ish.adapters.embedder.sentence_transformer."
+            "SentenceTransformerEmbedder.from_option",
             boom,
         )
         (tmp_path / "app.py").write_text("pass\n")

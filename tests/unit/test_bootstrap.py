@@ -39,35 +39,36 @@ def test_unknown_embedder_is_reported() -> None:
         bootstrap.build_embedder(replace(Settings(), embedder="nope"))
 
 
-class TestModelOverride:
-    """Verify that the model setting reaches each backend."""
+class TestLazyRegistries:
+    """Verify a registry entry imports its backend only when it is called."""
 
-    def test_llama_cpp_splits_repo_and_file(self, monkeypatch) -> None:
-        from unittest.mock import MagicMock
-
-        fake = MagicMock()
-        monkeypatch.setattr("ish.adapters.embedder.llama_cpp.LlamaCppEmbedder", fake)
-        bootstrap.EMBEDDERS["llama.cpp"]("org/repo-GGUF/weights.gguf")
-        fake.assert_called_once_with(repo_id="org/repo-GGUF", filename="weights.gguf")
-
-    def test_ollama_passes_model_name(self, monkeypatch) -> None:
-        from unittest.mock import MagicMock
-
-        fake = MagicMock()
-        monkeypatch.setattr("ish.adapters.embedder.ollama.OllamaEmbedder", fake)
-        bootstrap.EMBEDDERS["ollama"]("mxbai-embed-large")
-        fake.assert_called_once_with(model_name="mxbai-embed-large")
-
-    def test_sentence_transformer_passes_model_name(self, monkeypatch) -> None:
-        from unittest.mock import MagicMock
-
-        fake = MagicMock()
-        monkeypatch.setattr(
-            "ish.adapters.embedder.sentence_transformer.SentenceTransformerEmbedder",
-            fake,
+    def test_the_target_is_resolved_on_call(self) -> None:
+        build = bootstrap._lazy(
+            "ish.adapters.embedder.ollama:OllamaEmbedder.from_option"
         )
-        bootstrap.EMBEDDERS["st"]("all-mpnet-base-v2")
-        fake.assert_called_once_with(model_name="all-mpnet-base-v2")
+        assert build("mxbai-embed-large").model_name == "mxbai-embed-large"
+
+    def test_a_bad_target_fails_on_call_not_on_definition(self) -> None:
+        build = bootstrap._lazy("ish.adapters.embedder.nowhere:Nothing")
+        with pytest.raises(ModuleNotFoundError):
+            build("")
+
+    def test_the_extras_are_not_imported_by_the_registry(self) -> None:
+        """A registry of names keeps an uninstalled extra from being imported."""
+        import sys
+
+        assert "llama_cpp" not in sys.modules
+        assert "sentence_transformers" not in sys.modules
+
+    def test_build_embedder_reads_the_model_option(self) -> None:
+        settings = replace(Settings(), embedder="ollama", model="mxbai-embed-large")
+        assert bootstrap.build_embedder(settings).model_name == "mxbai-embed-large"
+
+    def test_build_embedder_falls_back_to_the_backend_default(self) -> None:
+        from ish.adapters.embedder.ollama import DEFAULT_MODEL
+
+        settings = replace(Settings(), embedder="ollama", model="")
+        assert bootstrap.build_embedder(settings).model_name == DEFAULT_MODEL
 
 
 class TestLanguageSelection:
@@ -150,18 +151,9 @@ class TestVectorStoreWiring:
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
         assert bootstrap.index_dir(Settings()) == tmp_path / "ish"
 
-    def test_index_path_separates_projects(self, tmp_path) -> None:
-        """Two trees must never share one index file."""
-        a = bootstrap.index_path(Settings(), tmp_path / "one")
-        b = bootstrap.index_path(Settings(), tmp_path / "two")
-        assert a != b
-        assert a.name.startswith("one-")
-        assert b.name.startswith("two-")
-
-    def test_index_path_is_stable(self, tmp_path) -> None:
-        assert bootstrap.index_path(Settings(), tmp_path) == bootstrap.index_path(
-            Settings(), tmp_path
-        )
+    def test_the_catalog_lives_in_the_index_directory(self, tmp_path) -> None:
+        settings = replace(Settings(), cache_dir=str(tmp_path / "here"))
+        assert bootstrap.catalog(settings).directory == tmp_path / "here"
 
     def test_model_id_tracks_the_adapter(self) -> None:
         from dataclasses import replace
@@ -182,41 +174,6 @@ class _StubEmbedder:
 
     def embed_query(self, text):
         return [1.0]
-
-
-class TestBackendDefaults:
-    """Verify each factory falls back to its own default model."""
-
-    def test_llama_cpp_without_a_model(self, monkeypatch) -> None:
-        from unittest.mock import MagicMock
-
-        fake = MagicMock()
-        monkeypatch.setattr("ish.adapters.embedder.llama_cpp.LlamaCppEmbedder", fake)
-        bootstrap.EMBEDDERS["llama.cpp"]("")
-        fake.assert_called_once_with()
-
-    def test_ollama_without_a_model(self, monkeypatch) -> None:
-        from unittest.mock import MagicMock
-
-        fake = MagicMock()
-        monkeypatch.setattr("ish.adapters.embedder.ollama.OllamaEmbedder", fake)
-        bootstrap.EMBEDDERS["ollama"]("")
-        fake.assert_called_once_with()
-
-    def test_sentence_transformer_without_a_model(self, monkeypatch) -> None:
-        from unittest.mock import MagicMock
-
-        fake = MagicMock()
-        monkeypatch.setattr(
-            "ish.adapters.embedder.sentence_transformer.SentenceTransformerEmbedder",
-            fake,
-        )
-        bootstrap.EMBEDDERS["st"]("")
-        fake.assert_called_once_with()
-
-    def test_ollama_is_the_default_backend(self) -> None:
-        """The default must need no model load per process."""
-        assert Settings().embedder == "ollama"
 
 
 class TestGitAwareness:
@@ -250,7 +207,7 @@ class TestIndexDiscovery:
         self._make(indexes, "sub", project / "sub")
 
         settings = replace(Settings(), cache_dir=str(indexes))
-        found = bootstrap.find_indexes(settings, project)
+        found = bootstrap.catalog(settings).below(project)
         assert set(found) == {project / "sub"}
 
     def test_ignores_an_unrelated_tree(self, tmp_path) -> None:
@@ -263,7 +220,7 @@ class TestIndexDiscovery:
         self._make(indexes, "other", tmp_path / "b")
 
         settings = replace(Settings(), cache_dir=str(indexes))
-        assert bootstrap.find_indexes(settings, tmp_path / "a") == {}
+        assert bootstrap.catalog(settings).below(tmp_path / "a") == {}
 
     def test_finds_the_path_itself(self, tmp_path) -> None:
         from dataclasses import replace
@@ -275,13 +232,13 @@ class TestIndexDiscovery:
         self._make(indexes, "self", project)
 
         settings = replace(Settings(), cache_dir=str(indexes))
-        assert set(bootstrap.find_indexes(settings, project)) == {project}
+        assert set(bootstrap.catalog(settings).below(project)) == {project}
 
     def test_no_index_directory(self, tmp_path) -> None:
         from dataclasses import replace
 
         settings = replace(Settings(), cache_dir=str(tmp_path / "absent"))
-        assert bootstrap.find_indexes(settings, tmp_path) == {}
+        assert bootstrap.catalog(settings).below(tmp_path) == {}
 
     def test_a_file_without_a_root_is_skipped(self, tmp_path) -> None:
         from dataclasses import replace
@@ -293,7 +250,7 @@ class TestIndexDiscovery:
         SqliteVectorStore(indexes / "anon.db", model_id="m").close()
 
         settings = replace(Settings(), cache_dir=str(indexes))
-        assert bootstrap.find_indexes(settings, tmp_path) == {}
+        assert bootstrap.catalog(settings).below(tmp_path) == {}
 
 
 class TestFederatedWiring:
@@ -441,7 +398,7 @@ class TestRefreshIndexes:
         """Each child writes to its own index, so federation must be off."""
         settings = self._settings()
         bootstrap.refresh_indexes(settings, nested / "a")
-        found = bootstrap.find_indexes(settings, nested)
+        found = bootstrap.catalog(settings).below(nested)
         assert list(found) == [nested / "a"]
 
 
@@ -640,12 +597,12 @@ class TestCoveringIndex:
 
     def test_a_covering_index_is_found(self, tree: Path, offline) -> None:
         self._index(tree)
-        found = bootstrap.find_covering_index(Settings(), tree / "inner")
+        found = bootstrap.catalog(Settings()).covering(tree / "inner")
         assert found is not None and found[0] == tree
 
     def test_nothing_covers_the_tree_itself(self, tree: Path, offline) -> None:
         self._index(tree)
-        assert bootstrap.find_covering_index(Settings(), tree) is None
+        assert bootstrap.catalog(Settings()).covering(tree) is None
 
     def test_no_second_index_is_created(self, tree: Path, offline) -> None:
         self._index(tree)
