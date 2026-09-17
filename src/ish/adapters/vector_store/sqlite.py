@@ -24,19 +24,14 @@ import math
 import re
 import sqlite3
 import threading
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ish.application.ports.vector_store import (
-    LEXICAL_WEIGHT,
-    SEMANTIC_WEIGHT,
-    FileStamp,
-    fuse_rankings,
-    is_code_like,
-    split_identifier,
-)
+from ish.application.ports.vector_store import FileStamp
+from ish.application.ranking import ResultFilter, rank, split_identifier
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +39,11 @@ log = logging.getLogger(__name__)
 # of a stored vector, such as the task prefixes the embedder applies. An
 # index built by an older version is discarded rather than mixed.
 SCHEMA_VERSION = "4"
+
+# Read chunk details this many at a time while a filter is trimming the
+# vector order. Reading a detail costs far more than scoring a vector,
+# so the slice grows only as far as the filter makes it.
+DETAIL_BATCH = 64
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 
@@ -405,65 +405,60 @@ class SqliteVectorStore:
         query_vector: Sequence[float],
         query_text: str = "",
         limit: int = 5,
-        keep: Callable[[Chunk], bool] | None = None,
-    ) -> Sequence[tuple[Chunk, float]]:
+        keep: ResultFilter = None,
+    ) -> Sequence[Match]:
         """Rank chunks by vector similarity, fused with a lexical order."""
-        # Over-fetch only when something will trim the list. Reading the
-        # details of a chunk costs far more than scoring it, so fetching
-        # eight times the page for a plain query threw away seven
-        # eighths of the work: measured on 23,215 chunks, 2,311 chunks
-        # were built to return 50.
-        lexical_wanted = bool(query_text) and is_code_like(query_text)
-        depth = max(limit * 8, 60) if keep is not None or lexical_wanted else limit
-        scored = self._semantic(query_vector, depth)
-        if keep is not None:
-            scored = [pair for pair in scored if keep(pair[0])]
-        if not lexical_wanted:
-            return scored[:limit]
-
-        lexical = self._lexical(query_text, limit=max(limit * 4, 20))
-        if keep is not None:
-            lexical = [chunk for chunk in lexical if keep(chunk)]
-        if not lexical:
-            return scored[:limit]
-
-        # Fuse over a wider slice than the caller asked for, so a chunk
-        # ranked well only by the lexical half can still surface.
-        candidates = [chunk for chunk, _ in scored[: max(limit * 4, 20)]]
-        by_chunk = dict(scored)
-        fused = fuse_rankings(
-            [(candidates, SEMANTIC_WEIGHT), (lexical, LEXICAL_WEIGHT)], limit
+        return rank(
+            query_vector,
+            query_text,
+            limit,
+            keep,
+            semantic=self._semantic,
+            lexical=self._lexical,
         )
-        return [(chunk, by_chunk.get(chunk, 0.0)) for chunk in fused]
 
-    def _lexical(self, query_text: str, limit: int) -> list[Chunk]:
-        """Return chunks matching *query_text*, best first, by BM25."""
+    def _lexical(
+        self, query_text: str, limit: int, keep: ResultFilter = None
+    ) -> list[Chunk]:
+        """Return the *limit* chunks *keep* allows, best BM25 match first."""
         match = _fts_query(query_text)
         if not match:
             return []
 
+        kept: list[Chunk] = []
         try:
             with self._lock:
-                rows = self._db.execute(
+                cursor = self._db.execute(
                     "SELECT c.path, c.kind, c.language, c.symbol, "
                     "       c.start_line, c.end_line "
                     "FROM chunks_fts f JOIN chunks c ON c.id = f.rowid "
                     "WHERE chunks_fts MATCH ? "
-                    "ORDER BY bm25(chunks_fts, 2.0, 1.0) "
-                    "LIMIT ?",
-                    (match, limit),
-                ).fetchall()
+                    "ORDER BY bm25(chunks_fts, 2.0, 1.0)",
+                    (match,),
+                )
+                # Read in pages and stop at the limit, so a filter that
+                # rejects most rows still finds a full page behind them.
+                while len(kept) < limit:
+                    rows = cursor.fetchmany(max(limit, DETAIL_BATCH))
+                    if not rows:
+                        break
+                    for row in rows:
+                        chunk = self._to_chunk(row)
+                        if keep is None or keep(chunk):
+                            kept.append(chunk)
+                            if len(kept) == limit:
+                                break
         except sqlite3.OperationalError as exc:
             # A malformed match expression must not fail the whole query.
             log.debug("Lexical search skipped: %s", exc)
             return []
 
-        return [self._to_chunk(row) for row in rows]
+        return kept
 
     def _semantic(
-        self, query_vector: Sequence[float], top: int
-    ) -> list[tuple[Chunk, float]]:
-        """Return the *top* best chunks for a query vector.
+        self, query_vector: Sequence[float], top: int, keep: ResultFilter = None
+    ) -> list[Match]:
+        """Return the *top* chunks *keep* allows, most similar first.
 
         Read only the vectors, score them as one matrix, then read the
         details of the few that won. Fetching every row's text and
@@ -484,13 +479,25 @@ class SqliteVectorStore:
         query = numpy.asarray(query_vector, dtype=numpy.float32) / norm
         scores = matrix @ query
 
-        count = min(top, len(identifiers))
-        best = numpy.argpartition(-scores, count - 1)[:count]
-        best = best[numpy.argsort(-scores[best])]
+        if keep is None:
+            count = min(top, len(identifiers))
+            best = numpy.argpartition(-scores, count - 1)[:count]
+            best = best[numpy.argsort(-scores[best], kind="stable")]
+            return self._details(identifiers, scores, best)
 
-        order = [identifiers[index] for index in best]
-        found = {identifiers[index]: float(scores[index]) for index in best}
-        return self._details(found, order)
+        # Walk the whole order a slice at a time and stop once the filter
+        # has let *top* through, so a narrow filter still fills its page.
+        order = numpy.argsort(-scores, kind="stable")
+        kept: list[Match] = []
+        for start in range(0, len(order), max(top, DETAIL_BATCH)):
+            for match in self._details(
+                identifiers, scores, order[start : start + max(top, DETAIL_BATCH)]
+            ):
+                if keep(match.chunk):
+                    kept.append(match)
+                    if len(kept) == top:
+                        return kept
+        return kept
 
     def _scored_matrix(self, width: int):
         """Return the chunk ids and their vectors as one matrix.
@@ -536,10 +543,10 @@ class SqliteVectorStore:
         """Return SQLite's counter of commits made by other connections."""
         return int(self._db.execute("PRAGMA data_version").fetchone()[0])
 
-    def _details(
-        self, scores: dict[int, float], order: list[int]
-    ) -> list[tuple[Chunk, float]]:
-        """Read the chunks behind the identifiers that scored best."""
+    def _details(self, identifiers: list[int], scores: Any, best: Any) -> list[Match]:
+        """Read the chunks behind the rows at positions *best*, in that order."""
+        order = [identifiers[index] for index in best]
+        found = {identifiers[index]: float(scores[index]) for index in best}
         marks = ",".join("?" * len(order))
         with self._lock:
             rows = self._db.execute(
@@ -549,4 +556,4 @@ class SqliteVectorStore:
             ).fetchall()
 
         by_id = {int(row[0]): self._to_chunk(row[1:]) for row in rows}
-        return [(by_id[key], scores[key]) for key in order if key in by_id]
+        return [Match(by_id[key], found[key]) for key in order if key in by_id]

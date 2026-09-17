@@ -21,6 +21,7 @@ from ish.application.search import (
     parse_query,
 )
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 from ish.interfaces.format import format_selection, symbol_of
 
 
@@ -68,7 +69,7 @@ def _settle(setter, value) -> None:
         pass
 
 
-class IshApp(App[tuple[Chunk, float] | None]):
+class IshApp(App[Match | None]):
     """Textual application for interactive semantic search."""
 
     CSS = """
@@ -149,7 +150,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         # hold the interface open: a pool waited for the whole request,
         # which is why quitting during an embed appeared to hang.
         self._searcher = _DaemonWorker("ish-search")
-        self._current_results: list[tuple[Chunk, float]] = []
+        self._current_results: list[Match] = []
         self._all_chunks: list[Chunk] = []
 
     def on_unmount(self) -> None:
@@ -242,7 +243,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         index.
         """
         shown = list(chunks[: self.limit])
-        self._populate_results([(c, 0.0) for c in shown], show_scores=False)
+        self._populate_results([Match(c, 0.0) for c in shown], show_scores=False)
         counted = (
             f"{len(shown)} of {len(chunks)}"
             if len(chunks) > len(shown)
@@ -250,9 +251,7 @@ class IshApp(App[tuple[Chunk, float] | None]):
         )
         self.sub_title = "   ".join(part for part in (described, counted) if part)
 
-    def _populate_results(
-        self, results: list[tuple[Chunk, float]], *, show_scores: bool
-    ) -> None:
+    def _populate_results(self, results: list[Match], *, show_scores: bool) -> None:
         """Update the option list.
 
         Show the score prefix only for search results — the plain chunk

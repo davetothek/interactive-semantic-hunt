@@ -133,9 +133,7 @@ class TestEmbed:
         OllamaEmbedder(batch_size=0).embed_documents(["a", "b"])
         assert [len(r["input"]) for r in recorder.requests] == [1, 1]
 
-    def test_the_default_batch_keeps_a_request_short(
-        self, recorder: Recorder
-    ) -> None:
+    def test_the_default_batch_keeps_a_request_short(self, recorder: Recorder) -> None:
         """The daemon serves one request at a time.
 
         A batch is therefore how long a search waits while an index run
