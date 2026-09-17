@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from ish import bootstrap
+from ish.adapters.parser import PARSERS
 from ish.application.ports.parser import Parser
 from ish.application.scan import Scan
 from ish.settings import (
@@ -39,26 +40,31 @@ def test_unknown_embedder_is_reported() -> None:
         bootstrap.build_embedder(replace(Settings(), embedder="nope"))
 
 
-class TestLazyRegistries:
-    """Verify a registry entry imports its backend only when it is called."""
+class TestRegistries:
+    """Verify the registries beside the adapters are what bootstrap selects from."""
 
-    def test_the_target_is_resolved_on_call(self) -> None:
-        build = bootstrap._lazy(
-            "ish.adapters.embedder.ollama:OllamaEmbedder.from_option"
+    def test_the_backend_table_is_the_one_in_the_embedder_package(self) -> None:
+        from ish.adapters import embedder
+
+        assert bootstrap.EMBEDDERS is embedder.EMBEDDERS
+
+    def test_every_backend_reads_the_model_option(self) -> None:
+        """A registry entry takes the option and answers with a backend."""
+        backend = bootstrap.EMBEDDERS["ollama"]
+        assert (
+            backend.from_option("mxbai-embed-large").model_name == "mxbai-embed-large"
         )
-        assert build("mxbai-embed-large").model_name == "mxbai-embed-large"
-
-    def test_a_bad_target_fails_on_call_not_on_definition(self) -> None:
-        build = bootstrap._lazy("ish.adapters.embedder.nowhere:Nothing")
-        with pytest.raises(ModuleNotFoundError):
-            build("")
 
     def test_the_extras_are_not_imported_by_the_registry(self) -> None:
-        """A registry of names keeps an uninstalled extra from being imported."""
+        """Listing the backends must not import a package that may be absent."""
         import sys
 
         assert "llama_cpp" not in sys.modules
         assert "sentence_transformers" not in sys.modules
+
+    def test_every_registered_language_can_be_built(self) -> None:
+        built = bootstrap.build_parsers(Settings())
+        assert {p.language for p in built} == set(PARSERS)
 
     def test_build_embedder_reads_the_model_option(self) -> None:
         settings = replace(Settings(), embedder="ollama", model="mxbai-embed-large")
@@ -78,7 +84,7 @@ class TestLanguageSelection:
         from dataclasses import replace
 
         built = bootstrap.build_parsers(replace(Settings(), languages=()))
-        assert {p.language for p in built} == set(bootstrap.PARSERS)
+        assert {p.language for p in built} == set(PARSERS)
 
     def test_named_language_is_the_only_one_built(self) -> None:
         from dataclasses import replace
@@ -94,7 +100,7 @@ class TestLanguageSelection:
 
     def test_every_registered_parser_satisfies_the_port(self) -> None:
         """Guard the registry itself, so a new entry cannot be malformed."""
-        for name, factory in bootstrap.PARSERS.items():
+        for name, factory in PARSERS.items():
             parser = factory()
             assert isinstance(parser, Parser), name
             assert parser.language == name, name
@@ -104,7 +110,7 @@ class TestLanguageSelection:
     def test_registered_parsers_claim_distinct_suffixes(self) -> None:
         """The default registry must build without a suffix conflict."""
         seen: dict[str, str] = {}
-        for name, factory in bootstrap.PARSERS.items():
+        for name, factory in PARSERS.items():
             for suffix in factory().suffixes:
                 assert suffix not in seen, f"{name} and {seen[suffix]} share {suffix}"
                 seen[suffix] = name

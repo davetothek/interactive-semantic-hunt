@@ -8,6 +8,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Say where a language or an embedding backend plugs in. Each adapter package
+  opens with the recipe, the README has an Extend section, and the registry a
+  new entry goes into sits beside the parsers or backends it lists.
+
 ## 0.2.0 - 2026-09-17
 
 ### Changed

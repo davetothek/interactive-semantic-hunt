@@ -329,6 +329,32 @@ and still inherit the `type_patterns` the repository above it set.
 Set any option from the environment with the `ISH_` prefix, for example
 `ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.
 
+## Extend
+
+Two things are made to be added: a language and an embedding backend.
+Each has one folder, one table, and a recipe at the top of the folder's
+`__init__.py`.
+
+**A language** is a class with a `language`, a set of `suffixes`, and a
+`parse(path, source)` that returns chunks. Put it in a new module under
+`src/ish/adapters/parser/` and add one line to `PARSERS` in that package's
+`__init__.py`. File discovery, the `languages` option, the chunk size cap and
+the registry tests all follow from that line. If readers will type another
+name for it, such as `yml` for `yaml`, add the alias in
+`src/ish/application/languages.py`; if it is prose or configuration rather
+than code, say so in `src/ish/application/categories.py`.
+
+A parser that belongs to one project rather than to ish goes in
+`~/.config/ish/parsers/` as a module with a `parser()` function. It joins the
+same table at run time, and may replace a built-in language.
+
+**A backend** subclasses `PrefixingEmbedder`, implements `_embed(texts)` and
+a `from_option(model)` classmethod, and takes one line in `EMBEDDERS` in
+`src/ish/adapters/embedder/__init__.py`. The `--embedder` choices derive from
+the keys. A backend that needs a package the default install does not carry
+is an extra in `pyproject.toml`, and a model trained with task prefixes gets
+a row in `prefixes.py`.
+
 ## Develop
 
 ```sh
