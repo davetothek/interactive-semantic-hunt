@@ -2,7 +2,18 @@ from pathlib import Path
 
 import pytest
 
+from ish import bootstrap
 from ish.interfaces.cli.main import main
+
+
+class StubBackend:
+    """Stand in for a backend in the registry, without a model or a daemon."""
+
+    @classmethod
+    def from_option(cls, model: str):
+        from unittest.mock import MagicMock
+
+        return MagicMock(model_name=f"stub:{model}")
 
 
 @pytest.fixture()
@@ -39,8 +50,7 @@ def test_query_output(
 
     monkeypatch.setattr("ish.bootstrap.Search", mock_search_class)
 
-    # Mock the default embedder (llama.cpp)
-    monkeypatch.setattr("ish.adapters.embedder.llama_cpp.LlamaCppEmbedder", MagicMock())
+    monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", StubBackend)
 
     exit_code = main(["my search", str(project)])
 
@@ -80,8 +90,7 @@ def test_query_output_ollama(
 
     monkeypatch.setattr("ish.bootstrap.Search", mock_search_class)
 
-    # Also mock OllamaEmbedder so it doesn't instantiate
-    monkeypatch.setattr("ish.adapters.embedder.ollama.OllamaEmbedder", MagicMock())
+    monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", StubBackend)
 
     exit_code = main(["my search", str(project), "--embedder", "ollama"])
 
@@ -119,10 +128,7 @@ def test_query_output_st(
     mock_search_instance.search.return_value = [(c1, 0.95)]
     monkeypatch.setattr("ish.bootstrap.Search", mock_search_class)
 
-    monkeypatch.setattr(
-        "ish.adapters.embedder.sentence_transformer.SentenceTransformerEmbedder",
-        MagicMock(),
-    )
+    monkeypatch.setitem(bootstrap.EMBEDDERS, "st", StubBackend)
 
     exit_code = main(["my search", str(project), "--embedder", "st"])
 

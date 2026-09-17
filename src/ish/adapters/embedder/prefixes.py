@@ -54,6 +54,14 @@ class PrefixingEmbedder:
         self.model_name = model_name
         self._query_cache: OrderedDict[str, Sequence[float]] = OrderedDict()
 
+    @classmethod
+    def from_option(cls, model: str) -> "PrefixingEmbedder":
+        """Build the backend the ``model`` option names. Empty means the default.
+
+        Each backend reads the option its own way, so each defines this.
+        """
+        raise NotImplementedError
+
     def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Embed texts that will be stored and searched over."""
         if not texts:

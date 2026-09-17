@@ -44,6 +44,10 @@ class StubEmbedder:
 
     model_name = "stub"
 
+    @classmethod
+    def from_option(cls, model: str) -> "StubEmbedder":
+        return cls()
+
     def embed_documents(self, texts):
         return [self._vector(t) for t in texts]
 
@@ -65,7 +69,7 @@ def stub_backend(monkeypatch):
     """Replace the embedding backend so tests need no daemon."""
     import ish.bootstrap as bootstrap
 
-    monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", lambda model: StubEmbedder())
+    monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", StubEmbedder)
 
 
 class TestListChunks:

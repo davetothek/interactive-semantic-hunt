@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ish import bootstrap
 from ish.application.progress import EMBED, READY, REFRESH, Progress
 from ish.interfaces.cli.main import main
 from ish.settings import Settings
@@ -127,12 +128,12 @@ class TestCLIEdgeCases:
     ) -> None:
         """A backend failure yields exit code 1 and no traceback on stdout."""
 
-        def boom(model: str) -> None:
-            raise ConnectionError("Failed to connect to Ollama")
+        class Boom:
+            @classmethod
+            def from_option(cls, model: str) -> None:
+                raise ConnectionError("Failed to connect to Ollama")
 
-        monkeypatch.setattr(
-            "ish.adapters.embedder.ollama.OllamaEmbedder.from_option", boom
-        )
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", Boom)
         (tmp_path / "app.py").write_text("pass\n")
 
         exit_code = main(["find stuff", str(tmp_path), "--embedder", "ollama"])
@@ -149,14 +150,12 @@ class TestCLIEdgeCases:
     ) -> None:
         """A missing optional dependency yields a clean install hint."""
 
-        def boom(model: str) -> None:
-            raise ModuleNotFoundError("No module named 'sentence_transformers'")
+        class Boom:
+            @classmethod
+            def from_option(cls, model: str) -> None:
+                raise ModuleNotFoundError("No module named 'sentence_transformers'")
 
-        monkeypatch.setattr(
-            "ish.adapters.embedder.sentence_transformer."
-            "SentenceTransformerEmbedder.from_option",
-            boom,
-        )
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "st", Boom)
         (tmp_path / "app.py").write_text("pass\n")
 
         exit_code = main(["find stuff", str(tmp_path), "--embedder", "st"])
@@ -191,9 +190,6 @@ def test_interactive_tui(
 
     monkeypatch.setattr("ish.interfaces.tui.app.IshApp", mock_app_class)
 
-    # Mock embedders to avoid instantiation
-    monkeypatch.setattr("ish.adapters.embedder.llama_cpp.LlamaCppEmbedder", MagicMock())
-
     exit_code = main(["", str(project), "-i"])
     assert exit_code == 0
 
@@ -211,7 +207,6 @@ def test_interactive_tui_ollama(
     mock_app_class.return_value = mock_app_instance
     mock_app_instance.run.return_value = None
     monkeypatch.setattr("ish.interfaces.tui.app.IshApp", mock_app_class)
-    monkeypatch.setattr("ish.adapters.embedder.ollama.OllamaEmbedder", MagicMock())
     exit_code = main(["", str(project), "-i", "--embedder", "ollama"])
     assert exit_code == 0
 
@@ -226,10 +221,6 @@ def test_interactive_tui_st(
     mock_app_class.return_value = mock_app_instance
     mock_app_instance.run.return_value = None
     monkeypatch.setattr("ish.interfaces.tui.app.IshApp", mock_app_class)
-    monkeypatch.setattr(
-        "ish.adapters.embedder.sentence_transformer.SentenceTransformerEmbedder",
-        MagicMock(),
-    )
     exit_code = main(["", str(project), "-i", "--embedder", "st"])
     assert exit_code == 0
 

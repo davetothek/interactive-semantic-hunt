@@ -138,12 +138,12 @@ src/foo.py:35-42  method    ConfigLoader.load
 
 ## Composition
 
-`src/ish/bootstrap.py` is the composition root. It is the only module that imports both application code and concrete adapters, and it owns the registries:
+`src/ish/bootstrap.py` is the composition root. It is the only module that imports both application code and concrete adapters. It selects from two registries that live beside what they register, each with the recipe for adding an entry at the top of the file:
 
-- `EMBEDDERS` — embedding backends by CLI name. Register new backends here; the `--embedder` choices derive from this dict. Each backend has a `from_option(model)` classmethod that reads the `model` option the way that backend needs.
-- `PARSERS` — source parsers by language name. Register new parsers here; file discovery derives its suffix set from each parser's `suffixes`, and the `languages` option selects which are built.
+- `src/ish/adapters/parser/__init__.py` holds `PARSERS`, source parsers by language name, and `available_parsers()`, which adds the user's own from `plugins.py`. File discovery derives its suffix set from each parser's `suffixes`, and the `languages` option selects which are built.
+- `src/ish/adapters/embedder/__init__.py` holds `EMBEDDERS`, backends by `--embedder` name. Each entry is the backend's `from_option(model)`, which reads the `model` option the way that backend needs. The CLI choices derive from the keys.
 
-Both registries hold dotted names, `module:attribute`, resolved on first call. An unused grammar or an uninstalled extra is never imported, and the registry reads as the table it is.
+Listing either registry imports nothing heavy: a grammar loads on first parse, and a backend imports its library inside `__init__`, so an extra that is not installed fails only when it is chosen.
 
 Registered languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`.
 
@@ -156,7 +156,7 @@ Registered languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`.
 - **A declaration is a chunk when it declares a function.** A header is mostly declarations, so without this a realistic header collapses to one class-sized blob: measured, `widget.h` went from 1 chunk to 5. A data member is skipped, because it carries nothing to search for. A prototype is dropped when the same file also defines that symbol, so a `.c` file does not list a function twice.
 - Tree-sitter is error tolerant. A partly broken file returns whatever parsed; `ParseError` is raised only when nothing did.
 
-Adding a language is one new module under `adapters/parser/` plus one `PARSERS` entry. It must not require a change to `Scan`, the `Parser` port, or any interface. A parser declares `language` (its identity, stamped onto every chunk it emits) and `suffixes`. Two parsers claiming one suffix is a hard error; resolve it with the `languages` option.
+Adding a language is one new module under `adapters/parser/` plus one `PARSERS` entry in that package. It must not require a change to `Scan`, the `Parser` port, `bootstrap`, or any interface. A parser declares `language` (its identity, stamped onto every chunk it emits) and `suffixes`. Two parsers claiming one suffix is a hard error; resolve it with the `languages` option. The only optional follow-ups are vocabulary: an alias in `application/languages.py`, and a `doc` or `config` reading in `application/categories.py`.
 
 Interfaces go through `Ish`, which calls `bootstrap.build_scan()` and `bootstrap.build_search()`; nothing outside `bootstrap` constructs an adapter. No dependency injection framework.
 
