@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-17
+
 ### Changed
 
 - Bring the index up to date once per session in the Python API, on the first
