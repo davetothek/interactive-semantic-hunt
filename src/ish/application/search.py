@@ -103,15 +103,3 @@ class Search:
             limit=limit,
             keep=keep or self._keep,
         )
-
-    def run(
-        self,
-        root: Path,
-        query: str,
-        limit: int = 5,
-        keep: ResultFilter = None,
-    ) -> Sequence[Match]:
-        """Find the best matching chunks for a semantic query."""
-        if not self.build_index(root):
-            return []
-        return self.search(query, limit, keep=keep)

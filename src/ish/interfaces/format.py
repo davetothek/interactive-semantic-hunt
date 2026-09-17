@@ -45,6 +45,19 @@ def format_grep_line(chunk: Chunk, score: float | None = None) -> str:
     )
 
 
+def render(chunk: Chunk, shape: str, score: float | None = None) -> str:
+    """Render one chunk in the shape the caller asked for.
+
+    Accept a score for a ranked result and none for a plain listing, so
+    every interface formats a line through this one function.
+    """
+    if shape == "grep":
+        return format_grep_line(chunk, score)
+    if score is None:
+        return format_chunk_line(chunk)
+    return format_result_line(chunk, score)
+
+
 def format_selection(chunk: Chunk) -> str:
     """Format a selected chunk as an editor-friendly ``path:line`` locator."""
     return f"{display_path(chunk.path)}:{chunk.start_line}"
