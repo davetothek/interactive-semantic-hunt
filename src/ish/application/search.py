@@ -6,9 +6,8 @@ from pathlib import Path
 
 from ish.application.index import Index
 from ish.application.ports.embedder import Embedder
-from ish.application.ports.vector_store import VectorStore
+from ish.application.ports.vector_store import VectorReader
 from ish.application.ranking import ResultFilter
-from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 
@@ -21,59 +20,50 @@ class Search:
     def __init__(
         self,
         *,
-        scan: Scan,
         embedder: Embedder,
-        vector_store: VectorStore,
-        reindex: bool = False,
+        reader: VectorReader,
+        index: Index | None = None,
         hybrid: bool = True,
         keep: ResultFilter = None,
     ) -> None:
+        """Search what *reader* holds, refreshed by *index* when there is one.
+
+        A search over several indexes at once has no index of its own to
+        refresh: choosing one to write to would be wrong, so it reads
+        what is stored.
+        """
         self._embedder = embedder
-        self._vector_store = vector_store
-        self._reindex = reindex
+        self._reader = reader
+        self._index = index
         self._hybrid = hybrid
         self._keep = keep
-        self._index = Index(
-            scan=scan,
-            embedder=embedder,
-            vector_store=vector_store,
-        )
 
     def close(self) -> None:
         """Release the store."""
-        self._vector_store.close()
+        self._reader.close()
 
     def build_index(
         self, root: Path, on_progress: Callable[[str], None] | None = None
-    ) -> Sequence[Chunk] | None:
-        """Bring the index in step with *root*.
+    ) -> int:
+        """Bring the index in step with *root*. Return how many chunks it holds.
 
-        Return the chunks the store now holds, or None when it holds none.
+        Count rather than list, so a query does not read every stored
+        chunk on its way to the few it will return.
         """
-        if not getattr(self._vector_store, "writable", True):
-            # Reading several indexes at once. Refreshing would have to
-            # choose one to write to, and any choice would be wrong.
+        if self._index is None:
             log.info("Searching stored indexes without refreshing")
-            chunks = self.all_chunks()
-            return chunks or None
-
-        if self._reindex:
-            log.info("Discarding the stored index for %s", root)
-            self._vector_store.clear()
-            self._reindex = False
-
-        stats = self._index.refresh(root, on_progress)
-        log.info(
-            "Index ready: %d files, %d chunks written, %d vectors embedded",
-            stats.files_seen,
-            stats.chunks_indexed,
-            stats.vectors_embedded,
-        )
-        chunks = self.all_chunks()
-        if not chunks:
+        else:
+            stats = self._index.refresh(root, on_progress)
+            log.info(
+                "Index ready: %d files, %d chunks written, %d vectors embedded",
+                stats.files_seen,
+                stats.chunks_indexed,
+                stats.vectors_embedded,
+            )
+        held = self._reader.count()
+        if not held:
             log.warning("No chunks found to index.")
-            return None
-        return chunks
+        return held
 
     def all_chunks(self, keep: ResultFilter = None) -> list[Chunk]:
         """Return the chunks the store holds, for a plain listing.
@@ -82,7 +72,7 @@ class Search:
         the search agree on what is in view.
         """
         chosen = keep or self._keep
-        chunks = self._vector_store.chunks()
+        chunks = self._reader.chunks()
         if chosen is None:
             return list(chunks)
         return [chunk for chunk in chunks if chosen(chunk)]
@@ -106,7 +96,7 @@ class Search:
 
         log.info("Searching vector store...")
         use_hybrid = self._hybrid if hybrid is None else hybrid
-        return self._vector_store.search(
+        return self._reader.search(
             query_vector,
             query if use_hybrid else "",
             limit=limit,
@@ -121,6 +111,6 @@ class Search:
         keep: ResultFilter = None,
     ) -> Sequence[Match]:
         """Find the best matching chunks for a semantic query."""
-        if self.build_index(root) is None:
+        if not self.build_index(root):
             return []
         return self.search(query, limit, keep=keep)

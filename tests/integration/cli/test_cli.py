@@ -331,7 +331,7 @@ class TestRefreshReportsProgress:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
 
         class Fake:
-            model_id = "fake"
+            model_name = "fake"
 
             def embed_documents(self, texts):
                 return [[1.0, 0.0] for _ in texts]
@@ -453,7 +453,7 @@ class TestRefreshFromTheCommandLine:
         from ish import bootstrap
 
         class Fake:
-            model_id = "fake"
+            model_name = "fake"
 
             def embed_documents(self, texts):
                 return [[1.0, 0.0] for _ in texts]

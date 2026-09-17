@@ -57,7 +57,7 @@ class OllamaEmbedder(PrefixingEmbedder):
         host: str | None = None,
         batch_size: int = DEFAULT_BATCH_SIZE,
     ) -> None:
-        self.model_name = model_name
+        super().__init__(model_name)
         chosen = host or os.environ.get("OLLAMA_HOST") or DEFAULT_HOST
         self.host = _normalize_host(chosen)
         self._batch_size = max(1, batch_size)

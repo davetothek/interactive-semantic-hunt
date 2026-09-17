@@ -46,10 +46,13 @@ QUERY_CACHE_SIZE = 128
 class PrefixingEmbedder:
     """Add task prefixes, then hand the text to the concrete backend.
 
-    Subclasses set ``model_name`` and implement ``_embed``.
+    A subclass names its model through this constructor and implements
+    ``_embed``.
     """
 
-    model_name: str
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self._query_cache: OrderedDict[str, Sequence[float]] = OrderedDict()
 
     def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Embed texts that will be stored and searched over."""
@@ -65,9 +68,7 @@ class PrefixingEmbedder:
         An interactive search embeds a query on every keystroke, and
         deleting a character asks for text already seen.
         """
-        cache = getattr(self, "_query_cache", None)
-        if cache is None:
-            cache = self._query_cache = OrderedDict()
+        cache = self._query_cache
         held = cache.get(text)
         if held is not None:
             cache.move_to_end(text)

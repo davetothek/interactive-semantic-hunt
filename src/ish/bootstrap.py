@@ -15,9 +15,11 @@ from typing import Any
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
+from ish.application.index import Index
 from ish.application.languages import canonical_language
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
+from ish.application.ports.vector_store import VectorReader, VectorStore
 from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
@@ -171,7 +173,7 @@ def model_id(settings: Settings, embedder: Embedder) -> str:
     Read the identity the adapter reports, so changing a backend default
     invalidates the vectors it produced.
     """
-    name = getattr(embedder, "model_name", "") or "default"
+    name = embedder.model_name or "default"
     return f"{settings.embedder}:{name}"
 
 
@@ -247,17 +249,25 @@ def find_covering_index(settings: Settings, path: Path) -> tuple[Path, Path] | N
     return best
 
 
-def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
-    """Build the vector store for one scanned tree.
+def build_stores(
+    settings: Settings, root: Path, embedder: Embedder
+) -> tuple[VectorStore | None, VectorReader]:
+    """Build what a search of *root* reads, and what a refresh of it writes.
+
+    Return the writable index of the named tree, or None when no index
+    may be written, beside the reader a search consults. The reader
+    holds the writable index too when there is one, so closing the
+    reader releases everything.
 
     Persist to disk unless the caller asked for a run that leaves none.
     """
     if settings.no_cache:
         from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 
-        return PurePythonVectorStore()
+        store = PurePythonVectorStore()
+        return store, store
 
-    from ish.adapters.vector_store.federated import FederatedVectorStore
+    from ish.adapters.vector_store.federated import FederatedReader
     from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
     identity = model_id(settings, embedder)
@@ -278,12 +288,15 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
             log.info(
                 "Reading the index for %s, which already covers %s", tree, resolved
             )
-            return open_index(db_path, tree)
+            store = open_index(db_path, tree)
+            return store, store
         primary = open_index(index_path(settings, resolved), resolved)
 
     others = [open_index(db, tree) for tree, db in existing.items() if tree != resolved]
     if not others:
-        return primary
+        # Nothing below, so the named tree's own index is the whole search.
+        assert primary is not None
+        return primary, primary
 
     if primary is None and not settings.refresh:
         # Nothing here may be written, so a search reads whatever the
@@ -296,8 +309,11 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
             len(others),
             resolved,
         )
-    log.info("Searching %d indexes under %s", len(others) + bool(primary), resolved)
-    return FederatedVectorStore(primary, others)
+    readers: list[VectorReader] = [*others]
+    if primary is not None:
+        readers.insert(0, primary)
+    log.info("Searching %d indexes under %s", len(readers), resolved)
+    return primary, FederatedReader(readers)
 
 
 def build_ignored_by(settings: Settings, root: Path):
@@ -332,11 +348,19 @@ def build_search(settings: Settings, root: Path) -> Search:
     if not settings.no_cache and find_covering_index(settings, resolved) is not None:
         keep = _inside(resolved, keep)
 
+    primary, reader = build_stores(settings, root, embedder)
+    index = None
+    if primary is not None:
+        index = Index(
+            scan=build_scan(settings, root),
+            embedder=embedder,
+            vector_store=primary,
+            rebuild=settings.reindex,
+        )
     return Search(
-        scan=build_scan(settings, root),
         embedder=embedder,
-        vector_store=build_vector_store(settings, root, embedder),
-        reindex=settings.reindex,
+        reader=reader,
+        index=index,
         hybrid=not settings.no_hybrid,
         keep=keep,
     )

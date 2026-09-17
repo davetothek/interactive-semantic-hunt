@@ -99,6 +99,10 @@ class PurePythonVectorStore:
         found.sort(key=lambda c: (str(c.path), c.start_line))
         return found
 
+    def count(self) -> int:
+        """Return how many chunks the store holds."""
+        return sum(len(entries) for entries in self._chunks.values())
+
     def search(
         self,
         query_vector: Sequence[float],

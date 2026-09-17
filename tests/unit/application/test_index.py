@@ -37,6 +37,8 @@ class LineParser:
 
 
 class RecordingEmbedder:
+    model_name = "fake"
+
     def __init__(self) -> None:
         self.seen: list[str] = []
 

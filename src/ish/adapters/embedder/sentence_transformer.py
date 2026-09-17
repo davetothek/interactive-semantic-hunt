@@ -13,7 +13,7 @@ class SentenceTransformerEmbedder(PrefixingEmbedder):
     """
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
-        self.model_name = model_name
+        super().__init__(model_name)
 
         import logging
         import os

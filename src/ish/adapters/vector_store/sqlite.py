@@ -382,6 +382,12 @@ class SqliteVectorStore:
             ).fetchall()
         return [self._to_chunk(row) for row in rows]
 
+    def count(self) -> int:
+        """Return how many chunks the store holds."""
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()
+        return int(row[0])
+
     @staticmethod
     def _to_chunk(row: Sequence[Any]) -> Chunk:
         """Build a Chunk from the stored column order.

@@ -80,10 +80,15 @@ class Index:
         scan: Scan,
         embedder: Embedder,
         vector_store: VectorStore,
+        rebuild: bool = False,
     ) -> None:
         self._scanner = scan
         self._embedder = embedder
         self._store = vector_store
+        # Discard the stored files before the first refresh, so every
+        # file is parsed again. Vectors stay, keyed by content, so a
+        # rebuild costs parsing rather than embedding.
+        self._rebuild = rebuild
         self._report: Callable[[str], None] = lambda _message: None
 
     def refresh(
@@ -96,6 +101,10 @@ class Index:
         told apart from one that has hung.
         """
         self._report = on_progress or (lambda _message: None)
+        if self._rebuild:
+            log.info("Discarding the stored index for %s", root)
+            self._store.clear()
+            self._rebuild = False
         self._report("Looking for source files")
         found = self._stamp_all(self._scanner.discover(root))
         stored = self._store.file_stamps()

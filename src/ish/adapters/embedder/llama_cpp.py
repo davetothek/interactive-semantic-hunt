@@ -16,8 +16,7 @@ class LlamaCppEmbedder(PrefixingEmbedder):
         repo_id: str = "nomic-ai/nomic-embed-text-v1.5-GGUF",
         filename: str = "nomic-embed-text-v1.5.Q4_K_M.gguf",
     ) -> None:
-        # Expose the model identity for cache keying.
-        self.model_name = f"{repo_id}/{filename}"
+        super().__init__(f"{repo_id}/{filename}")
 
         import os
 
