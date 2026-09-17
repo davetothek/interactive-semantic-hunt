@@ -12,7 +12,7 @@ def configured_logging():
     A test that asserts on a warning must not depend on some earlier
     test having configured logging first.
     """
-    from ish.interfaces.cli.log import setup_logging
+    from ish.interfaces.log import setup_logging
 
     setup_logging(verbosity=0, color=False)
 

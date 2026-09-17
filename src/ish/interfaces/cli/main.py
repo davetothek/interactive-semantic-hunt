@@ -12,8 +12,8 @@ import time
 from ish import bootstrap
 from ish.application.progress import EMBED, Progress
 from ish.interfaces.cli.args import CliArgs
-from ish.interfaces.cli.log import resolve_color, setup_logging
 from ish.interfaces.format import format_selection, render
+from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
 
 log = logging.getLogger("ish.cli")
