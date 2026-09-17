@@ -252,7 +252,7 @@ class IshTools:
             f"  chunks   : {status['chunks']}\n"
             f"  languages: {breakdown or 'none'}\n"
             f"  embedder : {self._settings.embedder}\n"
-            f"  file     : {bootstrap.index_path(self._settings, root)}"
+            f"  file     : {bootstrap.catalog(self._settings).path_for(root)}"
         )
 
     def tools(self) -> list[Tool]:

@@ -237,7 +237,7 @@ class Ish:
             "path": self.path,
             "chunks": len(chunks),
             "files": len({chunk.path for chunk in chunks}),
-            "indexes": sorted(bootstrap.find_indexes(self.settings, self.path)),
+            "indexes": sorted(bootstrap.catalog(self.settings).below(self.path)),
             "languages": dict(sorted(languages.items())),
             "types": dict(sorted(kinds.items())),
         }

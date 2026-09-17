@@ -5,13 +5,14 @@ this module. It is the only module allowed to import both application
 code and concrete adapters.
 """
 
-import hashlib
 import logging
 import os
+import pkgutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from ish.adapters.vector_store.catalog import IndexCatalog
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
@@ -30,87 +31,40 @@ from ish.settings import Settings
 log = logging.getLogger(__name__)
 
 
-def _llama_cpp_embedder(model: str) -> Embedder:
-    from ish.adapters.embedder.llama_cpp import LlamaCppEmbedder
+def _lazy(target: str) -> Callable[..., Any]:
+    """Return a callable that resolves *target* on first call.
 
-    if model:
-        repo_id, _, filename = model.rpartition("/")
-        return LlamaCppEmbedder(repo_id=repo_id, filename=filename)
-    return LlamaCppEmbedder()
+    Name a factory as ``module:attribute`` so an unused backend or an
+    unused grammar is never imported. A backend that is an extra may not
+    be installed at all, and a grammar costs tens of milliseconds to
+    load, which is most of a warm query.
+    """
 
+    def build(*arguments: Any) -> Any:
+        return pkgutil.resolve_name(target)(*arguments)
 
-def _sentence_transformer_embedder(model: str) -> Embedder:
-    from ish.adapters.embedder.sentence_transformer import (
-        SentenceTransformerEmbedder,
-    )
-
-    if model:
-        return SentenceTransformerEmbedder(model_name=model)
-    return SentenceTransformerEmbedder()
+    return build
 
 
-def _ollama_embedder(model: str) -> Embedder:
-    from ish.adapters.embedder.ollama import OllamaEmbedder
-
-    if model:
-        return OllamaEmbedder(model_name=model)
-    return OllamaEmbedder()
-
-
-# Embedding backends by option name. Each factory imports lazily so unused
-# backends add no startup cost. Register new backends here only.
+# Embedding backends by option name. Each takes the ``model`` option and
+# reads its own default when it is empty. Register new backends here only.
 EMBEDDERS: dict[str, Callable[[str], Embedder]] = {
-    "llama.cpp": _llama_cpp_embedder,
-    "st": _sentence_transformer_embedder,
-    "ollama": _ollama_embedder,
+    "llama.cpp": _lazy("ish.adapters.embedder.llama_cpp:LlamaCppEmbedder.from_option"),
+    "st": _lazy(
+        "ish.adapters.embedder.sentence_transformer:"
+        "SentenceTransformerEmbedder.from_option"
+    ),
+    "ollama": _lazy("ish.adapters.embedder.ollama:OllamaEmbedder.from_option"),
 }
 
-
-def _python_parser() -> Parser:
-    from ish.adapters.parser.python import PythonParser
-
-    return PythonParser()
-
-
-def _markdown_parser() -> Parser:
-    from ish.adapters.parser.markup import MarkupParser
-
-    return MarkupParser.markdown()
-
-
-def _asciidoc_parser() -> Parser:
-    from ish.adapters.parser.markup import MarkupParser
-
-    return MarkupParser.asciidoc()
-
-
-def _yaml_parser() -> Parser:
-    from ish.adapters.parser.structured import StructuredParser
-
-    return StructuredParser.yaml()
-
-
-def _json_parser() -> Parser:
-    from ish.adapters.parser.structured import StructuredParser
-
-    return StructuredParser.json()
-
-
-def _cpp_parser() -> Parser:
-    from ish.adapters.parser.tree_sitter import cpp_parser
-
-    return cpp_parser()
-
-
-# Source parsers by language name. Each factory imports lazily so an unused
-# grammar adds no startup cost. Register new parsers here only.
+# Source parsers by language name. Register new parsers here only.
 PARSERS: dict[str, Callable[[], Parser]] = {
-    "python": _python_parser,
-    "markdown": _markdown_parser,
-    "asciidoc": _asciidoc_parser,
-    "cpp": _cpp_parser,
-    "yaml": _yaml_parser,
-    "json": _json_parser,
+    "python": _lazy("ish.adapters.parser.python:PythonParser"),
+    "markdown": _lazy("ish.adapters.parser.markup:MarkupParser.markdown"),
+    "asciidoc": _lazy("ish.adapters.parser.markup:MarkupParser.asciidoc"),
+    "cpp": _lazy("ish.adapters.parser.tree_sitter:cpp_parser"),
+    "yaml": _lazy("ish.adapters.parser.structured:StructuredParser.yaml"),
+    "json": _lazy("ish.adapters.parser.structured:StructuredParser.json"),
 }
 
 
@@ -191,63 +145,9 @@ def index_dir(settings: Settings) -> Path:
     return Path(base) / "ish"
 
 
-def index_path(settings: Settings, root: Path) -> Path:
-    """Return the index file for one scanned tree.
-
-    Name it after the tree so separate projects never share an index, and
-    keep the basename readable for anyone inspecting the cache.
-    """
-    resolved = root.resolve()
-    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
-    return index_dir(settings) / f"{resolved.name}-{digest}.db"
-
-
-def find_indexes(settings: Settings, path: Path) -> dict[Path, Path]:
-    """Return every stored index whose tree sits at or below *path*.
-
-    Read the tree from inside each index, because the file name carries
-    only a hash of it.
-    """
-    from ish.adapters.vector_store.sqlite import SqliteVectorStore
-
-    directory = index_dir(settings)
-    if not directory.is_dir():
-        return {}
-
-    wanted = path.resolve()
-    found: dict[Path, Path] = {}
-    for db_path in sorted(directory.glob("*.db")):
-        root = SqliteVectorStore.read_root(db_path)
-        if root is None:
-            continue
-        if root == wanted or wanted in root.parents:
-            found[root] = db_path
-    return found
-
-
-def find_covering_index(settings: Settings, path: Path) -> tuple[Path, Path] | None:
-    """Return the nearest stored index whose tree contains *path*.
-
-    Asking about a directory inside an indexed tree should read what is
-    already there. Building a second index for it would embed every file
-    again, because a vector is shared only within one index file.
-    """
-    from ish.adapters.vector_store.sqlite import SqliteVectorStore
-
-    directory = index_dir(settings)
-    if not directory.is_dir():
-        return None
-
-    wanted = path.resolve()
-    best: tuple[Path, Path] | None = None
-    for db_path in sorted(directory.glob("*.db")):
-        tree = SqliteVectorStore.read_root(db_path)
-        if tree is None or tree not in wanted.parents:
-            continue
-        # Prefer the closest ancestor, which describes the path best.
-        if best is None or len(tree.parts) > len(best[0].parts):
-            best = (tree, db_path)
-    return best
+def catalog(settings: Settings) -> IndexCatalog:
+    """Return the catalog of stored indexes the settings point at."""
+    return IndexCatalog(index_dir(settings))
 
 
 def build_stores(
@@ -273,7 +173,8 @@ def build_stores(
 
     identity = model_id(settings, embedder)
     resolved = root.resolve()
-    existing = find_indexes(settings, resolved) if settings.federate else {}
+    indexes = catalog(settings)
+    existing = indexes.below(resolved) if settings.federate else {}
 
     def open_index(path: Path, tree: Path) -> SqliteVectorStore:
         return SqliteVectorStore(path, model_id=identity, root=tree)
@@ -283,7 +184,7 @@ def build_stores(
     # several indexes reads them rather than starting a new one.
     primary = None
     if resolved in existing or not existing:
-        covering = None if existing else find_covering_index(settings, resolved)
+        covering = None if existing else indexes.covering(resolved)
         if covering is not None:
             tree, db_path = covering
             log.info(
@@ -291,7 +192,7 @@ def build_stores(
             )
             store = open_index(db_path, tree)
             return store, store
-        primary = open_index(index_path(settings, resolved), resolved)
+        primary = open_index(indexes.path_for(resolved), resolved)
 
     others = [open_index(db, tree) for tree, db in existing.items() if tree != resolved]
     if not others:
@@ -346,7 +247,7 @@ def build_search(settings: Settings, root: Path) -> Search:
 
     # An index that belongs to a tree above this one holds more than was
     # asked for, so keep the answers inside the path.
-    if not settings.no_cache and find_covering_index(settings, resolved) is not None:
+    if not settings.no_cache and catalog(settings).covering(resolved) is not None:
         keep = _inside(resolved, keep)
 
     primary, reader = build_stores(settings, root, embedder)
@@ -401,7 +302,7 @@ def refresh_indexes(
     from ish.settings import load_settings
 
     resolved = root.resolve()
-    trees = sorted(find_indexes(settings, resolved)) or [resolved]
+    trees = sorted(catalog(settings).below(resolved)) or [resolved]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
         within = None

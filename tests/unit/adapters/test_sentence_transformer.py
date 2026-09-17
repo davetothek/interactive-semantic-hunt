@@ -49,6 +49,14 @@ class TestSentenceTransformerEmbedder:
         SentenceTransformerEmbedder()
         mock_st.assert_called_once_with("all-MiniLM-L6-v2")
 
+    def test_the_model_option_names_the_model(self, mock_st: MagicMock) -> None:
+        SentenceTransformerEmbedder.from_option("all-mpnet-base-v2")
+        mock_st.assert_called_once_with("all-mpnet-base-v2")
+
+    def test_an_empty_model_option_means_the_default(self, mock_st: MagicMock) -> None:
+        SentenceTransformerEmbedder.from_option("")
+        mock_st.assert_called_once_with("all-MiniLM-L6-v2")
+
     def test_embed_empty(self, mock_st: MagicMock) -> None:
         """Confirm empty input returns empty output without calling the model."""
         embedder = SentenceTransformerEmbedder()

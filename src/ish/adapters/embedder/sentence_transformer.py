@@ -34,6 +34,11 @@ class SentenceTransformerEmbedder(PrefixingEmbedder):
 
             self._model = SentenceTransformer(model_name)
 
+    @classmethod
+    def from_option(cls, model: str) -> "SentenceTransformerEmbedder":
+        """Build the backend the ``model`` option names. Empty means the default."""
+        return cls(model) if model else cls()
+
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode texts into vectors and return them as pure Python floats."""
         # .encode() can accept a single string or list of strings.

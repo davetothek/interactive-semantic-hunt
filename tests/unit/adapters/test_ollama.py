@@ -60,6 +60,14 @@ class TestConfiguration:
     def test_explicit_model(self) -> None:
         assert OllamaEmbedder("mxbai-embed-large").model_name == "mxbai-embed-large"
 
+    def test_the_model_option_names_the_model(self) -> None:
+        assert OllamaEmbedder.from_option("mxbai-embed-large").model_name == (
+            "mxbai-embed-large"
+        )
+
+    def test_an_empty_model_option_means_the_default(self) -> None:
+        assert OllamaEmbedder.from_option("").model_name == DEFAULT_MODEL
+
     def test_default_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OLLAMA_HOST", raising=False)
         assert OllamaEmbedder().host == "http://localhost:11434"

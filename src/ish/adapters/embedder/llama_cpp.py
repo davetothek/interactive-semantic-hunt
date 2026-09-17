@@ -36,6 +36,19 @@ class LlamaCppEmbedder(PrefixingEmbedder):
         # 2. Instantiate the engine. verbose=False hides the massive C++ startup logs.
         self._model = Llama(model_path=model_path, embedding=True, verbose=False)
 
+    @classmethod
+    def from_option(cls, model: str) -> "LlamaCppEmbedder":
+        """Build the backend the ``model`` option names.
+
+        Read the option as ``repo/id/filename.gguf``: everything up to
+        the last slash names the Hugging Face repository, the rest the
+        file in it. Empty means the default model.
+        """
+        if not model:
+            return cls()
+        repo_id, _, filename = model.rpartition("/")
+        return cls(repo_id=repo_id, filename=filename)
+
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode texts into vectors via llama.cpp."""
         text_list = list(texts)

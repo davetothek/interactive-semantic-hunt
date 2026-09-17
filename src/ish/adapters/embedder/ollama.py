@@ -62,6 +62,11 @@ class OllamaEmbedder(PrefixingEmbedder):
         self.host = _normalize_host(chosen)
         self._batch_size = max(1, batch_size)
 
+    @classmethod
+    def from_option(cls, model: str) -> "OllamaEmbedder":
+        """Build the backend the ``model`` option names. Empty means the default."""
+        return cls(model) if model else cls()
+
     def _embed(
         self, texts: Sequence[str], timeout: float = TIMEOUT_SECONDS
     ) -> Sequence[Sequence[float]]:
