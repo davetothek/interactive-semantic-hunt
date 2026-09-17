@@ -13,14 +13,13 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from ish.application.categories import Categorizer
-from ish.application.filters import Filters, build_result_filter, parse_query
+from ish.application.filters import parse_query
 from ish.application.preview import load_text
 from ish.application.progress import Progress
-from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.interfaces.format import format_selection, symbol_of
+from ish.interfaces.python.api import Ish
 
 
 class _DaemonWorker:
@@ -113,25 +112,19 @@ class IshApp(App[Match | None]):
 
     def __init__(
         self,
-        search_use_case: Search,
+        session: Ish,
         root_path: Path,
         *,
         limit: int = 50,
         debounce_ms: int = 120,
-        filters: Filters | None = None,
-        categorize: Categorizer | None = None,
     ) -> None:
         super().__init__()
-        self.search_use_case = search_use_case
+        # The session resolves filters, opens the index, and answers.
+        # This interface only draws and asks.
+        self.session = session
         self.root_path = root_path
         self.limit = limit
         self.debounce = debounce_ms / 1000
-        # What the command line already narrowed. A filter typed into
-        # the query line overrides it for as long as it is typed.
-        self._base_filters = filters or Filters()
-        # How a chunk is sorted into a type, which a repository may
-        # define for itself.
-        self._categorize = categorize
         # Which search is the current one. A cancelled task cannot stop
         # the thread it already handed work to, so the thread asks.
         self._generation = 0
@@ -187,8 +180,8 @@ class IshApp(App[Match | None]):
     def _build_index(self) -> None:
         """Scan and embed, reporting progress into the preview pane."""
         try:
-            self.search_use_case.build_index(self.root_path, self._report_progress)
-            self._all_chunks = list(self.search_use_case.all_chunks())
+            self.session.index(self._report_progress)
+            self._all_chunks = list(self.session.chunks())
             if self._still_here():
                 self.call_from_thread(self._on_index_ready)
         except Exception as e:
@@ -298,35 +291,33 @@ class IshApp(App[Match | None]):
         await asyncio.sleep(self.debounce)
 
         # Filters may be written into the query, as `lang:cpp under:/src/`.
-        # Strip them, so the embedder sees what is wanted rather than how
-        # it was narrowed.
-        text, typed = parse_query(query)
-        filters = typed.or_else(self._base_filters)
-        self.sub_title = filters.describe()
+        # The session strips them before anything reaches the embedder;
+        # this interface only needs to know whether words remain.
+        text, _typed = parse_query(query)
+        described = self.session.filters_of(query).describe()
+        self.sub_title = described
 
         if not self._index_ready:
             # The index is still opening. It answers this query itself
             # when it is ready, so leave the progress message standing.
             return
-        try:
-            keep = build_result_filter(filters, self._categorize)
-        except ValueError:
-            # A half-typed expression is not an error to report.
-            return
 
         self._generation += 1
         mine = self._generation
 
-        if not text:
-            # No words to search for, so list what the filters allow.
-            chunks = await self._off_loop(self._listing_if_current, mine, keep)
-            if chunks is None:
+        try:
+            if not text:
+                # No words to search for, so list what the filters allow.
+                chunks = await self._off_loop(self._listing_if_current, mine, query)
+                if chunks is not None:
+                    self._show_listing(chunks, described)
                 return
-            self._show_listing(chunks, filters.describe())
-            return
 
-        # Search off the event loop, so the interface keeps drawing.
-        results = await self._off_loop(self._search_if_current, mine, text, keep)
+            # Search off the event loop, so the interface keeps drawing.
+            results = await self._off_loop(self._search_if_current, mine, query)
+        except ValueError:
+            # A half-typed expression is not an error to report.
+            return
         if results is None:
             return
         self._populate_results(results, show_scores=True)
@@ -335,7 +326,7 @@ class IshApp(App[Match | None]):
         """Run *function* on the search thread, keeping the interface live."""
         return self._searcher.submit(asyncio.get_running_loop(), function, *arguments)
 
-    def _search_if_current(self, generation: int, text: str, keep):
+    def _search_if_current(self, generation: int, query: str) -> list[Match] | None:
         """Search, unless a later keystroke has already replaced this one.
 
         Cancelling the task that waits on a thread does not stop the
@@ -345,13 +336,13 @@ class IshApp(App[Match | None]):
         """
         if generation != self._generation:
             return None
-        return list(self.search_use_case.search(text, self.limit, keep))
+        return list(self.session.search(query, self.limit))
 
-    def _listing_if_current(self, generation: int, keep):
+    def _listing_if_current(self, generation: int, query: str) -> list[Chunk] | None:
         """List the chunks, unless a later keystroke has replaced this."""
         if generation != self._generation:
             return None
-        return self.search_use_case.all_chunks(keep)
+        return self.session.chunks(query)
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Triggered when the user types in the search bar."""

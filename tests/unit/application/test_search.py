@@ -106,17 +106,6 @@ class TestSearchUseCase:
         assert results
         assert all(isinstance(score, float) for _, score in results)
 
-    def test_run_indexes_then_queries(
-        self, embedder: CountingEmbedder, project: Path
-    ) -> None:
-        results = build(embedder).run(project, "alpha", limit=1)
-        assert len(results) == 1
-
-    def test_run_on_empty_tree(
-        self, embedder: CountingEmbedder, tmp_path: Path
-    ) -> None:
-        assert build(embedder).run(tmp_path, "anything") == []
-
     def test_query_embed_failure_returns_nothing(self, project: Path) -> None:
         """A backend that returns no vector must not raise."""
 

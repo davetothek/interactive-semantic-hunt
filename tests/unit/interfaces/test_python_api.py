@@ -103,6 +103,57 @@ class TestReading:
             assert ish.chunks(lang=["md"]) == ish.chunks(lang=["markdown"])
 
 
+class TestSharedSession:
+    """Verify the behavior every interface relies on the session for."""
+
+    def test_the_index_is_brought_up_to_date_once(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        """A resident interface must not walk the tree for every question."""
+        with _ish(project) as ish:
+            counted: list[int] = []
+            original = ish._use_case.build_index
+            monkeypatch.setattr(
+                ish._use_case,
+                "build_index",
+                lambda path, on_progress=None: counted.append(1) or original(path),
+            )
+            ish.search("configure")
+            ish.search("configure")
+            ish.chunks()
+            assert counted == [1]
+            ish.index()
+            assert counted == [1, 1]
+
+    def test_a_query_of_only_filters_is_refused(self, project: Path, offline) -> None:
+        with _ish(project) as ish, pytest.raises(ValueError, match="only filters"):
+            ish.search("lang:python type:code")
+
+    def test_filters_rank_query_then_argument_then_configuration(
+        self, project: Path
+    ) -> None:
+        ish = Ish(project, settings=Settings(no_cache=True, git=False, type=("test",)))
+        assert ish.filters_of().type == ("test",)
+        assert ish.filters_of(type=["doc"]).type == ("doc",)
+        assert ish.filters_of("type:code x", type=["doc"]).type == ("code",)
+
+    def test_a_filter_word_alone_lists_what_it_allows(
+        self, project: Path, offline
+    ) -> None:
+        with _ish(project) as ish:
+            assert {c.language for c in ish.chunks("lang:markdown")} == {"markdown"}
+
+    def test_scan_reads_the_tree_without_a_backend(self, project: Path) -> None:
+        """A listing must not need an embedding model."""
+        ish = _ish(project)
+        names = {c.path.name for c in ish.scan()}
+        assert names == {"app.py", "guide.md", "test_app.py"}
+        assert ish._search is None
+
+    def test_scan_applies_the_result_filter(self, project: Path) -> None:
+        assert {c.path.name for c in _ish(project).scan(type=["doc"])} == {"guide.md"}
+
+
 class TestStatus:
     def test_status_counts_what_is_indexed(self, project: Path, offline) -> None:
         with _ish(project) as ish:

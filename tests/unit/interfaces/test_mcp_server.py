@@ -433,14 +433,14 @@ class TestRefreshIsNotPerCall:
 
     def _counted(self, tools: IshTools, project: Path) -> list[int]:
         counted: list[int] = []
-        use_case = tools._search_for(project.resolve())
-        original = use_case.build_index
+        session = tools._session_for(project.resolve())
+        original = session.index
 
-        def watched(root, on_progress=None):
+        def watched(on_progress=None):
             counted.append(1)
-            return original(root, on_progress)
+            return original(on_progress)
 
-        use_case.build_index = watched
+        session.index = watched
         return counted
 
     def test_a_burst_of_queries_re_checks_once(

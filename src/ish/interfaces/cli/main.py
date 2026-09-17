@@ -10,27 +10,13 @@ import sys
 import time
 
 from ish import bootstrap
-from ish.application.filters import parse_query
 from ish.application.progress import EMBED, Progress
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.cli.log import resolve_color, setup_logging
-from ish.interfaces.format import (
-    format_chunk_line,
-    format_grep_line,
-    format_result_line,
-    format_selection,
-)
+from ish.interfaces.format import format_selection, render
+from ish.interfaces.python.api import Ish
 
 log = logging.getLogger("ish.cli")
-
-
-def _render(chunk, shape: str, score: float | None = None) -> str:
-    """Render one result in the shape the caller asked for."""
-    if shape == "grep":
-        return format_grep_line(chunk, score)
-    if score is None:
-        return format_chunk_line(chunk)
-    return format_result_line(chunk, score)
 
 
 class ProgressLine:
@@ -82,22 +68,9 @@ def _width() -> int:
 
 def _run_query(args: CliArgs) -> int:
     """Search for the query and print the ranked results."""
-    # Accept `lang:cpp type:doc` inside the query as well as as flags,
-    # so a query copied from the interactive view behaves the same here.
-    text, typed = parse_query(args.query)
-    keep = bootstrap.build_result_filter(
-        args.settings, typed.or_else(bootstrap.settings_filters(args.settings))
-    )
-
-    search_use_case = bootstrap.build_search(args.settings, args.path)
-    try:
-        results = search_use_case.run(
-            args.path, text, limit=args.settings.limit, keep=keep
-        )
-        for chunk, score in results:
-            sys.stdout.write(f"{_render(chunk, args.settings.format, score)}\n")
-    finally:
-        search_use_case.close()
+    with Ish(args.path, settings=args.settings) as ish:
+        for chunk, score in ish.search(args.query):
+            sys.stdout.write(f"{render(chunk, args.settings.format, score)}\n")
     return 0
 
 
@@ -133,19 +106,14 @@ def _run_tui(args: CliArgs) -> int:
     from ish.interfaces.tui.app import IshApp
 
     _sync_terminal_size()
-    search_use_case = bootstrap.build_search(args.settings, args.path)
-    try:
+    with Ish(args.path, settings=args.settings) as ish:
         app = IshApp(
-            search_use_case,
+            ish,
             args.path,
             limit=args.settings.tui_limit,
             debounce_ms=args.settings.tui_debounce_ms,
-            filters=bootstrap.settings_filters(args.settings),
-            categorize=bootstrap.build_categorizer(args.settings),
         )
         selected = app.run()
-    finally:
-        search_use_case.close()
 
     if selected:
         chunk, _score = selected
@@ -155,13 +123,8 @@ def _run_tui(args: CliArgs) -> int:
 
 def _run_scan(args: CliArgs) -> int:
     """Scan the path and list every chunk in the plain output format."""
-    scanner = bootstrap.build_scan(args.settings, args.path)
-    keep = bootstrap.build_result_filter(
-        args.settings, bootstrap.settings_filters(args.settings)
-    )
-    for chunk in scanner.run(args.path):
-        if keep is None or keep(chunk):
-            sys.stdout.write(f"{_render(chunk, args.settings.format)}\n")
+    for chunk in Ish(args.path, settings=args.settings).scan():
+        sys.stdout.write(f"{render(chunk, args.settings.format)}\n")
     return 0
 
 
