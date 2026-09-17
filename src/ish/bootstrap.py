@@ -5,103 +5,66 @@ this module. It is the only module allowed to import both application
 code and concrete adapters.
 """
 
-import hashlib
 import logging
 import os
+import pkgutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from ish.adapters.vector_store.catalog import IndexCatalog
+from ish.application.categories import Categorizer, compile_categories
+from ish.application.filters import Filters
+from ish.application.filters import build_result_filter as make_result_filter
+from ish.application.index import Index
+from ish.application.languages import canonical_language
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
+from ish.application.ports.vector_store import VectorReader, VectorStore
+from ish.application.progress import REFRESH, Progress, ProgressCallback
+from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
+from ish.domain.chunk import Chunk
 from ish.settings import Settings
 
 log = logging.getLogger(__name__)
 
 
-def _llama_cpp_embedder(model: str) -> Embedder:
-    from ish.adapters.embedder.llama_cpp import LlamaCppEmbedder
+def _lazy(target: str) -> Callable[..., Any]:
+    """Return a callable that resolves *target* on first call.
 
-    if model:
-        repo_id, _, filename = model.rpartition("/")
-        return LlamaCppEmbedder(repo_id=repo_id, filename=filename)
-    return LlamaCppEmbedder()
+    Name a factory as ``module:attribute`` so an unused backend or an
+    unused grammar is never imported. A backend that is an extra may not
+    be installed at all, and a grammar costs tens of milliseconds to
+    load, which is most of a warm query.
+    """
 
+    def build(*arguments: Any) -> Any:
+        return pkgutil.resolve_name(target)(*arguments)
 
-def _sentence_transformer_embedder(model: str) -> Embedder:
-    from ish.adapters.embedder.sentence_transformer import (
-        SentenceTransformerEmbedder,
-    )
-
-    if model:
-        return SentenceTransformerEmbedder(model_name=model)
-    return SentenceTransformerEmbedder()
+    return build
 
 
-def _ollama_embedder(model: str) -> Embedder:
-    from ish.adapters.embedder.ollama import OllamaEmbedder
-
-    if model:
-        return OllamaEmbedder(model_name=model)
-    return OllamaEmbedder()
-
-
-# Embedding backends by option name. Each factory imports lazily so unused
-# backends add no startup cost. Register new backends here only.
+# Embedding backends by option name. Each takes the ``model`` option and
+# reads its own default when it is empty. Register new backends here only.
 EMBEDDERS: dict[str, Callable[[str], Embedder]] = {
-    "llama.cpp": _llama_cpp_embedder,
-    "st": _sentence_transformer_embedder,
-    "ollama": _ollama_embedder,
+    "llama.cpp": _lazy("ish.adapters.embedder.llama_cpp:LlamaCppEmbedder.from_option"),
+    "st": _lazy(
+        "ish.adapters.embedder.sentence_transformer:"
+        "SentenceTransformerEmbedder.from_option"
+    ),
+    "ollama": _lazy("ish.adapters.embedder.ollama:OllamaEmbedder.from_option"),
 }
 
-
-def _python_parser() -> Parser:
-    from ish.adapters.parser.python import PythonParser
-
-    return PythonParser()
-
-
-def _markdown_parser() -> Parser:
-    from ish.adapters.parser.markup import MarkupParser
-
-    return MarkupParser.markdown()
-
-
-def _asciidoc_parser() -> Parser:
-    from ish.adapters.parser.markup import MarkupParser
-
-    return MarkupParser.asciidoc()
-
-
-def _yaml_parser() -> Parser:
-    from ish.adapters.parser.structured import StructuredParser
-
-    return StructuredParser.yaml()
-
-
-def _json_parser() -> Parser:
-    from ish.adapters.parser.structured import StructuredParser
-
-    return StructuredParser.json()
-
-
-def _cpp_parser() -> Parser:
-    from ish.adapters.parser.tree_sitter import cpp_parser
-
-    return cpp_parser()
-
-
-# Source parsers by language name. Each factory imports lazily so an unused
-# grammar adds no startup cost. Register new parsers here only.
+# Source parsers by language name. Register new parsers here only.
 PARSERS: dict[str, Callable[[], Parser]] = {
-    "python": _python_parser,
-    "markdown": _markdown_parser,
-    "asciidoc": _asciidoc_parser,
-    "cpp": _cpp_parser,
-    "yaml": _yaml_parser,
-    "json": _json_parser,
+    "python": _lazy("ish.adapters.parser.python:PythonParser"),
+    "markdown": _lazy("ish.adapters.parser.markup:MarkupParser.markdown"),
+    "asciidoc": _lazy("ish.adapters.parser.markup:MarkupParser.asciidoc"),
+    "cpp": _lazy("ish.adapters.parser.tree_sitter:cpp_parser"),
+    "yaml": _lazy("ish.adapters.parser.structured:StructuredParser.yaml"),
+    "json": _lazy("ish.adapters.parser.structured:StructuredParser.json"),
 }
 
 
@@ -125,8 +88,6 @@ def build_parsers(settings: Settings) -> list[Parser]:
     Build every registered parser when the ``languages`` option is empty.
     Otherwise build only the languages it names, in that order.
     """
-    from ish.application.search import canonical_language
-
     available = all_parsers(settings)
     # Accept the same spellings the query line accepts, so `--languages c`
     # and `lang:c` name one parser.
@@ -167,7 +128,7 @@ def model_id(settings: Settings, embedder: Embedder) -> str:
     Read the identity the adapter reports, so changing a backend default
     invalidates the vectors it produced.
     """
-    name = getattr(embedder, "model_name", "") or "default"
+    name = embedder.model_name or "default"
     return f"{settings.embedder}:{name}"
 
 
@@ -184,81 +145,36 @@ def index_dir(settings: Settings) -> Path:
     return Path(base) / "ish"
 
 
-def index_path(settings: Settings, root: Path) -> Path:
-    """Return the index file for one scanned tree.
-
-    Name it after the tree so separate projects never share an index, and
-    keep the basename readable for anyone inspecting the cache.
-    """
-    resolved = root.resolve()
-    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
-    return index_dir(settings) / f"{resolved.name}-{digest}.db"
+def catalog(settings: Settings) -> IndexCatalog:
+    """Return the catalog of stored indexes the settings point at."""
+    return IndexCatalog(index_dir(settings))
 
 
-def find_indexes(settings: Settings, path: Path) -> dict[Path, Path]:
-    """Return every stored index whose tree sits at or below *path*.
+def build_stores(
+    settings: Settings, root: Path, embedder: Embedder
+) -> tuple[VectorStore | None, VectorReader]:
+    """Build what a search of *root* reads, and what a refresh of it writes.
 
-    Read the tree from inside each index, because the file name carries
-    only a hash of it.
-    """
-    from ish.adapters.vector_store.sqlite import SqliteVectorStore
-
-    directory = index_dir(settings)
-    if not directory.is_dir():
-        return {}
-
-    wanted = path.resolve()
-    found: dict[Path, Path] = {}
-    for db_path in sorted(directory.glob("*.db")):
-        root = SqliteVectorStore.read_root(db_path)
-        if root is None:
-            continue
-        if root == wanted or wanted in root.parents:
-            found[root] = db_path
-    return found
-
-
-def find_covering_index(settings: Settings, path: Path) -> tuple[Path, Path] | None:
-    """Return the nearest stored index whose tree contains *path*.
-
-    Asking about a directory inside an indexed tree should read what is
-    already there. Building a second index for it would embed every file
-    again, because a vector is shared only within one index file.
-    """
-    from ish.adapters.vector_store.sqlite import SqliteVectorStore
-
-    directory = index_dir(settings)
-    if not directory.is_dir():
-        return None
-
-    wanted = path.resolve()
-    best: tuple[Path, Path] | None = None
-    for db_path in sorted(directory.glob("*.db")):
-        tree = SqliteVectorStore.read_root(db_path)
-        if tree is None or tree not in wanted.parents:
-            continue
-        # Prefer the closest ancestor, which describes the path best.
-        if best is None or len(tree.parts) > len(best[0].parts):
-            best = (tree, db_path)
-    return best
-
-
-def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
-    """Build the vector store for one scanned tree.
+    Return the writable index of the named tree, or None when no index
+    may be written, beside the reader a search consults. The reader
+    holds the writable index too when there is one, so closing the
+    reader releases everything.
 
     Persist to disk unless the caller asked for a run that leaves none.
     """
     if settings.no_cache:
         from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 
-        return PurePythonVectorStore()
+        store = PurePythonVectorStore()
+        return store, store
 
-    from ish.adapters.vector_store.federated import FederatedVectorStore
+    from ish.adapters.vector_store.federated import FederatedReader
     from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
     identity = model_id(settings, embedder)
     resolved = root.resolve()
-    existing = find_indexes(settings, resolved) if settings.federate else {}
+    indexes = catalog(settings)
+    existing = indexes.below(resolved) if settings.federate else {}
 
     def open_index(path: Path, tree: Path) -> SqliteVectorStore:
         return SqliteVectorStore(path, model_id=identity, root=tree)
@@ -268,18 +184,21 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
     # several indexes reads them rather than starting a new one.
     primary = None
     if resolved in existing or not existing:
-        covering = None if existing else find_covering_index(settings, resolved)
+        covering = None if existing else indexes.covering(resolved)
         if covering is not None:
             tree, db_path = covering
             log.info(
                 "Reading the index for %s, which already covers %s", tree, resolved
             )
-            return open_index(db_path, tree)
-        primary = open_index(index_path(settings, resolved), resolved)
+            store = open_index(db_path, tree)
+            return store, store
+        primary = open_index(indexes.path_for(resolved), resolved)
 
     others = [open_index(db, tree) for tree, db in existing.items() if tree != resolved]
     if not others:
-        return primary
+        # Nothing below, so the named tree's own index is the whole search.
+        assert primary is not None
+        return primary, primary
 
     if primary is None and not settings.refresh:
         # Nothing here may be written, so a search reads whatever the
@@ -292,8 +211,11 @@ def build_vector_store(settings: Settings, root: Path, embedder: Embedder):
             len(others),
             resolved,
         )
-    log.info("Searching %d indexes under %s", len(others) + bool(primary), resolved)
-    return FederatedVectorStore(primary, others)
+    readers: list[VectorReader] = [*others]
+    if primary is not None:
+        readers.insert(0, primary)
+    log.info("Searching %d indexes under %s", len(readers), resolved)
+    return primary, FederatedReader(readers)
 
 
 def build_ignored_by(settings: Settings, root: Path):
@@ -325,23 +247,31 @@ def build_search(settings: Settings, root: Path) -> Search:
 
     # An index that belongs to a tree above this one holds more than was
     # asked for, so keep the answers inside the path.
-    if not settings.no_cache and find_covering_index(settings, resolved) is not None:
+    if not settings.no_cache and catalog(settings).covering(resolved) is not None:
         keep = _inside(resolved, keep)
 
+    primary, reader = build_stores(settings, root, embedder)
+    index = None
+    if primary is not None:
+        index = Index(
+            scan=build_scan(settings, root),
+            embedder=embedder,
+            vector_store=primary,
+            rebuild=settings.reindex,
+        )
     return Search(
-        scan=build_scan(settings, root),
         embedder=embedder,
-        vector_store=build_vector_store(settings, root, embedder),
-        reindex=settings.reindex,
+        reader=reader,
+        index=index,
         hybrid=not settings.no_hybrid,
         keep=keep,
     )
 
 
-def _inside(root: Path, keep):
+def _inside(root: Path, keep: ResultFilter) -> ResultFilter:
     """Return a filter that also requires a chunk to sit under *root*."""
 
-    def within(chunk) -> bool:
+    def within(chunk: Chunk) -> bool:
         path = chunk.path
         return (path == root or root in path.parents) and (keep is None or keep(chunk))
 
@@ -351,7 +281,7 @@ def _inside(root: Path, keep):
 def refresh_indexes(
     settings: Settings,
     root: Path,
-    on_progress=None,
+    on_progress: ProgressCallback | None = None,
     overrides: Mapping[str, Any] | None = None,
 ) -> list[Path]:
     """Bring every stored index at or below *root* up to date.
@@ -372,11 +302,13 @@ def refresh_indexes(
     from ish.settings import load_settings
 
     resolved = root.resolve()
-    trees = sorted(find_indexes(settings, resolved)) or [resolved]
+    trees = sorted(catalog(settings).below(resolved)) or [resolved]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
+        within = None
         if on_progress is not None:
-            on_progress(f"Refreshing {number} of {len(trees)}: {tree.name}")
+            within = _placed(on_progress, tree, number, len(trees))
+            within(Progress(REFRESH))
         # Each tree writes to its own index, so federation must be off.
         per_tree = replace(
             load_settings(overrides or {}, start=tree),
@@ -385,28 +317,37 @@ def refresh_indexes(
         )
         search = build_search(per_tree, tree)
         try:
-            search.build_index(tree, on_progress)
+            search.build_index(tree, within)
         finally:
             search.close()
     return trees
 
 
-def build_categorizer(settings: Settings):
-    """Return the function that sorts a chunk into a type."""
-    from ish.application.search import compile_categories
+def _placed(
+    report: ProgressCallback, tree: Path, number: int, count: int
+) -> ProgressCallback:
+    """Return *report*, told which tree of how many each step belongs to.
 
+    A count of files says nothing about which tree they are in, and a
+    refresh walks several.
+    """
+
+    def within(step: Progress) -> None:
+        report(step.within(tree, number, count))
+
+    return within
+
+
+def build_categorizer(settings: Settings) -> Categorizer:
+    """Return the function that sorts a chunk into a type."""
     return compile_categories(settings.type_patterns)
 
 
-def build_result_filter(settings: Settings, filters):
+def build_result_filter(settings: Settings, filters: Filters) -> ResultFilter:
     """Build the result filter, using the types the settings define."""
-    from ish.application.search import build_result_filter as make
-
-    return make(filters, build_categorizer(settings))
+    return make_result_filter(filters, build_categorizer(settings))
 
 
-def settings_filters(settings: Settings):
+def settings_filters(settings: Settings) -> Filters:
     """Return the result filters the configuration asks for."""
-    from ish.application.search import Filters
-
     return Filters(settings.lang, settings.under, settings.type)

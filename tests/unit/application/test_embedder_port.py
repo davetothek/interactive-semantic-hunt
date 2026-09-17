@@ -8,6 +8,8 @@ from ish.application.ports.embedder import Embedder
 class FakeEmbedder:
     """A stub embedder that returns a fixed vector for each input text."""
 
+    model_name = "fake"
+
     def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Return a [1.0, 0.0] vector for every text."""
         return [[1.0, 0.0] for _ in texts]

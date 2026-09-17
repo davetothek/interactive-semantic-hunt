@@ -13,7 +13,10 @@ from pathlib import Path
 import pytest
 from textual.widgets import Input, OptionList, Static
 
+from ish.application.filters import Filters, build_result_filter, parse_query
+from ish.application.progress import EMBED, Progress
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 from ish.interfaces.tui.app import IshApp
 
 # Long enough to clear the 200 ms debounce in do_search.
@@ -32,39 +35,51 @@ def chunk(symbol: str, language: str = "python", line: int = 1) -> Chunk:
     )
 
 
-class FakeSearch:
-    """Stand in for the Search use case."""
+class FakeSession:
+    """Stand in for the Ish session.
 
-    def __init__(self, chunks: Sequence[Chunk] | None = None, fail: str = "") -> None:
+    Resolve filters the way the session does, with the real parser and
+    filter builder, so the interface is tested against the contract it
+    relies on rather than a copy of it.
+    """
+
+    def __init__(
+        self,
+        chunks: Sequence[Chunk] | None = None,
+        fail: str = "",
+        filters: Filters | None = None,
+    ) -> None:
         if chunks is None:
             chunks = [chunk("alpha"), chunk("beta", line=5)]
         self._chunks = list(chunks)
         self._fail = fail
+        self._configured = filters or Filters()
         self.queries: list[str] = []
 
-    def build_index(self, root: Path, on_progress=None) -> Sequence[Chunk] | None:
+    def index(self, on_progress=None) -> int:
         if on_progress is not None:
-            on_progress("Embedding 1 of 2 chunks")
+            on_progress(Progress(EMBED, done=1, total=2))
         if self._fail:
             raise RuntimeError(self._fail)
-        return self._chunks
+        return len(self._chunks)
 
-    def search(
-        self,
-        query: str,
-        limit: int = 5,
-        keep=None,
-        hybrid=None,
-    ) -> Sequence[tuple[Chunk, float]]:
-        self.queries.append(query)
+    def filters_of(self, query: str = "") -> Filters:
+        _text, typed = parse_query(query)
+        return typed.or_else(self._configured)
+
+    def search(self, query: str, limit: int = 5) -> list[Match]:
+        text, _typed = parse_query(query)
+        keep = build_result_filter(self.filters_of(query))
+        self.queries.append(text)
         chosen = [
             c
             for c in self._chunks
-            if query.lower() in (c.symbol or "").lower() and (keep is None or keep(c))
+            if text.lower() in (c.symbol or "").lower() and (keep is None or keep(c))
         ]
-        return [(c, 0.91) for c in chosen[:limit]]
+        return [Match(c, 0.91) for c in chosen[:limit]]
 
-    def all_chunks(self, keep=None) -> list[Chunk]:
+    def chunks(self, query: str = "") -> list[Chunk]:
+        keep = build_result_filter(self.filters_of(query))
         return [c for c in self._chunks if keep is None or keep(c)]
 
     def close(self) -> None:
@@ -101,7 +116,7 @@ class TestStartup:
     """Verify the state the user meets when the index finishes."""
 
     def test_input_is_enabled_and_focused(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -113,7 +128,7 @@ class TestStartup:
         run(body())
 
     def test_every_chunk_is_listed(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -124,7 +139,7 @@ class TestStartup:
 
     def test_listing_shows_no_score(self) -> None:
         """Nothing has been searched, so a score would be meaningless."""
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -136,7 +151,7 @@ class TestStartup:
         run(body())
 
     def test_empty_index_reports_it(self) -> None:
-        app = IshApp(FakeSearch(chunks=[]), Path("."))
+        app = IshApp(FakeSession(chunks=[]), Path("."))
 
         async def body():
             async with app.run_test():
@@ -150,7 +165,7 @@ class TestSearching:
     """Verify the typing path."""
 
     def test_typing_runs_one_debounced_search(self) -> None:
-        fake = FakeSearch()
+        fake = FakeSession()
         app = IshApp(fake, Path("."))
 
         async def body():
@@ -164,7 +179,7 @@ class TestSearching:
         run(body())
 
     def test_results_show_a_score(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -177,7 +192,7 @@ class TestSearching:
         run(body())
 
     def test_clearing_restores_the_full_listing(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -201,7 +216,7 @@ class TestPreview:
     """Verify the pane beside the list."""
 
     def test_preview_follows_the_highlight(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -215,7 +230,7 @@ class TestPreview:
     def test_preview_uses_the_chunk_language(self) -> None:
         """A non-Python chunk must not be highlighted as Python."""
         app = IshApp(
-            FakeSearch(chunks=[chunk("Intro", language="markdown")]), Path(".")
+            FakeSession(chunks=[chunk("Intro", language="markdown")]), Path(".")
         )
 
         async def body():
@@ -227,7 +242,7 @@ class TestPreview:
         run(body())
 
     def test_out_of_range_index_is_ignored(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -242,7 +257,7 @@ class TestSelection:
     """Verify what the app hands back to the shell."""
 
     def test_selecting_exits_with_the_chunk(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -261,7 +276,7 @@ class TestIndexFailure:
     """Verify that a backend failure is shown, not swallowed."""
 
     def test_error_reaches_the_preview_pane(self) -> None:
-        app = IshApp(FakeSearch(fail="Cannot reach Ollama"), Path("."))
+        app = IshApp(FakeSession(fail="Cannot reach Ollama"), Path("."))
 
         async def body():
             async with app.run_test():
@@ -272,7 +287,7 @@ class TestIndexFailure:
 
     def test_typing_after_a_failure_searches_nothing(self) -> None:
         """Searching a dead index would only produce more errors."""
-        fake = FakeSearch(fail="boom")
+        fake = FakeSession(fail="boom")
         app = IshApp(fake, Path("."))
 
         async def body():
@@ -286,7 +301,7 @@ class TestIndexFailure:
 
     def test_the_error_stays_on_screen_while_typing(self) -> None:
         """Whatever is typed, the reason must remain readable."""
-        app = IshApp(FakeSearch(fail="Cannot reach Ollama"), Path("."))
+        app = IshApp(FakeSession(fail="Cannot reach Ollama"), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -304,10 +319,10 @@ class TestLimit:
     def test_limit_is_forwarded(self) -> None:
         captured: list[int] = []
 
-        class Recording(FakeSearch):
-            def search(self, query: str, limit: int = 5, keep=None, hybrid=None):
+        class Recording(FakeSession):
+            def search(self, query: str, limit: int = 5):
                 captured.append(limit)
-                return super().search(query, limit, keep, hybrid)
+                return super().search(query, limit)
 
         app = IshApp(Recording(), Path("."), limit=17)
 
@@ -323,7 +338,7 @@ class TestLimit:
 
 @pytest.mark.parametrize("key", ["escape"])
 def test_escape_quits(key: str) -> None:
-    app = IshApp(FakeSearch(), Path("."))
+    app = IshApp(FakeSession(), Path("."))
 
     async def body():
         async with app.run_test() as pilot:
@@ -338,7 +353,7 @@ class TestKeyboardNavigation:
     """Verify fzf-style keys while the query field keeps focus."""
 
     def _navigate(self, keys: list[str]):
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -370,7 +385,7 @@ class TestKeyboardNavigation:
         assert self._navigate(["down"] * 9)[0] == 1
 
     def test_navigation_on_an_empty_list_is_safe(self) -> None:
-        app = IshApp(FakeSearch(chunks=[]), Path("."))
+        app = IshApp(FakeSession(chunks=[]), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -381,7 +396,7 @@ class TestKeyboardNavigation:
         run(body())
 
     def test_enter_selects_the_highlighted_result(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -395,7 +410,7 @@ class TestKeyboardNavigation:
         assert app.return_value[0].symbol == "beta"
 
     def test_enter_with_nothing_highlighted_does_not_exit(self) -> None:
-        app = IshApp(FakeSearch(chunks=[]), Path("."))
+        app = IshApp(FakeSession(chunks=[]), Path("."))
 
         async def body():
             async with app.run_test():
@@ -409,7 +424,7 @@ class TestKeyboardNavigation:
 
 def test_selecting_in_the_list_exits() -> None:
     """The user may also move focus into the list and press enter there."""
-    app = IshApp(FakeSearch(), Path("."))
+    app = IshApp(FakeSession(), Path("."))
 
     async def body():
         async with app.run_test() as pilot:
@@ -427,8 +442,8 @@ def test_selecting_in_the_list_exits() -> None:
 class TestInlineFilters:
     """Verify filters typed into the query itself."""
 
-    def _mixed(self) -> FakeSearch:
-        return FakeSearch(
+    def _mixed(self) -> FakeSession:
+        return FakeSession(
             chunks=[
                 chunk("alpha"),
                 chunk("alpha_doc", language="markdown", line=5),
@@ -460,10 +475,13 @@ class TestInlineFilters:
                 await asyncio.sleep(SETTLE)
 
         run(body())
-        assert fake.queries == ["alpha"]
+        # A slow keystroke may let the debounce fire on a prefix, so judge
+        # every search that ran rather than how many there were.
+        assert fake.queries[-1] == "alpha"
+        assert all("lang:" not in query for query in fake.queries)
 
     def test_under_narrows_by_path(self) -> None:
-        fake = FakeSearch(
+        fake = FakeSession(
             chunks=[
                 Chunk(
                     path=Path("/proj/src/a.py"),
@@ -513,8 +531,9 @@ class TestInlineFilters:
 
         symbols, queries = run(body())
         assert symbols == ["alpha_doc"]
-        # Nothing was searched, because nothing was asked.
-        assert queries == []
+        # The finished line asks nothing, so it must not have searched. A
+        # slow keystroke may have searched a prefix such as "lang".
+        assert "" not in queries
 
     def test_active_filters_are_shown(self) -> None:
         app = IshApp(self._mixed(), Path("."))
@@ -572,13 +591,13 @@ class TestIndexProgress:
 
         release = threading.Event()
 
-        class Held(FakeSearch):
-            def build_index(self, root, on_progress=None):
+        class Held(FakeSession):
+            def index(self, on_progress=None):
                 if on_progress:
-                    on_progress("Embedding 120 of 274 chunks")
+                    on_progress(Progress(EMBED, done=120, total=274))
                 # Wait rather than sleep, so the test never races a clock.
                 release.wait(timeout=5)
-                return self._chunks
+                return len(self._chunks)
 
         app = IshApp(Held(), Path("."))
         seen: list[str] = []
@@ -597,7 +616,7 @@ class TestIndexProgress:
         assert any("120 of 274" in text for text in seen)
 
     def test_a_message_is_shown_before_any_progress(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test():
@@ -606,7 +625,7 @@ class TestIndexProgress:
         assert run(body()).strip() != ""
 
     def test_progress_gives_way_to_the_results(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body():
             async with app.run_test() as pilot:
@@ -634,7 +653,7 @@ class TestQueryLineFilters:
         return [code, doc]
 
     def test_type_narrows_the_results(self) -> None:
-        app = IshApp(FakeSearch(self._mixed()), Path("."))
+        app = IshApp(FakeSession(self._mixed()), Path("."))
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -648,7 +667,7 @@ class TestQueryLineFilters:
 
     def test_the_filter_is_kept_out_of_the_query(self) -> None:
         """The embedder must see the question, not how it was narrowed."""
-        fake = FakeSearch(self._mixed())
+        fake = FakeSession(self._mixed())
         app = IshApp(fake, Path("."))
 
         async def body() -> None:
@@ -661,7 +680,7 @@ class TestQueryLineFilters:
         run(body())
 
     def test_the_active_filter_is_shown(self) -> None:
-        app = IshApp(FakeSearch(self._mixed()), Path("."))
+        app = IshApp(FakeSession(self._mixed()), Path("."))
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -674,10 +693,8 @@ class TestQueryLineFilters:
 
     def test_a_command_line_filter_still_applies(self) -> None:
         """A narrowing passed as --type holds until the query overrides it."""
-        from ish.application.search import Filters
-
         app = IshApp(
-            FakeSearch(self._mixed()), Path("."), filters=Filters(type=("doc",))
+            FakeSession(self._mixed(), filters=Filters(type=("doc",))), Path(".")
         )
 
         async def body() -> None:
@@ -690,10 +707,8 @@ class TestQueryLineFilters:
         run(body())
 
     def test_the_query_line_overrides_the_command_line(self) -> None:
-        from ish.application.search import Filters
-
         app = IshApp(
-            FakeSearch(self._mixed()), Path("."), filters=Filters(type=("doc",))
+            FakeSession(self._mixed(), filters=Filters(type=("doc",))), Path(".")
         )
 
         async def body() -> None:
@@ -718,7 +733,7 @@ class TestListingIsCapped:
         return [chunk(f"sym{i}", line=i + 1) for i in range(count)]
 
     def test_startup_mounts_at_most_the_limit(self) -> None:
-        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+        app = IshApp(FakeSession(self._many(500)), Path("."), limit=25)
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -728,7 +743,7 @@ class TestListingIsCapped:
         run(body())
 
     def test_the_header_says_how_many_there_are(self) -> None:
-        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+        app = IshApp(FakeSession(self._many(500)), Path("."), limit=25)
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -738,7 +753,7 @@ class TestListingIsCapped:
         run(body())
 
     def test_a_short_listing_shows_only_its_size(self) -> None:
-        app = IshApp(FakeSearch(self._many(3)), Path("."), limit=25)
+        app = IshApp(FakeSession(self._many(3)), Path("."), limit=25)
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -748,7 +763,7 @@ class TestListingIsCapped:
         run(body())
 
     def test_clearing_the_query_stays_capped(self) -> None:
-        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+        app = IshApp(FakeSession(self._many(500)), Path("."), limit=25)
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -763,7 +778,7 @@ class TestListingIsCapped:
         run(body())
 
     def test_the_filter_is_still_described(self) -> None:
-        app = IshApp(FakeSearch(self._many(500)), Path("."), limit=25)
+        app = IshApp(FakeSession(self._many(500)), Path("."), limit=25)
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -792,16 +807,19 @@ class TestStaleWorkIsDropped:
             self.begun: list[str] = []
             self._chunks = [chunk(f"sym{i}") for i in range(5)]
 
-        def build_index(self, root, on_progress=None):
+        def index(self, on_progress=None):
+            return len(self._chunks)
+
+        def filters_of(self, query=""):
+            return Filters()
+
+        def chunks(self, query=""):
             return self._chunks
 
-        def all_chunks(self, keep=None):
-            return self._chunks
-
-        def search(self, query, limit=5, keep=None, hybrid=None):
+        def search(self, query, limit=5):
             self.begun.append(query)
             time.sleep(self.delay)
-            return [(c, 0.5) for c in self._chunks[:limit]]
+            return [Match(c, 0.5) for c in self._chunks[:limit]]
 
         def close(self) -> None:
             return None
@@ -847,14 +865,14 @@ class TestStaleWorkIsDropped:
     def test_out_of_date_work_returns_nothing(self) -> None:
         app = IshApp(self.Slow(), Path("."), limit=5)
         app._generation = 7
-        assert app._search_if_current(6, "old", None) is None
-        assert app._listing_if_current(6, None) is None
+        assert app._search_if_current(6, "old") is None
+        assert app._listing_if_current(6, "") is None
 
     def test_current_work_is_done(self) -> None:
         app = IshApp(self.Slow(delay=0.0), Path("."), limit=5)
         app._generation = 7
-        assert app._search_if_current(7, "now", None) is not None
-        assert app._listing_if_current(7, None) is not None
+        assert app._search_if_current(7, "now") is not None
+        assert app._listing_if_current(7, "") is not None
 
 
 class TestQuittingIsImmediate:
@@ -871,17 +889,20 @@ class TestQuittingIsImmediate:
         def __init__(self) -> None:
             self.entered = threading.Event()
 
-        def build_index(self, root, on_progress=None):
+        def index(self, on_progress=None):
             if on_progress is not None:
-                on_progress("Embedding 1 of 100000 chunks")
+                on_progress(Progress(EMBED, done=1, total=100000))
             self.entered.set()
             time.sleep(30)
+            return 0
+
+        def filters_of(self, query=""):
+            return Filters()
+
+        def chunks(self, query=""):
             return []
 
-        def all_chunks(self, keep=None):
-            return []
-
-        def search(self, query, limit=5, keep=None, hybrid=None):
+        def search(self, query, limit=5):
             self.entered.set()
             time.sleep(30)
             return []
@@ -951,18 +972,21 @@ class TestTypingBeforeTheIndexOpens:
             self.queries: list[str] = []
             self._chunks = [chunk("alpha"), chunk("beta", line=5)]
 
-        def build_index(self, root, on_progress=None):
+        def index(self, on_progress=None):
             if on_progress is not None:
-                on_progress("Embedding 1 of 2 chunks")
+                on_progress(Progress(EMBED, done=1, total=2))
             time.sleep(self.delay)
+            return len(self._chunks)
+
+        def filters_of(self, query=""):
+            return Filters()
+
+        def chunks(self, query=""):
             return self._chunks
 
-        def all_chunks(self, keep=None):
-            return self._chunks
-
-        def search(self, query, limit=5, keep=None, hybrid=None):
+        def search(self, query, limit=5):
             self.queries.append(query)
-            return [(c, 0.9) for c in self._chunks if query in (c.symbol or "")]
+            return [Match(c, 0.9) for c in self._chunks if query in (c.symbol or "")]
 
         def close(self) -> None:
             return None
@@ -1025,7 +1049,7 @@ class TestTypingBeforeTheIndexOpens:
                 await pilot.pause()
                 await pilot.press(*"alpha")
                 await asyncio.sleep(0.3)
-                assert "Embedding 1 of 2 chunks" in preview_text(app)
+                assert "Embedded 1 of 2 chunks" in preview_text(app)
 
         run(body())
 
@@ -1045,7 +1069,7 @@ class TestWorkerErrors:
     """Verify a failure on the search thread reaches the caller."""
 
     def test_an_exception_is_carried_back(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body() -> None:
             async with app.run_test():
@@ -1059,7 +1083,7 @@ class TestWorkerErrors:
         run(body())
 
     def test_a_result_is_carried_back(self) -> None:
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
 
         async def body() -> None:
             async with app.run_test():
@@ -1069,10 +1093,10 @@ class TestWorkerErrors:
 
     def test_stale_work_reports_nothing(self) -> None:
         """Both paths return None once a later keystroke has replaced them."""
-        app = IshApp(FakeSearch(), Path("."))
+        app = IshApp(FakeSession(), Path("."))
         app._generation = 2
-        assert app._search_if_current(1, "old", None) is None
-        assert app._listing_if_current(1, None) is None
+        assert app._search_if_current(1, "old") is None
+        assert app._listing_if_current(1, "") is None
 
 
 class TestStaleResultsAreNotShown:
@@ -1083,7 +1107,7 @@ class TestStaleResultsAreNotShown:
     """
 
     def test_a_stale_search_leaves_the_results_alone(self) -> None:
-        app = IshApp(FakeSearch(), Path("."), debounce_ms=10)
+        app = IshApp(FakeSession(), Path("."), debounce_ms=10)
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -1094,7 +1118,7 @@ class TestStaleResultsAreNotShown:
                 assert shown
 
                 # Whatever comes back is out of date.
-                app._search_if_current = lambda generation, text, keep: None
+                app._search_if_current = lambda generation, query: None
                 await pilot.press(*"bb")
                 await asyncio.sleep(SETTLE)
                 assert app._current_results is shown
@@ -1102,7 +1126,7 @@ class TestStaleResultsAreNotShown:
         run(body())
 
     def test_a_stale_listing_leaves_the_results_alone(self) -> None:
-        app = IshApp(FakeSearch(), Path("."), debounce_ms=10)
+        app = IshApp(FakeSession(), Path("."), debounce_ms=10)
 
         async def body() -> None:
             async with app.run_test() as pilot:
@@ -1113,8 +1137,8 @@ class TestStaleResultsAreNotShown:
 
                 # Deleting a character searches too, so silence both
                 # paths and check that neither writes to the screen.
-                app._listing_if_current = lambda generation, keep: None
-                app._search_if_current = lambda generation, text, keep: None
+                app._listing_if_current = lambda generation, query: None
+                app._search_if_current = lambda generation, query: None
                 for _ in range(5):
                     await pilot.press("backspace")
                 await asyncio.sleep(SETTLE)

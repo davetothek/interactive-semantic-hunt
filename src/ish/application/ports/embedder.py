@@ -15,6 +15,13 @@ from typing import Protocol, runtime_checkable
 class Embedder(Protocol):
     """Contract for generating text embeddings."""
 
+    model_name: str
+    """Name of the model producing the vectors.
+
+    Key stored vectors by it, so changing the model never mixes vectors
+    that mean different things.
+    """
+
     def embed_documents(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Convert stored texts into vectors.
 

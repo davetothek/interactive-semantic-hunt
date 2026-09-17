@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from ish.interfaces.cli.complete import main
-from ish.interfaces.complete import KEYS, candidates, complete
+from ish.interfaces.completion import KEYS, candidates, complete
 from ish.settings import Settings
 
 

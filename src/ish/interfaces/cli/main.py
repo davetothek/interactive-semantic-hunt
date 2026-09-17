@@ -7,49 +7,58 @@ import logging
 import os
 import shutil
 import sys
+import time
 
 from ish import bootstrap
-from ish.application.search import parse_query
+from ish.application.progress import EMBED, Progress
 from ish.interfaces.cli.args import CliArgs
-from ish.interfaces.cli.log import resolve_color, setup_logging
-from ish.interfaces.format import (
-    format_chunk_line,
-    format_grep_line,
-    format_result_line,
-    format_selection,
-)
+from ish.interfaces.format import format_selection, render
+from ish.interfaces.log import resolve_color, setup_logging
+from ish.interfaces.python.api import Ish
 
 log = logging.getLogger("ish.cli")
 
 
-def _render(chunk, shape: str, score: float | None = None) -> str:
-    """Render one result in the shape the caller asked for."""
-    if shape == "grep":
-        return format_grep_line(chunk, score)
-    if score is None:
-        return format_chunk_line(chunk)
-    return format_result_line(chunk, score)
-
-
-def _progress(message: str) -> None:
-    """Show what a long refresh is doing, on one line.
+class ProgressLine:
+    """Show what a long refresh is doing, on one line of the terminal.
 
     A first index of a large tree runs for minutes, and a command that
     prints nothing cannot be told from one that has stopped. Keep it to
-    stderr, so a piped stdout still holds only results.
+    stderr, so a piped stdout still holds only results. Say how fast
+    the embedding goes, because a blocked run and a slow one otherwise
+    look the same.
     """
-    if not sys.stderr.isatty():
-        # Not a terminal, so the log already carries it at -v.
-        return
-    sys.stderr.write(f"\r\033[2K{message[: _width() - 1]}")
-    sys.stderr.flush()
 
+    def __init__(self) -> None:
+        self._embedding_began: float | None = None
 
-def _progress_done() -> None:
-    """Clear the progress line, leaving the output as it would be."""
-    if sys.stderr.isatty():
-        sys.stderr.write("\r\033[2K")
+    def show(self, step: Progress) -> None:
+        """Rewrite the line with *step*."""
+        if not sys.stderr.isatty():
+            # Not a terminal, so the log already carries it at -v.
+            return
+        sys.stderr.write(f"\r\033[2K{self.render(step)[: _width() - 1]}")
         sys.stderr.flush()
+
+    def render(self, step: Progress) -> str:
+        """Return the line for *step*, with a rate while embedding."""
+        text = str(step)
+        if step.stage != EMBED:
+            self._embedding_began = None
+            return text
+        if step.done == 0 or self._embedding_began is None:
+            self._embedding_began = time.monotonic()
+            return text
+        elapsed = time.monotonic() - self._embedding_began
+        if elapsed <= 0:
+            return text
+        return f"{text}, {step.done / elapsed:.1f} chunks/s"
+
+    def clear(self) -> None:
+        """Clear the line, leaving the output as it would be."""
+        if sys.stderr.isatty():
+            sys.stderr.write("\r\033[2K")
+            sys.stderr.flush()
 
 
 def _width() -> int:
@@ -59,22 +68,9 @@ def _width() -> int:
 
 def _run_query(args: CliArgs) -> int:
     """Search for the query and print the ranked results."""
-    # Accept `lang:cpp type:doc` inside the query as well as as flags,
-    # so a query copied from the interactive view behaves the same here.
-    text, typed = parse_query(args.query)
-    keep = bootstrap.build_result_filter(
-        args.settings, typed.or_else(bootstrap.settings_filters(args.settings))
-    )
-
-    search_use_case = bootstrap.build_search(args.settings, args.path)
-    try:
-        results = search_use_case.run(
-            args.path, text, limit=args.settings.limit, keep=keep
-        )
-        for chunk, score in results:
-            sys.stdout.write(f"{_render(chunk, args.settings.format, score)}\n")
-    finally:
-        search_use_case.close()
+    with Ish(args.path, settings=args.settings) as ish:
+        for chunk, score in ish.search(args.query):
+            sys.stdout.write(f"{render(chunk, args.settings.format, score)}\n")
     return 0
 
 
@@ -110,19 +106,14 @@ def _run_tui(args: CliArgs) -> int:
     from ish.interfaces.tui.app import IshApp
 
     _sync_terminal_size()
-    search_use_case = bootstrap.build_search(args.settings, args.path)
-    try:
+    with Ish(args.path, settings=args.settings) as ish:
         app = IshApp(
-            search_use_case,
+            ish,
             args.path,
             limit=args.settings.tui_limit,
             debounce_ms=args.settings.tui_debounce_ms,
-            filters=bootstrap.settings_filters(args.settings),
-            categorize=bootstrap.build_categorizer(args.settings),
         )
         selected = app.run()
-    finally:
-        search_use_case.close()
 
     if selected:
         chunk, _score = selected
@@ -132,13 +123,8 @@ def _run_tui(args: CliArgs) -> int:
 
 def _run_scan(args: CliArgs) -> int:
     """Scan the path and list every chunk in the plain output format."""
-    scanner = bootstrap.build_scan(args.settings, args.path)
-    keep = bootstrap.build_result_filter(
-        args.settings, bootstrap.settings_filters(args.settings)
-    )
-    for chunk in scanner.run(args.path):
-        if keep is None or keep(chunk):
-            sys.stdout.write(f"{_render(chunk, args.settings.format)}\n")
+    for chunk in Ish(args.path, settings=args.settings).scan():
+        sys.stdout.write(f"{render(chunk, args.settings.format)}\n")
     return 0
 
 
@@ -164,13 +150,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.settings.refresh:
+            line = ProgressLine()
             bootstrap.refresh_indexes(
                 args.settings,
                 args.path,
-                on_progress=_progress,
+                on_progress=line.show,
                 overrides=args.overrides,
             )
-            _progress_done()
+            line.clear()
         if args.query:
             return _run_query(args)
         if args.interactive:

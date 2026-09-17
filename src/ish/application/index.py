@@ -7,12 +7,20 @@ files that no longer exist.
 
 import hashlib
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.vector_store import FileStamp, VectorStore
+from ish.application.progress import (
+    DISCOVER,
+    EMBED,
+    READ,
+    READY,
+    Progress,
+    ProgressCallback,
+)
 from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
 
@@ -80,14 +88,19 @@ class Index:
         scan: Scan,
         embedder: Embedder,
         vector_store: VectorStore,
+        rebuild: bool = False,
     ) -> None:
         self._scanner = scan
         self._embedder = embedder
         self._store = vector_store
-        self._report: Callable[[str], None] = lambda _message: None
+        # Discard the stored files before the first refresh, so every
+        # file is parsed again. Vectors stay, keyed by content, so a
+        # rebuild costs parsing rather than embedding.
+        self._rebuild = rebuild
+        self._report: ProgressCallback = lambda _step: None
 
     def refresh(
-        self, root: Path, on_progress: Callable[[str], None] | None = None
+        self, root: Path, on_progress: ProgressCallback | None = None
     ) -> IndexStats:
         """Bring the store in step with *root* and report what changed.
 
@@ -95,8 +108,12 @@ class Index:
         for minutes, and an interface with nothing to show cannot be
         told apart from one that has hung.
         """
-        self._report = on_progress or (lambda _message: None)
-        self._report("Looking for source files")
+        self._report = on_progress or (lambda _step: None)
+        if self._rebuild:
+            log.info("Discarding the stored index for %s", root)
+            self._store.clear()
+            self._rebuild = False
+        self._report(Progress(DISCOVER))
         found = self._stamp_all(self._scanner.discover(root))
         stored = self._store.file_stamps()
 
@@ -110,7 +127,7 @@ class Index:
             removed,
         )
         if not stale:
-            self._report(f"Index ready: {len(found)} files")
+            self._report(Progress(READY, total=len(found)))
             return IndexStats(files_seen=len(found), files_removed=removed)
 
         parsed, embedded = self._reindex(stale, found)
@@ -186,7 +203,7 @@ class Index:
 
         for number, path in enumerate(stale, 1):
             if number % 25 == 0 or number == len(stale):
-                self._report(f"Reading {number} of {len(stale)} files")
+                self._report(Progress(READ, done=number, total=len(stale)))
             chunks = self._scanner.parse_file(path)
             if chunks is None:
                 continue
@@ -219,7 +236,7 @@ class Index:
         ordered = sorted(missing)
         reused = len(texts) - len(ordered)
         log.info("Embedding %d new chunks (%d reused)", len(ordered), reused)
-        self._report(f"Embedding {len(ordered)} chunks ({reused} reused)")
+        self._report(Progress(EMBED, total=len(ordered), reused=reused))
 
         done = 0
         for start in range(0, len(ordered), EMBED_BATCH):
@@ -229,5 +246,5 @@ class Index:
             done += len(batch)
             if len(ordered) > EMBED_BATCH:
                 log.info("  embedded %d of %d", done, len(ordered))
-            self._report(f"Embedded {done} of {len(ordered)} chunks")
+            self._report(Progress(EMBED, done=done, total=len(ordered), reused=reused))
         return done

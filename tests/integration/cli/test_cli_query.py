@@ -34,7 +34,8 @@ def test_query_output(
         end_line=2,
         text="pass",
     )
-    mock_search_instance.run.return_value = [(c1, 0.95)]
+    mock_search_instance.build_index.return_value = 1
+    mock_search_instance.search.return_value = [(c1, 0.95)]
 
     monkeypatch.setattr("ish.bootstrap.Search", mock_search_class)
 
@@ -46,8 +47,9 @@ def test_query_output(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "[0.95] foo.py:1-2  function  foo" in out
-    mock_search_instance.run.assert_called_once_with(
-        project.resolve(), "my search", limit=5, keep=None
+    mock_search_instance.build_index.assert_called_once_with(project.resolve(), None)
+    mock_search_instance.search.assert_called_once_with(
+        "my search", 5, keep=None, hybrid=None
     )
 
 
@@ -73,7 +75,8 @@ def test_query_output_ollama(
         end_line=2,
         text="pass",
     )
-    mock_search_instance.run.return_value = [(c1, 0.95)]
+    mock_search_instance.build_index.return_value = 1
+    mock_search_instance.search.return_value = [(c1, 0.95)]
 
     monkeypatch.setattr("ish.bootstrap.Search", mock_search_class)
 
@@ -85,8 +88,9 @@ def test_query_output_ollama(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "[0.95] foo.py:1-2  function  foo" in out
-    mock_search_instance.run.assert_called_once_with(
-        project.resolve(), "my search", limit=5, keep=None
+    mock_search_instance.build_index.assert_called_once_with(project.resolve(), None)
+    mock_search_instance.search.assert_called_once_with(
+        "my search", 5, keep=None, hybrid=None
     )
 
 
@@ -111,7 +115,8 @@ def test_query_output_st(
         end_line=2,
         text="pass",
     )
-    mock_search_instance.run.return_value = [(c1, 0.95)]
+    mock_search_instance.build_index.return_value = 1
+    mock_search_instance.search.return_value = [(c1, 0.95)]
     monkeypatch.setattr("ish.bootstrap.Search", mock_search_class)
 
     monkeypatch.setattr(

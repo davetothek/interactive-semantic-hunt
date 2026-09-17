@@ -1,9 +1,13 @@
-"""Expose the public Python API for programmatic use.
+"""Expose the public Python API, and the session every interface shares.
 
-Offer the same three things the other interfaces offer — search a tree,
-list what is indexed, and report what the index holds — without a
-process start between calls. A long-lived `Ish` keeps its indexes open,
-so a second query costs a search rather than an interpreter.
+Offer the same things every interface offers — search a tree, list what
+is indexed, scan what is on disk, and report what the index holds —
+without a process start between calls. A long-lived `Ish` keeps its
+index open, so a second query costs a search rather than an interpreter.
+
+The CLI, the TUI, and the MCP server are thin skins over this class.
+Filter precedence, index lifetime, and the join between settings and
+use cases live here once, so the four interfaces cannot drift.
 
 Import this module rather than the package root: `ish` itself must stay
 free of layer imports, and `tests/unit/test_package.py` enforces that.
@@ -16,23 +20,20 @@ free of layer imports, and `tests/unit/test_package.py` enforces that.
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 
 from ish import bootstrap
-from ish.application.search import (
-    Filters,
-    Search,
-    parse_query,
-)
+from ish.application.filters import Filters, parse_query
+from ish.application.progress import ProgressCallback
+from ish.application.search import Search
 from ish.domain.chunk import Chunk
+from ish.domain.match import Match
 from ish.settings import Settings, load_settings
 
 log = logging.getLogger(__name__)
-
-Result = tuple[Chunk, float]
 
 
 class Ish:
@@ -40,6 +41,11 @@ class Ish:
 
     Hold the index open for as long as the object lives. Close it with
     `close()`, or use the object as a context manager.
+
+    Bring the index up to date once, on the first question, and then
+    answer from what is stored. Call `index()` to bring it up to date
+    again; a resident interface does that on a thread, so a question
+    never waits for a walk of the tree.
     """
 
     def __init__(
@@ -61,6 +67,7 @@ class Ish:
         base = settings if settings is not None else load_settings(start=self.path)
         self.settings = replace(base, **overrides) if overrides else base
         self._search: Search | None = None
+        self._indexed = False
 
     # ------------------------------------------------------------------
     # Lifetime
@@ -82,6 +89,7 @@ class Ish:
         if self._search is not None:
             self._search.close()
             self._search = None
+        self._indexed = False
 
     @property
     def _use_case(self) -> Search:
@@ -94,18 +102,22 @@ class Ish:
     # Indexing
     # ------------------------------------------------------------------
 
-    def index(self, on_progress: Callable[[str], None] | None = None) -> int:
+    def index(self, on_progress: ProgressCallback | None = None) -> int:
         """Bring this tree's index up to date. Return the chunks it holds.
 
         Report progress through *on_progress*, since a first index of a
         large tree runs for minutes.
         """
-        chunks = self._use_case.build_index(self.path, on_progress)
-        return len(chunks) if chunks else 0
+        held = self._use_case.build_index(self.path, on_progress)
+        self._indexed = True
+        return held
 
-    def refresh_all(
-        self, on_progress: Callable[[str], None] | None = None
-    ) -> list[Path]:
+    def _ensure_indexed(self) -> None:
+        """Bring the index up to date once, before the first question."""
+        if not self._indexed:
+            self.index()
+
+    def refresh_all(self, on_progress: ProgressCallback | None = None) -> list[Path]:
         """Bring every index at or below this tree up to date.
 
         A search of a parent reads the indexes beneath it and writes to
@@ -118,6 +130,24 @@ class Ish:
     # Reading
     # ------------------------------------------------------------------
 
+    def filters_of(
+        self,
+        query: str = "",
+        *,
+        lang: Sequence[str] = (),
+        under: str = "",
+        type: Sequence[str] = (),
+    ) -> Filters:
+        """Return the filters a question will run under.
+
+        A filter typed into the query wins over one passed as an
+        argument, which wins over the configured one. Every interface
+        resolves them here, so they all rank the three the same way.
+        """
+        _text, typed = parse_query(query)
+        asked = Filters(tuple(lang), under, tuple(type))
+        return typed.or_else(asked.or_else(bootstrap.settings_filters(self.settings)))
+
     def search(
         self,
         query: str,
@@ -127,46 +157,66 @@ class Ish:
         under: str = "",
         type: Sequence[str] = (),
         hybrid: bool | None = None,
-    ) -> list[Result]:
+    ) -> list[Match]:
         """Return the best matching chunks, most similar first.
 
         Read `lang:`, `under:`, and `type:` out of *query* as well as
         from the arguments, so a line typed by a person works unchanged.
-        A filter in the query wins over one passed here.
+        Raise ``ValueError`` when nothing is left to search for once the
+        filter words are taken out, or when a filter is malformed.
         """
-        text, typed = parse_query(query)
-        filters = typed.or_else(
-            Filters(tuple(lang), under, tuple(type)).or_else(
-                bootstrap.settings_filters(self.settings)
-            )
+        text, _typed = parse_query(query)
+        if not text:
+            raise ValueError("The query holds only filters. Add words to search for.")
+        keep = bootstrap.build_result_filter(
+            self.settings, self.filters_of(query, lang=lang, under=under, type=type)
         )
-        use_case = self._use_case
-        if use_case.build_index(self.path) is None:
-            return []
+        self._ensure_indexed()
         return list(
-            use_case.search(
+            self._use_case.search(
                 text,
                 limit if limit is not None else self.settings.limit,
-                keep=bootstrap.build_result_filter(self.settings, filters),
+                keep=keep,
                 hybrid=hybrid,
             )
         )
 
     def chunks(
         self,
+        query: str = "",
         *,
         lang: Sequence[str] = (),
         under: str = "",
         type: Sequence[str] = (),
     ) -> list[Chunk]:
-        """Return every indexed chunk the filters allow, unranked."""
-        filters = Filters(tuple(lang), under, tuple(type)).or_else(
-            bootstrap.settings_filters(self.settings)
+        """Return every indexed chunk the filters allow, unranked.
+
+        Read filter words out of *query* the way `search()` does, so a
+        query line with no words left lists what it allows.
+        """
+        keep = bootstrap.build_result_filter(
+            self.settings, self.filters_of(query, lang=lang, under=under, type=type)
         )
-        self._use_case.build_index(self.path)
-        return self._use_case.all_chunks(
-            bootstrap.build_result_filter(self.settings, filters)
+        self._ensure_indexed()
+        return self._use_case.all_chunks(keep)
+
+    def scan(
+        self,
+        *,
+        lang: Sequence[str] = (),
+        under: str = "",
+        type: Sequence[str] = (),
+    ) -> list[Chunk]:
+        """Return every chunk the parsers find on disk right now, unranked.
+
+        Read the tree rather than the index, so the answer needs no
+        embedding backend and shows the files as they are.
+        """
+        keep = bootstrap.build_result_filter(
+            self.settings, self.filters_of(lang=lang, under=under, type=type)
         )
+        found = bootstrap.build_scan(self.settings, self.path).run(self.path)
+        return [chunk for chunk in found if keep is None or keep(chunk)]
 
     def status(self) -> dict[str, object]:
         """Report what is indexed for this tree.
@@ -174,6 +224,7 @@ class Ish:
         Count the chunks by language and by kind, so a caller can see
         what a search can reach without listing all of it.
         """
+        self._ensure_indexed()
         chunks = self._use_case.all_chunks()
         sort_into = bootstrap.build_categorizer(self.settings)
         languages: dict[str, int] = {}
@@ -186,7 +237,7 @@ class Ish:
             "path": self.path,
             "chunks": len(chunks),
             "files": len({chunk.path for chunk in chunks}),
-            "indexes": sorted(bootstrap.find_indexes(self.settings, self.path)),
+            "indexes": sorted(bootstrap.catalog(self.settings).below(self.path)),
             "languages": dict(sorted(languages.items())),
             "types": dict(sorted(kinds.items())),
         }

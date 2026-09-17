@@ -8,7 +8,7 @@ the word could still become instead, for a picker to show beside it.
 import sys
 from pathlib import Path
 
-from ish.interfaces.complete import candidates, complete
+from ish.interfaces.completion import candidates, complete
 from ish.settings import Settings, load_settings
 
 # How many choices to name before the line stops being readable.

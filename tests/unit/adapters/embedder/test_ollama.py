@@ -60,6 +60,14 @@ class TestConfiguration:
     def test_explicit_model(self) -> None:
         assert OllamaEmbedder("mxbai-embed-large").model_name == "mxbai-embed-large"
 
+    def test_the_model_option_names_the_model(self) -> None:
+        assert OllamaEmbedder.from_option("mxbai-embed-large").model_name == (
+            "mxbai-embed-large"
+        )
+
+    def test_an_empty_model_option_means_the_default(self) -> None:
+        assert OllamaEmbedder.from_option("").model_name == DEFAULT_MODEL
+
     def test_default_host(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OLLAMA_HOST", raising=False)
         assert OllamaEmbedder().host == "http://localhost:11434"
@@ -133,9 +141,7 @@ class TestEmbed:
         OllamaEmbedder(batch_size=0).embed_documents(["a", "b"])
         assert [len(r["input"]) for r in recorder.requests] == [1, 1]
 
-    def test_the_default_batch_keeps_a_request_short(
-        self, recorder: Recorder
-    ) -> None:
+    def test_the_default_batch_keeps_a_request_short(self, recorder: Recorder) -> None:
         """The daemon serves one request at a time.
 
         A batch is therefore how long a search waits while an index run
