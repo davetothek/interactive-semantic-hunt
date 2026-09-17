@@ -96,8 +96,7 @@ class Ish:
         Report progress through *on_progress*, since a first index of a
         large tree runs for minutes.
         """
-        chunks = self._use_case.build_index(self.path, on_progress)
-        return len(chunks) if chunks else 0
+        return self._use_case.build_index(self.path, on_progress)
 
     def refresh_all(
         self, on_progress: Callable[[str], None] | None = None
@@ -137,7 +136,7 @@ class Ish:
             )
         )
         use_case = self._use_case
-        if use_case.build_index(self.path) is None:
+        if not use_case.build_index(self.path):
             return []
         return list(
             use_case.search(

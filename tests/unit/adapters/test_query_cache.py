@@ -6,9 +6,8 @@ from ish.adapters.embedder.prefixes import QUERY_CACHE_SIZE, PrefixingEmbedder
 class Counting(PrefixingEmbedder):
     """Count how often the backend is actually asked."""
 
-    model_name = "plain"
-
     def __init__(self) -> None:
+        super().__init__("plain")
         self.calls = 0
 
     def _embed(self, texts):

@@ -186,10 +186,8 @@ class IshApp(App[Match | None]):
     def _build_index(self) -> None:
         """Scan and embed, reporting progress into the preview pane."""
         try:
-            chunks = self.search_use_case.build_index(
-                self.root_path, self._report_progress
-            )
-            self._all_chunks = list(chunks) if chunks else []
+            self.search_use_case.build_index(self.root_path, self._report_progress)
+            self._all_chunks = list(self.search_use_case.all_chunks())
             if self._still_here():
                 self.call_from_thread(self._on_index_ready)
         except Exception as e:

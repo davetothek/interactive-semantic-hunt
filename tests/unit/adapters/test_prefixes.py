@@ -39,7 +39,7 @@ class Spy(PrefixingEmbedder):
     """Record the text that reaches the backend."""
 
     def __init__(self, model_name: str) -> None:
-        self.model_name = model_name
+        super().__init__(model_name)
         self.seen: list[str] = []
 
     def _embed(self, texts):
@@ -83,4 +83,4 @@ class TestPrefixingEmbedder:
 
     def test_base_class_requires_an_implementation(self) -> None:
         with pytest.raises(NotImplementedError):
-            PrefixingEmbedder()._embed(["x"])
+            PrefixingEmbedder("plain")._embed(["x"])

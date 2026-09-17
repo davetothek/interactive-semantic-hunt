@@ -460,7 +460,10 @@ class TestInlineFilters:
                 await asyncio.sleep(SETTLE)
 
         run(body())
-        assert fake.queries == ["alpha"]
+        # A slow keystroke may let the debounce fire on a prefix, so judge
+        # every search that ran rather than how many there were.
+        assert fake.queries[-1] == "alpha"
+        assert all("lang:" not in query for query in fake.queries)
 
     def test_under_narrows_by_path(self) -> None:
         fake = FakeSearch(

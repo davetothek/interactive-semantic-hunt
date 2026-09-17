@@ -25,7 +25,7 @@ def offline(monkeypatch) -> None:
     from ish import bootstrap
 
     class Fake:
-        model_id = "fake"
+        model_name = "fake"
 
         def embed_documents(self, texts):
             return [[float(len(t)), 1.0] for t in texts]

@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from ish.adapters.vector_store.federated import FederatedReader
 from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 from ish.application.filters import Filters, build_result_filter
+from ish.application.index import Index
 from ish.application.scan import Scan
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
@@ -37,6 +39,8 @@ class WordParser:
 class CountingEmbedder:
     """Return a deterministic vector and record every batch it was given."""
 
+    model_name = "fake"
+
     def __init__(self) -> None:
         self.batches: list[list[str]] = []
 
@@ -64,13 +68,17 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def build(embedder: CountingEmbedder, store=None, **options) -> Search:
-    return Search(
+def build(
+    embedder: CountingEmbedder, store=None, *, reindex: bool = False, **options
+) -> Search:
+    store = store if store is not None else PurePythonVectorStore()
+    index = Index(
         scan=Scan(parsers=[WordParser()]),
         embedder=embedder,
-        vector_store=store or PurePythonVectorStore(),
-        **options,
+        vector_store=store,
+        rebuild=reindex,
     )
+    return Search(embedder=embedder, reader=store, index=index, **options)
 
 
 class TestSearchUseCase:
@@ -80,14 +88,13 @@ class TestSearchUseCase:
         self, embedder: CountingEmbedder, project: Path
     ) -> None:
         search = build(embedder)
-        chunks = search.build_index(project)
-        assert chunks is not None
-        assert {c.symbol for c in chunks} == {"alpha", "beta"}
+        assert search.build_index(project) == 2
+        assert {c.symbol for c in search.all_chunks()} == {"alpha", "beta"}
 
-    def test_empty_tree_returns_none(
+    def test_empty_tree_counts_nothing(
         self, embedder: CountingEmbedder, tmp_path: Path
     ) -> None:
-        assert build(embedder).build_index(tmp_path) is None
+        assert build(embedder).build_index(tmp_path) == 0
         assert embedder.texts_embedded == 0
 
     def test_query_returns_ranked_results(
@@ -162,7 +169,7 @@ class TestIncrementalBehavior:
         build(embedder, store).build_index(project)
         (project / "a.py").unlink()
 
-        assert build(embedder, store).build_index(project) is None
+        assert build(embedder, store).build_index(project) == 0
         assert store.file_stamps() == {}
 
     def test_renamed_file_reuses_vectors(
@@ -187,9 +194,8 @@ class TestIncrementalBehavior:
         before = embedder.texts_embedded
 
         forced = build(embedder, store, reindex=True)
-        chunks = forced.build_index(project)
 
-        assert chunks is not None
+        assert forced.build_index(project) == 2
         assert embedder.texts_embedded == before
 
 
@@ -279,27 +285,21 @@ class TestResultFilters:
 class TestReadOnlyFederation:
     """Verify a search over several indexes does not try to refresh."""
 
-    def test_build_index_returns_stored_chunks(
+    def test_build_index_counts_the_stored_chunks(
         self, embedder: CountingEmbedder, project: Path
     ) -> None:
-        from ish.adapters.vector_store.federated import FederatedVectorStore
-
         indexed = PurePythonVectorStore()
         build(embedder, indexed).build_index(project)
         before = embedder.texts_embedded
 
-        federated = FederatedVectorStore(None, [indexed])
-        search = build(embedder, federated)
-        chunks = search.build_index(project)
+        search = Search(embedder=embedder, reader=FederatedReader([indexed]))
 
-        assert chunks
+        assert search.build_index(project) == 2
         # Nothing was parsed or embedded again.
         assert embedder.texts_embedded == before
 
     def test_an_empty_federation_reports_nothing(
         self, embedder: CountingEmbedder, project: Path
     ) -> None:
-        from ish.adapters.vector_store.federated import FederatedVectorStore
-
-        search = build(embedder, FederatedVectorStore(None, []))
-        assert search.build_index(project) is None
+        search = Search(embedder=embedder, reader=FederatedReader([]))
+        assert search.build_index(project) == 0

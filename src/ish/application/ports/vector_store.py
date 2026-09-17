@@ -1,8 +1,10 @@
-"""Vector Store protocol definition.
+"""Vector store protocol definitions.
 
-Satisfied by adapters that hold chunks with their embeddings, answer
-similarity searches, and track enough state to refresh an index without
-re-embedding unchanged work.
+Two contracts, because two use cases need different halves. A search
+reads: it lists, counts, and ranks. A refresh also writes: it stamps
+files, stores vectors, and prunes. A store that federates several
+indexes can only read, so it satisfies the reader alone, and a search
+over it needs no special case.
 """
 
 from collections.abc import Collection, Mapping, Sequence
@@ -28,8 +30,51 @@ class FileStamp:
 
 
 @runtime_checkable
-class VectorStore(Protocol):
-    """Contract for storing and searching vector embeddings."""
+class VectorReader(Protocol):
+    """Contract for listing and searching stored chunks."""
+
+    def chunks(self) -> Sequence[Chunk]:
+        """Return every chunk the store holds, for a plain listing.
+
+        A returned chunk may carry no text. A store records where a
+        chunk is, and a caller that needs the source reads the file.
+        """
+        ...
+
+    def count(self) -> int:
+        """Return how many chunks the store holds, without building them."""
+        ...
+
+    def search(
+        self,
+        query_vector: Sequence[float],
+        query_text: str = "",
+        limit: int = 5,
+        keep: ResultFilter = None,
+    ) -> Sequence[Match]:
+        """Find the *limit* best chunks for a query.
+
+        Rank by vector similarity alone when *query_text* is empty.
+        Otherwise also rank the text lexically and fuse the two orders,
+        which recovers exact identifiers that a vector alone can miss.
+
+        Apply *keep* before the limit, so a filtered search still
+        returns a full page of results.
+
+        Return matches in rank order. The score stays the cosine
+        similarity, so it means the same thing whether or not the
+        lexical half ran.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release any resource the store holds."""
+        ...
+
+
+@runtime_checkable
+class VectorStore(VectorReader, Protocol):
+    """Contract for a store a refresh may also write to."""
 
     def file_stamps(self) -> Mapping[Path, FileStamp]:
         """Return the stamp held for every indexed file."""
@@ -63,40 +108,6 @@ class VectorStore(Protocol):
         """Drop everything held for *paths*, for files that no longer exist."""
         ...
 
-    def chunks(self) -> Sequence[Chunk]:
-        """Return every chunk the store holds, for a plain listing.
-
-        A returned chunk may carry no text. A store records where a
-        chunk is, and a caller that needs the source reads the file.
-        """
-        ...
-
-    def search(
-        self,
-        query_vector: Sequence[float],
-        query_text: str = "",
-        limit: int = 5,
-        keep: ResultFilter = None,
-    ) -> Sequence[Match]:
-        """Find the *limit* best chunks for a query.
-
-        Rank by vector similarity alone when *query_text* is empty.
-        Otherwise also rank the text lexically and fuse the two orders,
-        which recovers exact identifiers that a vector alone can miss.
-
-        Apply *keep* before the limit, so a filtered search still
-        returns a full page of results.
-
-        Return matches in rank order. The score stays the cosine
-        similarity, so it means the same thing whether or not the
-        lexical half ran.
-        """
-        ...
-
     def clear(self) -> None:
         """Discard every indexed file, so the next refresh rebuilds."""
-        ...
-
-    def close(self) -> None:
-        """Release any resource the store holds."""
         ...

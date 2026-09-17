@@ -118,11 +118,12 @@ class TestVectorStoreWiring:
         from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 
         settings = replace(Settings(), no_cache=True)
-        store = bootstrap.build_vector_store(settings, tmp_path, _StubEmbedder())
+        primary, reader = bootstrap.build_stores(settings, tmp_path, _StubEmbedder())
         try:
-            assert isinstance(store, PurePythonVectorStore)
+            assert isinstance(reader, PurePythonVectorStore)
+            assert primary is reader
         finally:
-            store.close()
+            reader.close()
 
     def test_default_persists_to_sqlite(self, tmp_path, monkeypatch) -> None:
         from dataclasses import replace
@@ -130,11 +131,12 @@ class TestVectorStoreWiring:
         from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
         settings = replace(Settings(), cache_dir=str(tmp_path / "idx"))
-        store = bootstrap.build_vector_store(settings, tmp_path, _StubEmbedder())
+        primary, reader = bootstrap.build_stores(settings, tmp_path, _StubEmbedder())
         try:
-            assert isinstance(store, SqliteVectorStore)
+            assert isinstance(reader, SqliteVectorStore)
+            assert primary is reader
         finally:
-            store.close()
+            reader.close()
         assert list((tmp_path / "idx").glob("*.db"))
 
     def test_cache_dir_option_wins(self, tmp_path) -> None:
@@ -308,16 +310,17 @@ class TestFederatedWiring:
         from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
         settings = replace(Settings(), cache_dir=str(tmp_path / "idx"))
-        store = bootstrap.build_vector_store(settings, tmp_path, _StubEmbedder())
+        primary, reader = bootstrap.build_stores(settings, tmp_path, _StubEmbedder())
         try:
-            assert isinstance(store, SqliteVectorStore)
+            assert isinstance(reader, SqliteVectorStore)
+            assert primary is reader
         finally:
-            store.close()
+            reader.close()
 
     def test_a_parent_federates_over_its_children(self, tmp_path) -> None:
         from dataclasses import replace
 
-        from ish.adapters.vector_store.federated import FederatedVectorStore
+        from ish.adapters.vector_store.federated import FederatedReader
 
         indexes = tmp_path / "idx"
         indexes.mkdir()
@@ -326,13 +329,13 @@ class TestFederatedWiring:
         self._index_for(indexes, "one", project / "one")
 
         settings = replace(Settings(), cache_dir=str(indexes))
-        store = bootstrap.build_vector_store(settings, project, _StubEmbedder())
+        primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
         try:
-            assert isinstance(store, FederatedVectorStore)
+            assert isinstance(reader, FederatedReader)
             # No index covers the parent itself, so nothing is writable.
-            assert store.writable is False
+            assert primary is None
         finally:
-            store.close()
+            reader.close()
 
     def test_the_named_tree_stays_writable(self, tmp_path) -> None:
         from dataclasses import replace
@@ -344,12 +347,15 @@ class TestFederatedWiring:
         self._index_for(indexes, "one", project / "one")
         self._index_for(indexes, "root", project)
 
+        from ish.adapters.vector_store.federated import FederatedReader
+
         settings = replace(Settings(), cache_dir=str(indexes))
-        store = bootstrap.build_vector_store(settings, project, _StubEmbedder())
+        primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
         try:
-            assert store.writable is True
+            assert primary is not None
+            assert isinstance(reader, FederatedReader)
         finally:
-            store.close()
+            reader.close()
 
     def test_federation_can_be_turned_off(self, tmp_path) -> None:
         from dataclasses import replace
@@ -363,11 +369,12 @@ class TestFederatedWiring:
         self._index_for(indexes, "one", project / "one")
 
         settings = replace(Settings(), cache_dir=str(indexes), federate=False)
-        store = bootstrap.build_vector_store(settings, project, _StubEmbedder())
+        primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
         try:
-            assert isinstance(store, SqliteVectorStore)
+            assert isinstance(reader, SqliteVectorStore)
+            assert primary is reader
         finally:
-            store.close()
+            reader.close()
 
 
 class TestRefreshIndexes:
@@ -376,7 +383,7 @@ class TestRefreshIndexes:
     @pytest.fixture()
     def offline(self, monkeypatch):
         class Fake:
-            model_id = "fake"
+            model_name = "fake"
 
             def embed_documents(self, texts):
                 return [[float(len(t)), 1.0] for t in texts]
@@ -449,7 +456,7 @@ class TestRefreshReadsEachTreeConfig:
     @pytest.fixture()
     def offline(self, monkeypatch):
         class Fake:
-            model_id = "fake"
+            model_name = "fake"
 
             def embed_documents(self, texts):
                 return [[float(len(t)), 1.0] for t in texts]
@@ -562,7 +569,7 @@ class TestFederationWarning:
         return root
 
     class _Fake:
-        model_id = "fake"
+        model_name = "fake"
 
         def embed_documents(self, texts):
             return [[float(len(t)), 1.0] for t in texts]
@@ -605,7 +612,7 @@ class TestCoveringIndex:
     @pytest.fixture()
     def offline(self, monkeypatch):
         class Fake:
-            model_id = "fake"
+            model_name = "fake"
 
             def embed_documents(self, texts):
                 return [[float(len(t)), 1.0] for t in texts]
@@ -653,7 +660,7 @@ class TestCoveringIndex:
         counted = {"n": 0}
 
         class Counting:
-            model_id = "fake"
+            model_name = "fake"
 
             def embed_documents(self, texts):
                 counted["n"] += len(texts)

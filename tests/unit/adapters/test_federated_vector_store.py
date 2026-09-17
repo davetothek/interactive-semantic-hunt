@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from ish.adapters.vector_store.federated import FederatedVectorStore
+from ish.adapters.vector_store.federated import FederatedReader
 from ish.adapters.vector_store.pure_python import PurePythonVectorStore
-from ish.application.ports.vector_store import FileStamp, VectorStore
+from ish.application.ports.vector_store import FileStamp, VectorReader, VectorStore
 from ish.domain.chunk import Chunk
 
 STAMP = FileStamp(mtime_ns=1, size=1)
@@ -34,8 +34,12 @@ def store_with(*entries: tuple[str, list[float]]) -> PurePythonVectorStore:
 
 
 class TestPortCompliance:
-    def test_satisfies_the_port(self) -> None:
-        assert isinstance(FederatedVectorStore(None, []), VectorStore)
+    def test_reads(self) -> None:
+        assert isinstance(FederatedReader([]), VectorReader)
+
+    def test_cannot_be_written(self) -> None:
+        """A search from a parent must never rewrite a subtree's index."""
+        assert not isinstance(FederatedReader([]), VectorStore)
 
 
 class TestReading:
@@ -44,7 +48,7 @@ class TestReading:
     def test_results_come_from_all_indexes(self) -> None:
         primary = store_with(("alpha", [1.0, 0.0]))
         other = store_with(("beta", [0.9, 0.1]))
-        federated = FederatedVectorStore(primary, [other])
+        federated = FederatedReader([primary, other])
 
         found = {c.symbol for c, _ in federated.search([1.0, 0.0], limit=5)}
         assert found == {"alpha", "beta"}
@@ -53,19 +57,19 @@ class TestReading:
         """The best match wins even when it is not in the primary."""
         primary = store_with(("far", [0.0, 1.0]))
         other = store_with(("near", [1.0, 0.0]))
-        federated = FederatedVectorStore(primary, [other])
+        federated = FederatedReader([primary, other])
 
         results = federated.search([1.0, 0.0], limit=2)
         assert results[0][0].symbol == "near"
 
     def test_limit_applies_across_indexes(self) -> None:
         stores = [store_with((f"s{i}", [1.0, float(i) / 10])) for i in range(4)]
-        federated = FederatedVectorStore(stores[0], stores[1:])
+        federated = FederatedReader(stores)
         assert len(federated.search([1.0, 0.0], limit=2)) == 2
 
     def test_chunks_lists_every_index(self) -> None:
-        federated = FederatedVectorStore(
-            store_with(("alpha", [1.0])), [store_with(("beta", [1.0]))]
+        federated = FederatedReader(
+            [store_with(("alpha", [1.0])), store_with(("beta", [1.0]))]
         )
         assert {c.symbol for c in federated.chunks()} == {"alpha", "beta"}
 
@@ -73,83 +77,36 @@ class TestReading:
         """A tree and its subdirectory both hold the same chunk."""
         shared = store_with(("same", [1.0, 0.0]))
         duplicate = store_with(("same", [1.0, 0.0]))
-        federated = FederatedVectorStore(shared, [duplicate])
+        federated = FederatedReader([shared, duplicate])
 
         assert len(federated.chunks()) == 1
         assert len(federated.search([1.0, 0.0], limit=5)) == 1
 
-    def test_read_only_federation_still_searches(self) -> None:
-        federated = FederatedVectorStore(None, [store_with(("alpha", [1.0, 0.0]))])
-        assert federated.search([1.0, 0.0], limit=1)[0][0].symbol == "alpha"
+    def test_one_index_counts_without_listing(self) -> None:
+        class Counting(PurePythonVectorStore):
+            listed = 0
 
+            def chunks(self):
+                Counting.listed += 1
+                return super().chunks()
 
-class TestWritingReachesOnlyThePrimary:
-    """Verify that a search from a parent cannot damage a subtree's index.
+        only = Counting()
+        only.add_vectors({"a": [1.0]})
+        only.set_file(Path("a.py"), STAMP, [(chunk("a"), "a")])
+        assert FederatedReader([only]).count() == 1
+        assert Counting.listed == 0
 
-    Federation is read-only by design. A refresh must never rewrite or
-    prune an index that belongs to a directory below the one searched.
-    """
-
-    def test_stamps_come_from_the_primary_alone(self) -> None:
-        primary = store_with(("alpha", [1.0]))
-        other = store_with(("beta", [1.0]))
-        federated = FederatedVectorStore(primary, [other])
-
-        assert set(federated.file_stamps()) == set(primary.file_stamps())
-
-    def test_remove_does_not_touch_the_others(self) -> None:
-        primary = store_with(("alpha", [1.0]))
-        other = store_with(("beta", [1.0]))
-        federated = FederatedVectorStore(primary, [other])
-
-        federated.remove_files(list(other.file_stamps()))
-        assert len(other.chunks()) == 1
-
-    def test_clear_does_not_touch_the_others(self) -> None:
-        primary = store_with(("alpha", [1.0]))
-        other = store_with(("beta", [1.0]))
-        FederatedVectorStore(primary, [other]).clear()
-
-        assert other.file_stamps()
-        assert not primary.file_stamps()
-
-    def test_add_vectors_writes_to_the_primary(self) -> None:
-        primary = PurePythonVectorStore()
-        other = store_with(("beta", [1.0]))
-        FederatedVectorStore(primary, [other]).add_vectors({"fresh": [1.0]})
-
-        assert primary.missing_vectors(["fresh"]) == set()
-        assert other.missing_vectors(["fresh"]) == {"fresh"}
-
-    def test_set_file_writes_to_the_primary(self) -> None:
-        primary = PurePythonVectorStore()
-        other = store_with(("beta", [1.0]))
-        federated = FederatedVectorStore(primary, [other])
-
-        federated.set_file(Path("new.py"), STAMP, [(chunk("new"), "h")])
-        assert set(primary.file_stamps()) == {Path("new.py")}
-        assert Path("new.py") not in other.file_stamps()
-
-
-class TestNoWritableIndex:
-    """Verify the mode where a parent is searched but nothing is refreshed."""
-
-    def test_reports_that_it_cannot_be_written(self) -> None:
-        assert FederatedVectorStore(None, []).writable is False
-
-    def test_a_primary_makes_it_writable(self) -> None:
-        assert FederatedVectorStore(PurePythonVectorStore(), []).writable is True
-
-    def test_writes_are_ignored_rather_than_failing(self) -> None:
-        federated = FederatedVectorStore(None, [store_with(("a", [1.0]))])
-        federated.add_vectors({"h": [1.0]})
-        federated.set_file(Path("x.py"), STAMP, [])
-        federated.remove_files([Path("x.py")])
-        federated.clear()
-
-    def test_everything_is_missing_when_nothing_is_writable(self) -> None:
-        federated = FederatedVectorStore(None, [])
-        assert federated.missing_vectors(["a", "b"]) == {"a", "b"}
+    def test_several_indexes_count_each_chunk_once(self) -> None:
+        shared = store_with(("same", [1.0, 0.0]))
+        duplicate = store_with(("same", [1.0, 0.0]))
+        assert FederatedReader([shared, duplicate]).count() == 1
 
     def test_close_releases_every_index(self) -> None:
-        FederatedVectorStore(PurePythonVectorStore(), [PurePythonVectorStore()]).close()
+        class Closing(PurePythonVectorStore):
+            closed = 0
+
+            def close(self) -> None:
+                Closing.closed += 1
+
+        FederatedReader([Closing(), Closing()]).close()
+        assert Closing.closed == 2

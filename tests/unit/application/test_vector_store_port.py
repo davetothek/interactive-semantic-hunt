@@ -3,7 +3,7 @@
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
-from ish.application.ports.vector_store import FileStamp, VectorStore
+from ish.application.ports.vector_store import FileStamp, VectorReader, VectorStore
 from ish.domain.chunk import Chunk
 
 
@@ -30,6 +30,9 @@ class FakeVectorStore:
     def chunks(self) -> Sequence[Chunk]:
         return []
 
+    def count(self) -> int:
+        return 0
+
     def search(
         self, query_vector: Sequence[float], limit: int = 5
     ) -> Sequence[tuple[Chunk, float]]:
@@ -48,6 +51,28 @@ class TestVectorStoreProtocol:
     def test_fake_vector_store_is_instance(self) -> None:
         """Confirm runtime_checkable works."""
         assert isinstance(FakeVectorStore(), VectorStore)
+
+    def test_a_store_is_also_a_reader(self) -> None:
+        assert isinstance(FakeVectorStore(), VectorReader)
+
+    def test_a_reader_alone_is_not_a_store(self) -> None:
+        """A search may read what a refresh must never write to."""
+
+        class ReadOnly:
+            def chunks(self):
+                return []
+
+            def count(self):
+                return 0
+
+            def search(self, query_vector, query_text="", limit=5, keep=None):
+                return []
+
+            def close(self):
+                return None
+
+        assert isinstance(ReadOnly(), VectorReader)
+        assert not isinstance(ReadOnly(), VectorStore)
 
     def test_real_adapter_is_instance(self) -> None:
         """Confirm the shipped in-memory adapter satisfies the port."""
