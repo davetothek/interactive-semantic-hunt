@@ -69,15 +69,16 @@ interfaces → application → domain
 | Application | `src/ish/application/ranking.py` | The one ranking policy every store runs |
 | Application | `src/ish/application/filters.py` | `Filters`, `parse_query()`, the result filter |
 | Application | `src/ish/application/categories.py` | `type:` — code, doc, test, config |
-| Application | `src/ish/application/languages.py` | Language aliases |
+| Application | `src/ish/application/languages.py` | Resolve a spelling to a registered language |
 | Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |
 | Application | `src/ish/application/preview.py` | Read the source a chunk points at |
 | Adapter | `src/ish/adapters/parser/python.py` | Python AST parser |
 | Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
 | Adapter | `src/ish/adapters/parser/tree_sitter.py` | Tree-sitter parser, C and C++ flavor |
 | Adapter | `src/ish/adapters/parser/structured.py` | YAML and JSON documents |
-| Adapter | `src/ish/adapters/parser/limits.py` | `SizeLimited`, the chunk size cap |
-| Adapter | `src/ish/adapters/parser/plugins.py` | Parsers a user wrote |
+| Adapter | `src/ish/adapters/parser/__init__.py` | `PARSERS` — every language, and the recipe for adding one |
+| Adapter | `src/ish/adapters/parser/_limits.py` | `SizeLimited`, the chunk size cap |
+| Adapter | `src/ish/adapters/parser/_plugins.py` | Parsers a user wrote |
 | Adapter | `src/ish/adapters/embedder/` | Embedding backends, task prefixes, query cache |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
@@ -140,7 +141,7 @@ src/foo.py:35-42  method    ConfigLoader.load
 
 `src/ish/bootstrap.py` is the composition root. It is the only module that imports both application code and concrete adapters. It selects from two registries that live beside what they register, each with the recipe for adding an entry at the top of the file:
 
-- `src/ish/adapters/parser/__init__.py` holds `PARSERS`, source parsers by language name, and `available_parsers()`, which adds the user's own from `plugins.py`. File discovery derives its suffix set from each parser's `suffixes`, and the `languages` option selects which are built.
+- `src/ish/adapters/parser/__init__.py` holds `PARSERS`, every language by the name it is registered under, and `available_parsers()`, which adds the user's own from `_plugins.py`. Each entry is a `Language`: how to build the parser, the other names a reader may type for it, and whether it holds code, prose, or configuration. File discovery derives its suffix set from each parser's `suffixes`, and the `languages` option selects which are built. Only the modules a reader would call a parser carry plain names in that package; the machinery beside them is prefixed with an underscore.
 - `src/ish/adapters/embedder/__init__.py` holds `EMBEDDERS`, backends by `--embedder` name. Each entry is the backend's `from_option(model)`, which reads the `model` option the way that backend needs. The CLI choices derive from the keys.
 
 Listing either registry imports nothing heavy: a grammar loads on first parse, and a backend imports its library inside `__init__`, so an extra that is not installed fails only when it is chosen.
@@ -156,7 +157,11 @@ Registered languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`.
 - **A declaration is a chunk when it declares a function.** A header is mostly declarations, so without this a realistic header collapses to one class-sized blob: measured, `widget.h` went from 1 chunk to 5. A data member is skipped, because it carries nothing to search for. A prototype is dropped when the same file also defines that symbol, so a `.c` file does not list a function twice.
 - Tree-sitter is error tolerant. A partly broken file returns whatever parsed; `ParseError` is raised only when nothing did.
 
-Adding a language is one new module under `adapters/parser/` plus one `PARSERS` entry in that package. It must not require a change to `Scan`, the `Parser` port, `bootstrap`, or any interface. A parser declares `language` (its identity, stamped onto every chunk it emits) and `suffixes`. Two parsers claiming one suffix is a hard error; resolve it with the `languages` option. The only optional follow-ups are vocabulary: an alias in `application/languages.py`, and a `doc` or `config` reading in `application/categories.py`.
+**Adding a language is one new module under `adapters/parser/` plus one `PARSERS` entry, and nothing else.** It must not require a change to `Scan`, the `Parser` port, `bootstrap`, the application layer, or any interface. A parser declares `language` (its identity, stamped onto every chunk it emits) and `suffixes`; the registry entry beside it declares `aliases` and `category`. Two parsers claiming one suffix is a hard error; resolve it with the `languages` option.
+
+**A language's vocabulary belongs to the language, not to a table elsewhere.** The aliases a reader may type and what a language holds were two tables under `application/`, which meant adding a language touched three files and a contributor had to find the other two. They are now fields on the registry entry, and `bootstrap.build_vocabulary()` reads them off the registry into a `Vocabulary` the application receives — the same injection `categorize` already used. `application/languages.py` holds the resolver and no names; `application/categories.py` holds the path rules and no language list. A user plugin may declare `aliases` and `category` too, and reads as code when it does not.
+
+**A `Vocabulary` is read once per session.** The registry may read the user's plugin directory to answer, and a picker narrows on every keystroke, so `Ish` caches it rather than asking again.
 
 Interfaces go through `Ish`, which calls `bootstrap.build_scan()` and `bootstrap.build_search()`; nothing outside `bootstrap` constructs an adapter. No dependency injection framework.
 
@@ -421,11 +426,14 @@ call argument, which beats configuration. Each interface calls `parse_query()`
 on the text it was given, so `type:doc` works the same from the command line,
 the TUI, MCP, and Neovim.
 
-`canonical_language()` maps the name a reader types to the name a parser is
-registered under, so `lang:c`, `lang:h`, and `lang:cpp` name one parser. A
-`Filters` normalizes at construction, which keeps the filter, the display, and
-every comparison on one spelling. The CLI derives its `--lang` choices from the
-registry plus the alias table, so both interfaces accept the same words.
+A resolver maps the name a reader types to the name a parser is registered
+under, so `lang:c`, `lang:h`, and `lang:cpp` name one parser. `Filters` keeps
+the spelling as typed, so the header shows what the reader wrote; which
+language a spelling means is known only to the registry, so
+`build_result_filter()` resolves it there, just before the predicate that
+compares it to `chunk.language`. Resolving later than that would make a filter
+silently match nothing. The CLI derives its `--lang` choices from the same
+`Vocabulary`, so every interface accepts the same words.
 
 `type_patterns` lets a repository say what its own paths hold, as
 `type:regex`, first match wins, falling back to the built-in reading. A naming

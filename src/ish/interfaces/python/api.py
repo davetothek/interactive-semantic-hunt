@@ -68,6 +68,7 @@ class Ish:
         self.settings = replace(base, **overrides) if overrides else base
         self._search: Search | None = None
         self._indexed = False
+        self._vocabulary: bootstrap.Vocabulary | None = None
 
     # ------------------------------------------------------------------
     # Lifetime
@@ -90,6 +91,17 @@ class Ish:
             self._search.close()
             self._search = None
         self._indexed = False
+
+    @property
+    def _words(self) -> bootstrap.Vocabulary:
+        """Return what the registered languages are called, read once.
+
+        Every keystroke narrows, and reading the registry each time
+        would read the user's plugin directory each time.
+        """
+        if self._vocabulary is None:
+            self._vocabulary = bootstrap.build_vocabulary(self.settings)
+        return self._vocabulary
 
     @property
     def _use_case(self) -> Search:
@@ -169,7 +181,9 @@ class Ish:
         if not text:
             raise ValueError("The query holds only filters. Add words to search for.")
         keep = bootstrap.build_result_filter(
-            self.settings, self.filters_of(query, lang=lang, under=under, type=type)
+            self.settings,
+            self.filters_of(query, lang=lang, under=under, type=type),
+            self._words,
         )
         self._ensure_indexed()
         return list(
@@ -195,7 +209,9 @@ class Ish:
         query line with no words left lists what it allows.
         """
         keep = bootstrap.build_result_filter(
-            self.settings, self.filters_of(query, lang=lang, under=under, type=type)
+            self.settings,
+            self.filters_of(query, lang=lang, under=under, type=type),
+            self._words,
         )
         self._ensure_indexed()
         return self._use_case.all_chunks(keep)
@@ -213,7 +229,9 @@ class Ish:
         embedding backend and shows the files as they are.
         """
         keep = bootstrap.build_result_filter(
-            self.settings, self.filters_of(lang=lang, under=under, type=type)
+            self.settings,
+            self.filters_of(lang=lang, under=under, type=type),
+            self._words,
         )
         found = bootstrap.build_scan(self.settings, self.path).run(self.path)
         return [chunk for chunk in found if keep is None or keep(chunk)]
@@ -226,7 +244,7 @@ class Ish:
         """
         self._ensure_indexed()
         chunks = self._use_case.all_chunks()
-        sort_into = bootstrap.build_categorizer(self.settings)
+        sort_into = self._words.categorize
         languages: dict[str, int] = {}
         kinds: dict[str, int] = {}
         for chunk in chunks:

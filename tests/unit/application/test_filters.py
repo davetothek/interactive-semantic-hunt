@@ -2,8 +2,12 @@
 
 from pathlib import Path
 
+from ish.application.categories import by_language
 from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.domain.chunk import Chunk
+
+# What the registered languages hold, as bootstrap reads it off them.
+HOLDS = by_language({"markdown": "doc", "yaml": "config"})
 
 
 def make_chunk(path: str, language: str = "python") -> Chunk:
@@ -112,12 +116,12 @@ class TestTypeFilter:
         ]
 
     def test_one_type(self) -> None:
-        keep = build_result_filter(Filters(type=("doc",)))
+        keep = build_result_filter(Filters(type=("doc",)), HOLDS)
         assert keep is not None
         assert [c.path.name for c in self._chunks() if keep(c)] == ["README.md"]
 
     def test_several_types(self) -> None:
-        keep = build_result_filter(Filters(type=("doc", "test")))
+        keep = build_result_filter(Filters(type=("doc", "test")), HOLDS)
         assert keep is not None
         kept = {c.path.name for c in self._chunks() if keep(c)}
         assert kept == {"README.md", "test_a.py"}

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.parser.plugins import load_parsers, plugin_dir
+from ish.adapters.parser._plugins import load_parsers, plugin_dir
 from ish.application.ports.parser import Parser
 
 GOOD = """
@@ -44,11 +44,11 @@ class TestDiscovery:
 
     def test_the_loaded_parser_satisfies_the_port(self, tmp_path: Path) -> None:
         write(tmp_path, "toy.py", GOOD)
-        assert isinstance(load_parsers(tmp_path)["toy"](), Parser)
+        assert isinstance(load_parsers(tmp_path)["toy"].build(), Parser)
 
     def test_it_parses(self, tmp_path: Path) -> None:
         write(tmp_path, "toy.py", GOOD)
-        parser = load_parsers(tmp_path)["toy"]()
+        parser = load_parsers(tmp_path)["toy"].build()
         chunks = parser.parse(Path("a.toy"), "one\ntwo\n")
         assert chunks[0].language == "toy"
         assert chunks[0].end_line == 2
@@ -182,7 +182,7 @@ class TestRegistryIntegration:
         (target / "mine.py").write_text(body)
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
 
-        built = bootstrap.all_parsers(Settings())["python"]()
+        built = bootstrap.all_parsers(Settings())["python"].build()
         assert built.suffixes == frozenset({".toy"})
 
     def test_plugins_can_be_turned_off(self, tmp_path, monkeypatch) -> None:
@@ -199,13 +199,52 @@ class TestRegistryIntegration:
         assert "toy" not in bootstrap.all_parsers(replace(Settings(), plugins=False))
 
 
+class TestOwnVocabulary:
+    """Verify a user parser may name itself the way a registered one does."""
+
+    SPEAKS = GOOD.replace(
+        '    suffixes = frozenset({".toy"})',
+        '    suffixes = frozenset({".toy"})\n'
+        '    aliases = frozenset({"ty", "plaything"})\n'
+        '    category = "doc"',
+    )
+
+    def test_declared_aliases_and_category_are_kept(self, tmp_path: Path) -> None:
+        write(tmp_path, "toy.py", self.SPEAKS)
+        found = load_parsers(tmp_path)["toy"]
+        assert found.aliases == frozenset({"ty", "plaything"})
+        assert found.category == "doc"
+
+    def test_a_parser_that_says_nothing_holds_code_and_has_no_alias(
+        self, tmp_path: Path
+    ) -> None:
+        write(tmp_path, "toy.py", GOOD)
+        found = load_parsers(tmp_path)["toy"]
+        assert found.aliases == frozenset()
+        assert found.category == "code"
+
+    def test_the_alias_reaches_a_search(self, tmp_path, monkeypatch) -> None:
+        """A plugin's own spelling narrows a search, like a built-in one."""
+        from ish import bootstrap
+        from ish.settings import Settings
+
+        target = tmp_path / "ish" / "parsers"
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "toy.py").write_text(self.SPEAKS)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        words = bootstrap.build_vocabulary(Settings())
+        assert words.resolve("ty") == "toy"
+        assert "plaything" in words.spellings
+
+
 class TestLateFailures:
     """Verify the guards around building a parser after discovery."""
 
     def test_a_parser_removed_after_discovery(self, tmp_path: Path) -> None:
         """Discovery and use are separate moments."""
         path = write(tmp_path, "toy.py", GOOD)
-        factory = load_parsers(tmp_path)["toy"]
+        factory = load_parsers(tmp_path)["toy"].build
         path.unlink()
 
         with pytest.raises(ValueError, match="no longer be loaded"):

@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from ish.adapters.parser.limits import MAX_CHUNK_CHARS
+from ish.adapters.parser._limits import MAX_CHUNK_CHARS
 from ish.application.ports.parser import ParseError
 from ish.domain.chunk import Chunk
 

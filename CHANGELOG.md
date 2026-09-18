@@ -8,6 +8,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- Keep everything about a language on the line that registers it. The names a
+  reader may type for a language, such as `c` for the C++ parser, and whether
+  it holds code, prose, or configuration, were tables away from the parsers
+  they described. They are now fields on the registry entry, so adding a
+  language is one module and one line. A parser a user wrote may name its own
+  aliases and category the same way.
+
 ## 0.2.1 - 2026-09-18
 
 ### Added
