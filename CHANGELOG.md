@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.2.1 - 2026-09-18
+
 ### Added
 
 - Say where a language or an embedding backend plugs in. Each adapter package
