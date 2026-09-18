@@ -1,17 +1,22 @@
 """Compose the application — the single place that wires adapters into use cases.
 
-Every interface (CLI, TUI, Python API) builds its object graph through
+Every interface builds its object graph through ``Ish``, which calls
 this module. It is the only module allowed to import both application
 code and concrete adapters.
+
+The registries live beside what they register: ``adapters/parser``
+lists every parser and ``adapters/embedder`` every backend, each with
+the recipe for adding one. This module only selects from them.
 """
 
 import logging
 import os
-import pkgutil
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from ish.adapters.embedder import EMBEDDERS
+from ish.adapters.parser import available_parsers
 from ish.adapters.vector_store.catalog import IndexCatalog
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
@@ -31,55 +36,9 @@ from ish.settings import Settings
 log = logging.getLogger(__name__)
 
 
-def _lazy(target: str) -> Callable[..., Any]:
-    """Return a callable that resolves *target* on first call.
-
-    Name a factory as ``module:attribute`` so an unused backend or an
-    unused grammar is never imported. A backend that is an extra may not
-    be installed at all, and a grammar costs tens of milliseconds to
-    load, which is most of a warm query.
-    """
-
-    def build(*arguments: Any) -> Any:
-        return pkgutil.resolve_name(target)(*arguments)
-
-    return build
-
-
-# Embedding backends by option name. Each takes the ``model`` option and
-# reads its own default when it is empty. Register new backends here only.
-EMBEDDERS: dict[str, Callable[[str], Embedder]] = {
-    "llama.cpp": _lazy("ish.adapters.embedder.llama_cpp:LlamaCppEmbedder.from_option"),
-    "st": _lazy(
-        "ish.adapters.embedder.sentence_transformer:"
-        "SentenceTransformerEmbedder.from_option"
-    ),
-    "ollama": _lazy("ish.adapters.embedder.ollama:OllamaEmbedder.from_option"),
-}
-
-# Source parsers by language name. Register new parsers here only.
-PARSERS: dict[str, Callable[[], Parser]] = {
-    "python": _lazy("ish.adapters.parser.python:PythonParser"),
-    "markdown": _lazy("ish.adapters.parser.markup:MarkupParser.markdown"),
-    "asciidoc": _lazy("ish.adapters.parser.markup:MarkupParser.asciidoc"),
-    "cpp": _lazy("ish.adapters.parser.tree_sitter:cpp_parser"),
-    "yaml": _lazy("ish.adapters.parser.structured:StructuredParser.yaml"),
-    "json": _lazy("ish.adapters.parser.structured:StructuredParser.json"),
-}
-
-
 def all_parsers(settings: Settings) -> dict[str, Callable[[], Parser]]:
-    """Return every parser available, built in or written by the user.
-
-    A user parser replaces a built-in one of the same language, which is
-    how a project teaches ish about its own dialect of a format.
-    """
-    if not settings.plugins:
-        return dict(PARSERS)
-
-    from ish.adapters.parser.plugins import load_parsers
-
-    return {**PARSERS, **load_parsers()}
+    """Return every parser the settings allow: built in, and the user's own."""
+    return available_parsers(settings.plugins)
 
 
 def build_parsers(settings: Settings) -> list[Parser]:
@@ -112,14 +71,14 @@ def build_parsers(settings: Settings) -> list[Parser]:
 def build_embedder(settings: Settings) -> Embedder:
     """Construct the selected embedding backend."""
     try:
-        factory = EMBEDDERS[settings.embedder]
+        backend = EMBEDDERS[settings.embedder]
     except KeyError:
         valid = ", ".join(sorted(EMBEDDERS))
         raise ValueError(
             f"Unknown embedder {settings.embedder!r}. Valid backends: {valid}"
         ) from None
 
-    return factory(settings.model)
+    return backend.from_option(settings.model)
 
 
 def model_id(settings: Settings, embedder: Embedder) -> str:

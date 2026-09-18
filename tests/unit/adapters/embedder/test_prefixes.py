@@ -84,3 +84,7 @@ class TestPrefixingEmbedder:
     def test_base_class_requires_an_implementation(self) -> None:
         with pytest.raises(NotImplementedError):
             PrefixingEmbedder("plain")._embed(["x"])
+
+    def test_each_backend_says_how_it_reads_the_model_option(self) -> None:
+        with pytest.raises(NotImplementedError):
+            PrefixingEmbedder.from_option("x")

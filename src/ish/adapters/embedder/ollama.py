@@ -5,11 +5,8 @@ daemon holds the model resident, so no process pays a model load, and
 the adapter needs no third-party package.
 """
 
-import json
 import logging
 import os
-import urllib.error
-import urllib.request
 from collections.abc import Sequence
 
 from ish.adapters.embedder.prefixes import PrefixingEmbedder
@@ -89,6 +86,12 @@ class OllamaEmbedder(PrefixingEmbedder):
 
     def _embed_batch(self, batch: list[str], timeout: float) -> list[Sequence[float]]:
         """Send one batch and return its vectors."""
+        # The HTTP client costs 20 ms to import, which a process that
+        # never embeds should not pay.
+        import json
+        import urllib.error
+        import urllib.request
+
         payload = json.dumps({"model": self.model_name, "input": batch}).encode("utf-8")
         request = urllib.request.Request(
             f"{self.host}/api/embed",
