@@ -15,7 +15,6 @@ from pathlib import Path
 
 from ish import bootstrap
 from ish.application.categories import TYPES
-from ish.application.languages import language_names
 from ish.settings import Settings
 
 # The filters a query may carry. `parse_query()` reads these same words.
@@ -68,7 +67,7 @@ def _values_for(key: str, settings: Settings, root: Path) -> Sequence[str]:
     if key == "type:":
         return sorted(TYPES)
     if key == "lang:":
-        return sorted(set(bootstrap.all_parsers(settings)) | set(language_names()))
+        return bootstrap.build_vocabulary(settings).spellings
     return _directories(root)
 
 

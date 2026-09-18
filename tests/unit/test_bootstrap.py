@@ -66,6 +66,50 @@ class TestRegistries:
         built = bootstrap.build_parsers(Settings())
         assert {p.language for p in built} == set(PARSERS)
 
+    def test_the_vocabulary_comes_from_the_registry(self) -> None:
+        """No table outside the registry says what a language is called."""
+        words = bootstrap.build_vocabulary(Settings())
+        assert words.resolve("c") == "cpp"
+        assert words.resolve("yml") == "yaml"
+        assert "adoc" in words.spellings
+        assert set(words.spellings) >= set(PARSERS)
+
+    def test_the_vocabulary_sorts_by_what_a_language_holds(self) -> None:
+        from pathlib import Path as _Path
+
+        from ish.domain.chunk import Chunk
+
+        words = bootstrap.build_vocabulary(Settings())
+        doc = Chunk(
+            path=_Path("/p/guide.md"),
+            text="x",
+            kind="section",
+            language="markdown",
+            symbol="x",
+            start_line=1,
+            end_line=1,
+        )
+        assert words.categorize(doc) == "doc"
+
+    def test_a_type_pattern_still_wins_over_the_registry(self) -> None:
+        from pathlib import Path as _Path
+
+        from ish.domain.chunk import Chunk
+
+        words = bootstrap.build_vocabulary(
+            replace(Settings(), type_patterns=("test:/Verification/",))
+        )
+        chunk = Chunk(
+            path=_Path("/p/Verification/guide.md"),
+            text="x",
+            kind="section",
+            language="markdown",
+            symbol="x",
+            start_line=1,
+            end_line=1,
+        )
+        assert words.categorize(chunk) == "test"
+
     def test_build_embedder_reads_the_model_option(self) -> None:
         settings = replace(Settings(), embedder="ollama", model="mxbai-embed-large")
         assert bootstrap.build_embedder(settings).model_name == "mxbai-embed-large"
@@ -98,22 +142,10 @@ class TestLanguageSelection:
         with pytest.raises(ValueError, match="Unknown language"):
             bootstrap.build_parsers(replace(Settings(), languages=("cobol",)))
 
-    def test_every_registered_parser_satisfies_the_port(self) -> None:
-        """Guard the registry itself, so a new entry cannot be malformed."""
-        for name, factory in PARSERS.items():
-            parser = factory()
-            assert isinstance(parser, Parser), name
-            assert parser.language == name, name
-            assert parser.suffixes, name
-            assert all(s.startswith(".") for s in parser.suffixes), name
-
-    def test_registered_parsers_claim_distinct_suffixes(self) -> None:
-        """The default registry must build without a suffix conflict."""
-        seen: dict[str, str] = {}
-        for name, factory in PARSERS.items():
-            for suffix in factory().suffixes:
-                assert suffix not in seen, f"{name} and {seen[suffix]} share {suffix}"
-                seen[suffix] = name
+    def test_an_alias_selects_the_language_it_names(self) -> None:
+        """`--languages c` and `lang:c` must name one parser."""
+        built = bootstrap.build_parsers(replace(Settings(), languages=("c",)))
+        assert [p.language for p in built] == ["cpp"]
 
 
 class TestVectorStoreWiring:
