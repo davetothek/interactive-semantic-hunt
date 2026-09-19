@@ -33,6 +33,7 @@ jobs:
       - run: uv run --python ${{ matrix.python }} poe lint
       - run: uv run --python ${{ matrix.python }} poe typecheck
       - run: uv run --python ${{ matrix.python }} poe test
+      - run: uv run --python ${{ matrix.python }} poe hooks
 
   build:
     runs-on: ubuntu-latest
