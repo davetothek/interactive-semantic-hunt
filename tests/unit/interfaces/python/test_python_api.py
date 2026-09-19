@@ -182,6 +182,13 @@ class TestStatus:
             assert set(status["languages"]) == {"python", "markdown"}
             assert set(status["types"]) == {"code", "doc", "test"}
 
+    def test_status_reads_and_does_not_build(self, project: Path, offline) -> None:
+        """A status call that indexed first held the caller for the whole run."""
+        with _ish(project) as ish:
+            status = ish.status()
+            assert status["chunks"] == 0
+            assert ish._indexed is False
+
     def test_the_counts_add_up(self, project: Path, offline) -> None:
         """Every chunk falls into exactly one type."""
         with _ish(project) as ish:

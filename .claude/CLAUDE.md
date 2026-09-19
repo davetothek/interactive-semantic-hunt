@@ -167,6 +167,11 @@ something broke. This is that record, so a rule is never argued from taste.
   at the embedding queue.
 - An index run once waited on a dead socket for 10 hours while the daemon
   stayed healthy. Hence the request timeout and the retry.
+- A call against an index under a writer waited without a limit. One run
+  held `index_status` for 1800 s, and the client gave up with no error. A
+  store now waits 2 s for the lock and names the file. A status call also
+  stopped bringing the index up to date first, which is what it was waiting
+  for.
 - Cold index of this repo (33 files, 104 chunks): ~87 s with Ollama, ~51 s
   with llama.cpp. A real firmware project (10k files, 30,317 chunks): 14 s to
   scan and parse, then about one chunk per second to embed. A whole tree is
