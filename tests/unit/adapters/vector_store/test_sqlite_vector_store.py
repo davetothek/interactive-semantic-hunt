@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from ish.adapters.vector_store.sqlite import SCHEMA_VERSION, SqliteVectorStore
-from ish.application.ports.vector_store import FileStamp
+from ish.application.ports.vector_store import FileStamp, StoreBusy
 from ish.domain.chunk import Chunk
 
 STAMP = FileStamp(mtime_ns=1, size=1)
@@ -956,3 +956,35 @@ class TestFetchDepth:
             assert [c.symbol for c, _ in plain] == [c.symbol for c, _ in kept]
         finally:
             store.close()
+
+
+class TestBusyIndex:
+    """Verify that an index another process holds fails fast and names it.
+
+    One index run held a status call for 1800 s. The caller gave up
+    with no error and nothing to act on.
+    """
+
+    def test_a_held_index_is_reported(self, db_path: Path, tmp_path, monkeypatch):
+        import ish.adapters.vector_store.sqlite as module
+
+        SqliteVectorStore(db_path, model_id="m", root=tmp_path / "one").close()
+        monkeypatch.setattr(module, "BUSY_SECONDS", 0.05)
+
+        holder = sqlite3.connect(db_path)
+        holder.execute("BEGIN EXCLUSIVE")
+        try:
+            with pytest.raises(StoreBusy) as caught:
+                # A tree of its own to record, so opening must write.
+                SqliteVectorStore(db_path, model_id="m", root=tmp_path / "two")
+            assert str(db_path) in str(caught.value)
+        finally:
+            holder.rollback()
+            holder.close()
+
+    def test_another_error_stays_what_it_was(self) -> None:
+        """Only a lock means busy. Everything else is reported as it is."""
+        from ish.adapters.vector_store.sqlite import _busy
+
+        original = sqlite3.OperationalError("no such table: chunks")
+        assert _busy(Path("x.db"), original) is original

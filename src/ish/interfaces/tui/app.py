@@ -58,6 +58,13 @@ class _DaemonWorker:
                 loop.call_soon_threadsafe(_settle, future.set_result, result)
 
 
+# The Pygments themes the preview reads the source in. A Textual theme
+# says whether the terminal is dark, not which colors Pygments knows,
+# so the pair is named here.
+DARK_SYNTAX = "gruvbox-dark"
+LIGHT_SYNTAX = "gruvbox-light"
+
+
 def _settle(setter, value) -> None:
     """Complete a future unless the caller stopped waiting."""
     try:
@@ -108,6 +115,10 @@ class IshApp(App[Match | None]):
         ("up", "move(-1)", "Previous"),
         ("ctrl+n", "move(1)", "Next"),
         ("ctrl+p", "move(-1)", "Previous"),
+        # Textual keeps its own theme switcher on the command palette,
+        # which this picker turns off. Without a key here there is no
+        # way to change theme while it runs.
+        ("ctrl+t", "cycle_theme", "Theme"),
     ]
 
     def __init__(
@@ -117,6 +128,7 @@ class IshApp(App[Match | None]):
         *,
         limit: int = 50,
         debounce_ms: int = 120,
+        theme: str = "",
     ) -> None:
         super().__init__()
         # The session resolves filters, opens the index, and answers.
@@ -125,6 +137,9 @@ class IshApp(App[Match | None]):
         self.root_path = root_path
         self.limit = limit
         self.debounce = debounce_ms / 1000
+        # Take the theme at mount, not here. The app has no screen yet,
+        # and a name nobody registered must reach the user.
+        self._wanted_theme = theme
         # Which search is the current one. A cancelled task cannot stop
         # the thread it already handed work to, so the thread asks.
         self._generation = 0
@@ -168,8 +183,23 @@ class IshApp(App[Match | None]):
         large tree takes most of a second, and a field that cannot be
         typed into reads as an interface that has not started.
         """
+        self._take_theme(self._wanted_theme)
         self.query_one(Input).focus()
         self.build_index()
+
+    def _take_theme(self, name: str) -> None:
+        """Draw in the theme the settings name.
+
+        Keep the default for an empty name. Report a name no theme
+        answers to, because a picker that silently ignores a setting
+        looks broken.
+        """
+        if not name:
+            return
+        if name not in self.available_themes:
+            self.notify(f"There is no theme named {name}", severity="warning")
+            return
+        self.theme = name
 
     def build_index(self) -> None:
         """Scan and embed the directory on a thread that never blocks exit."""
@@ -276,12 +306,20 @@ class IshApp(App[Match | None]):
         syntax = Syntax(
             code,
             chunk.language or "text",
-            theme="gruvbox-dark",
+            theme=self._syntax_theme(),
             line_numbers=True,
             start_line=chunk.start_line,
             word_wrap=True,
         )
         self.query_one("#preview-pane", Static).update(syntax)
+
+    def _syntax_theme(self) -> str:
+        """Return the Pygments theme that pairs with the active theme.
+
+        A dark code block under a light theme reads as a pane that
+        failed to draw.
+        """
+        return DARK_SYNTAX if self.current_theme.dark else LIGHT_SYNTAX
 
     @work(exclusive=True)
     async def do_search(self, query: str) -> None:
@@ -372,6 +410,19 @@ class IshApp(App[Match | None]):
         target = max(0, min(option_list.option_count - 1, current + delta))
         option_list.highlighted = target
         self._update_preview(target)
+
+    def action_cycle_theme(self) -> None:
+        """Draw in the next registered theme, and name it.
+
+        The choice lasts for this run. `tui_theme` says which theme the
+        next run starts in, so a picker never writes to a file the user
+        owns.
+        """
+        names = sorted(self.available_themes)
+        self.theme = names[(names.index(self.theme) + 1) % len(names)]
+        self.notify(f"Theme: {self.theme}")
+        # The preview reads its colors as it is built, so build it again.
+        self._update_preview(self.query_one(OptionList).highlighted or 0)
 
     def _choose(self, index: int | None) -> None:
         """Exit with the result at *index*, if there is one."""

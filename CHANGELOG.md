@@ -8,6 +8,43 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Name the config file to read, with `--config PATH`, `-c`, or `ISH_CONFIG`.
+  The named file stands in place of the files ish looks for by walking up
+  from the tree. The user file below it still applies, so a machine-wide
+  preference survives a file chosen for one run.
+- Read the options from a `[tool.ish]` table when a config file holds one,
+  so one file can carry sections for several tools. ish passes over
+  `[tool.black]` and every other section beside its own. A file with no
+  `[tool.ish]` table is a flat list of options, as before. The README shows
+  both, beside the order ish reads the sources in.
+- Choose the theme the picker draws in, with `--tui-theme NAME` or the
+  `tui_theme` key. Textual holds a theme for a light terminal as well as for
+  a dark one. An empty value keeps the Textual default, and a name no theme
+  answers to is reported in the picker.
+- Change the theme while the picker runs, with `ctrl+t`. Each press steps to
+  the next theme and names it. The choice lasts for the run, and `tui_theme`
+  says which theme the next run starts in. Textual keeps its own switcher on
+  the command palette, which the picker turns off to keep `ctrl+p` for the
+  previous result.
+
+### Fixed
+
+- A call against an index that another process was writing waited without a
+  limit. One index run held a status call for 1800 s, which returned no
+  error and no progress. A store now waits two seconds for the lock and then
+  names the file that is held. A search over several indexes leaves out the
+  one under a writer, says which one, and answers from the rest.
+- `index_status` and `Ish.status()` no longer bring the index up to date
+  first. A status call reported nothing for as long as the run it started.
+  They now report what the index holds. Call `build_index` or `index()` for
+  fresh numbers.
+- The preview pane read the source in a dark Pygments theme whatever the
+  picker was drawing in, so a light theme still showed a dark code block.
+  The preview now follows the picker: `gruvbox-dark` under a dark theme,
+  `gruvbox-light` under a light one.
+
 ## 0.2.2 - 2026-09-19
 
 ### Fixed

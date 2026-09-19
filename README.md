@@ -60,8 +60,9 @@ ish "parse a python file" src/
 ```
 
 Run the interactive picker and open the selection in your editor. Type to
-search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `escape`
-to quit. Narrow without leaving the query line:
+search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `ctrl+t`
+to change the theme, `escape` to quit. Narrow without leaving the query
+line:
 
 ```text
 state machine transitions              every language
@@ -121,6 +122,7 @@ nvim $(ish -i src/)
 | Flag | Purpose |
 |---|---|
 | `-i`, `--interactive` | Run the TUI picker |
+| `-c`, `--config PATH` | Read the options from this file, not from the search upward |
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
 | `--color {auto,always,never}` | Control log color |
@@ -137,9 +139,28 @@ nvim $(ish -i src/)
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
+| `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
 or parsed is counted in one line; `-v` names them.
+
+### Theme the picker
+
+`ctrl+t` steps to the next theme while the picker runs and names the one it
+lands on. The choice lasts for that run. Say where the next run starts with
+`tui_theme`, in the config file or as `--tui-theme NAME`:
+
+```toml
+tui_theme = "solarized-light"
+```
+
+Textual holds a theme for a light terminal as well as for a dark one, and
+the preview follows: it reads the source in `gruvbox-light` under a light
+theme and in `gruvbox-dark` under a dark one. A name no theme answers to is
+reported in the picker, which then keeps the default.
+
+`NO_COLOR` still wins over all of it. Set it and the picker draws in
+monochrome, the preview included, whatever theme is chosen.
 
 ## Use from Neovim
 
@@ -235,7 +256,8 @@ means they always show the current content.
 ## Configure
 
 Every command-line option is also a key in the config file, under the same
-name. Put project settings in `.ish/config.toml` at the root of your
+name. The one exception is `--config` itself: a file cannot name where to
+find itself. Put project settings in `.ish/config.toml` at the root of your
 repository:
 
 ```toml
@@ -311,7 +333,8 @@ User-level defaults go in `~/.config/ish/config.toml`, which honors
 ```
 defaults
   < ~/.config/ish/config.toml
-  < .ish/config.toml            (every one from the target path upward)
+  < .ish/config.toml            (every one from the target path upward,
+                                 or the one file --config names)
   < ISH_* environment
   < command line
 ```
@@ -328,6 +351,47 @@ and still inherit the `type_patterns` the repository above it set.
 
 Set any option from the environment with the `ISH_` prefix, for example
 `ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.
+
+### Name one config file
+
+Point ish at a file with `--config PATH`, its short form `-c`, or the
+`ISH_CONFIG` variable:
+
+```sh
+ish "how is ranking done" --config ~/work/firmware.toml
+ISH_CONFIG=~/work/firmware.toml ish -i 30.Firmware/
+```
+
+The named file stands in place of the files above the tree, which ish then
+does not look for. Your user file still applies below it, so a machine-wide
+preference survives a file chosen for one run. The flag wins over the
+variable. A named file that is not there is an error: a mistyped path would
+otherwise run on the defaults and say nothing about it.
+
+### Share a file with other tools
+
+A config file may keep the options under a `[tool.ish]` table, where
+`[tool.black]` and `[tool.ruff]` also live, so one file can hold sections for
+several tools:
+
+```toml
+[project]
+name = "firmware"
+
+[tool.black]
+line-length = 88
+
+[tool.ish]
+limit = 10
+ignore = [".git", "build"]
+```
+
+ish reads that table alone then, and passes over every other section. A file
+with no `[tool.ish]` table is a flat list of options, as above, so a file
+written before this keeps working.
+
+ish does not look for a `pyproject.toml` on its own. Name one with
+`--config` or `ISH_CONFIG` to have its `[tool.ish]` table read.
 
 ## Extend
 
