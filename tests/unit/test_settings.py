@@ -1,15 +1,16 @@
 """Test settings resolution and the CLI/TOML option parity guarantee."""
 
-import argparse
 from dataclasses import fields
 
 import pytest
 
-from ish.interfaces.cli.args import add_settings_options
+from ish.interfaces.cli.args import build_parser
 from ish.settings import (
     CONFIG_BASENAME,
     CONFIG_DIRNAME,
+    CONFIG_ENV_VAR,
     CONFIG_FILENAME,
+    CONFIG_OPTION,
     ConfigError,
     Settings,
     find_project_config,
@@ -17,6 +18,13 @@ from ish.settings import (
     option_names,
     project_configs,
 )
+
+# The command line carries a few names that are not options: the two
+# positionals, the interactive flag, help, and version. The config path
+# joins them, and it is the one exemption worth stating. A file cannot
+# name where to find itself, so that name is a flag and an environment
+# variable but never a key inside a file.
+NOT_OPTIONS = {"help", "version", "query", "path", "interactive", CONFIG_OPTION}
 
 
 def _write(path, body: str):
@@ -29,20 +37,21 @@ class TestOptionParity:
     """Verify that the CLI and ish.toml accept the same option set."""
 
     def test_every_option_has_a_cli_flag(self) -> None:
-        parser = argparse.ArgumentParser()
-        add_settings_options(parser)
-        destinations = {a.dest for a in parser._actions}
+        destinations = {a.dest for a in build_parser()._actions}
         for name in option_names():
             assert name in destinations, f"{name} is missing a CLI flag"
 
     def test_every_cli_flag_is_a_settings_field(self) -> None:
-        parser = argparse.ArgumentParser()
-        add_settings_options(parser)
         names = set(option_names())
-        for action in parser._actions:
-            if action.dest == "help":
+        for action in build_parser()._actions:
+            if action.dest in NOT_OPTIONS:
                 continue
             assert action.dest in names, f"{action.dest} is not a setting"
+
+    def test_the_config_path_is_the_one_exemption(self) -> None:
+        """Hold the exemption to one name, so another cannot join it quietly."""
+        assert CONFIG_OPTION not in option_names()
+        assert CONFIG_OPTION in {a.dest for a in build_parser()._actions}
 
     def test_every_option_is_accepted_from_toml(self, tmp_path, monkeypatch) -> None:
         """Confirm no field is silently rejected by the config loader."""
@@ -258,3 +267,152 @@ class TestConfigInheritance:
 
     def test_no_config_anywhere_is_an_empty_chain(self, tmp_path) -> None:
         assert project_configs(tmp_path / "nowhere") == []
+
+
+class TestNamedConfigFile:
+    """Verify that a caller can name the config file to read.
+
+    The name stands in place of the upward search. The user file below
+    it still applies, so a machine-wide preference survives a project
+    file chosen for one run.
+    """
+
+    def test_the_named_file_is_read(self, tmp_path) -> None:
+        named = _write(tmp_path / "elsewhere.toml", "limit = 12\n")
+        settings = load_settings(
+            {CONFIG_OPTION: str(named)}, start=tmp_path, environ={}
+        )
+        assert settings.limit == 12
+
+    def test_the_named_file_stands_in_for_the_search(self, tmp_path) -> None:
+        """A project file at *start* is not read once a file is named."""
+        _write(tmp_path / CONFIG_FILENAME, "limit = 3\nmodel = 'near'\n")
+        named = _write(tmp_path / "elsewhere.toml", "limit = 12\n")
+
+        settings = load_settings(
+            {CONFIG_OPTION: str(named)}, start=tmp_path, environ={}
+        )
+        assert settings.limit == 12
+        assert settings.model == ""
+
+    def test_the_user_file_still_applies(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / "cfg" / "ish" / CONFIG_BASENAME, "model = 'user'\n")
+        named = _write(tmp_path / "named.toml", "limit = 12\n")
+
+        settings = load_settings(
+            {CONFIG_OPTION: str(named)}, start=tmp_path, environ={}
+        )
+        assert settings.limit == 12
+        assert settings.model == "user"
+
+    def test_the_environment_names_a_file(self, tmp_path) -> None:
+        named = _write(tmp_path / "named.toml", "limit = 13\n")
+        settings = load_settings(start=tmp_path, environ={CONFIG_ENV_VAR: str(named)})
+        assert settings.limit == 13
+
+    def test_the_flag_wins_over_the_environment(self, tmp_path) -> None:
+        flag = _write(tmp_path / "flag.toml", "limit = 1\n")
+        variable = _write(tmp_path / "variable.toml", "limit = 2\n")
+
+        settings = load_settings(
+            {CONFIG_OPTION: str(flag)},
+            start=tmp_path,
+            environ={CONFIG_ENV_VAR: str(variable)},
+        )
+        assert settings.limit == 1
+
+    def test_the_variable_is_not_reported_as_an_unknown_option(
+        self, tmp_path, caplog
+    ) -> None:
+        named = _write(tmp_path / "named.toml", "limit = 4\n")
+        with caplog.at_level("WARNING"):
+            load_settings(start=tmp_path, environ={CONFIG_ENV_VAR: str(named)})
+        assert caplog.text == ""
+
+    def test_a_missing_file_is_an_error(self, tmp_path) -> None:
+        """The caller named this one, so silence would apply defaults."""
+        with pytest.raises(ConfigError, match="no such config file"):
+            load_settings(
+                {CONFIG_OPTION: str(tmp_path / "gone.toml")},
+                start=tmp_path,
+                environ={},
+            )
+
+    def test_a_directory_of_that_name_is_an_error(self, tmp_path) -> None:
+        (tmp_path / "dir.toml").mkdir()
+        with pytest.raises(ConfigError, match="no such config file"):
+            load_settings(
+                {CONFIG_OPTION: str(tmp_path / "dir.toml")},
+                start=tmp_path,
+                environ={},
+            )
+
+    def test_a_home_prefix_is_expanded(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        _write(tmp_path / "named.toml", "limit = 15\n")
+
+        settings = load_settings(
+            start=tmp_path, environ={CONFIG_ENV_VAR: "~/named.toml"}
+        )
+        assert settings.limit == 15
+
+
+class TestToolTable:
+    """Verify that a file may keep the options under ``[tool.ish]``.
+
+    One file then holds sections for several tools, the way a
+    ``pyproject.toml`` holds ``[tool.black]`` beside the rest.
+    """
+
+    def test_options_come_from_the_tool_table(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[tool.ish]\nlimit = 21\n")
+        assert load_settings(start=tmp_path, environ={}).limit == 21
+
+    def test_a_sibling_tool_is_not_an_unknown_option(self, tmp_path, caplog) -> None:
+        """A table under ``tool`` belongs to another tool, so say nothing."""
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            "[tool.black]\nline-length = 88\n\n[tool.ish]\nlimit = 21\n",
+        )
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert caplog.text == ""
+
+    def test_a_foreign_top_level_key_is_passed_over(self, tmp_path, caplog) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            "[project]\nname = 'other'\n\n[tool.ish]\nlimit = 21\n",
+        )
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert caplog.text == ""
+
+    def test_a_flat_file_still_reads_every_key(self, tmp_path) -> None:
+        """A file written before this keeps working, unchanged."""
+        _write(tmp_path / CONFIG_FILENAME, "limit = 21\nmodel = 'flat'\n")
+        settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert settings.model == "flat"
+
+    def test_a_tool_table_without_ish_reads_the_file_flat(
+        self, tmp_path, caplog
+    ) -> None:
+        """Nothing claims the file, so it is an ish file with a stray key."""
+        _write(tmp_path / CONFIG_FILENAME, "limit = 21\n\n[tool.black]\nskip = 1\n")
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert "tool" in caplog.text
+
+    def test_a_tool_ish_that_is_not_a_table_is_an_error(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[tool]\nish = 'yes'\n")
+        with pytest.raises(ConfigError, match="'tool.ish' is not a table"):
+            load_settings(start=tmp_path, environ={})
+
+    def test_a_tool_that_is_not_a_table_is_an_error(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "tool = 'black'\n")
+        with pytest.raises(ConfigError, match="'tool' is not a table"):
+            load_settings(start=tmp_path, environ={})

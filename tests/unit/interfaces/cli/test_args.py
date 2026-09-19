@@ -94,3 +94,32 @@ def test_version_flag(capsys):
 
     assert exc_info.value.code == 0
     assert "ish" in capsys.readouterr().out
+
+
+def test_config_flag_names_the_file(tmp_path, monkeypatch):
+    """The named file stands in for the file beside the tree."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "ish.toml").write_text("limit = 3\n")
+    named = tmp_path / "other.toml"
+    named.write_text("limit = 9\n")
+
+    args = CliArgs.from_args(["q", ".", "--config", str(named)])
+    assert args.settings.limit == 9
+
+
+def test_short_config_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    named = tmp_path / "other.toml"
+    named.write_text("limit = 6\n")
+
+    assert CliArgs.from_args(["q", ".", "-c", str(named)]).settings.limit == 6
+
+
+def test_the_config_flag_travels_with_the_overrides(tmp_path, monkeypatch):
+    """A tree below must resolve from the file the caller named."""
+    monkeypatch.chdir(tmp_path)
+    named = tmp_path / "other.toml"
+    named.write_text("limit = 6\n")
+
+    args = CliArgs.from_args(["q", ".", "-c", str(named)])
+    assert args.overrides["config"] == str(named)

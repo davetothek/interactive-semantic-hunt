@@ -241,8 +241,12 @@ class Ish:
 
         Count the chunks by language and by kind, so a caller can see
         what a search can reach without listing all of it.
+
+        Read only. A status call that brought the index up to date
+        first held the caller for as long as the index run took, and
+        reported nothing while it ran. Call ``index()`` for fresh
+        numbers.
         """
-        self._ensure_indexed()
         chunks = self._use_case.all_chunks()
         sort_into = self._words.categorize
         languages: dict[str, int] = {}

@@ -29,9 +29,15 @@ paths:
   Never edit `args.py` for it.
 - There is no config-only or CLI-only option. `tests/unit/test_settings.py`
   checks the parity in both directions.
+- `CONFIG_OPTION` is the one exemption. A file cannot name where to find
+  itself, so the path to a config file is a flag (`--config`, `-c`) and an
+  environment variable (`ISH_CONFIG`), and never a field.
+  `TestOptionParity` names it, so a second exemption cannot arrive quietly.
 - Precedence is resolved only in `load_settings()`:
   `defaults < ~/.config/ish/config.toml < ./.ish/config.toml (searched
   upward) < ISH_* env < CLI flags`.
+- A named config file stands in the project file's place. `load_settings()`
+  then does not search upward. The user file below it still applies.
 - A config file beside a subtree adds to the one above it. Each file settles
   only the keys it names.
 - An unknown key warns and is skipped. A malformed or unreadable file raises

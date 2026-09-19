@@ -52,6 +52,9 @@ finishes a filter word. Nothing else is added.
   MCP package.
 - Hold one `Search` per root. Refresh on a thread, never on the way to an
   answer. `refresh_index` wakes the thread and returns at once.
+- `index_status` reports what the index holds. It never builds one.
+- An index another process holds is left out of a search above it, with a
+  warning that names it. A search of the held tree itself raises `StoreBusy`.
 - Report a tool failure through `isError`, not a JSON-RPC error.
 
 ## Neovim

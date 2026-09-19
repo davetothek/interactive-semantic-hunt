@@ -7,6 +7,12 @@ exactly these names, so the two interfaces cannot drift apart.
 Resolve options in this order, where later sources win::
 
     defaults < user config < project config < environment < command line
+
+The path to a config file is the one name outside that set. A file
+cannot name where to find itself, so ``--config`` and ``ISH_CONFIG``
+are read here rather than declared as a field. A file named that way
+stands in place of the project files, which the loader then does not
+look for.
 """
 
 import logging
@@ -24,6 +30,16 @@ CONFIG_BASENAME = "config.toml"
 # The older flat name, still read so an existing file keeps working.
 CONFIG_FILENAME = "ish.toml"
 ENV_PREFIX = "ISH_"
+
+CONFIG_OPTION = "config"
+"""Name the config file to read, as a flag and as an override key.
+
+This is the one name that is not a field of ``Settings``. A file
+cannot hold the path to itself, so the name must stay out of the
+option set that the command line and the file share.
+"""
+CONFIG_ENV_VAR = ENV_PREFIX + CONFIG_OPTION.upper()
+"""The environment variable that names a config file."""
 
 DEFAULT_EMBEDDER = "ollama"
 DEFAULT_IGNORE = (".git", ".venv", "venv", "__pycache__")
@@ -202,6 +218,18 @@ class Settings:
             metavar="SECONDS",
         ),
     )
+    # Index scope, although a theme decides nothing about what is
+    # indexed. Scope answers one question: may a call override this?
+    # The answer is no. Only the TUI draws, and it takes the theme once
+    # at startup, so a per-call override would have nothing to apply it
+    # to. The two buckets hold no third answer.
+    tui_theme: str = field(
+        default="",
+        metadata=_opt(
+            "Theme for the TUI. Empty uses the Textual default.",
+            metavar="NAME",
+        ),
+    )
     tui_debounce_ms: int = field(
         default=120,
         metadata=_opt(
@@ -289,6 +317,35 @@ def _accept(source: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     return accepted
 
 
+TOOL_TABLE = "tool"
+"""The table other tools keep their own settings under."""
+
+
+def _options_in(path: Path, raw: dict[str, Any]) -> Mapping[str, Any]:
+    """Return the ish options in *raw*, wherever the file keeps them.
+
+    A file shared with other tools holds the options under
+    ``[tool.ish]``, where ``[tool.black]`` and ``[tool.ruff]`` also
+    live. Read that table alone then. Pass over every other key at the
+    top level, and every other table under ``tool``: they belong to
+    another tool, and reporting them as unknown options would be wrong.
+
+    A file with no ``tool.ish`` table is an ish file, so every key in it
+    is an option, as before.
+    """
+    tool = raw.get(TOOL_TABLE)
+    if tool is None:
+        return raw
+    if not isinstance(tool, dict):
+        raise ConfigError(f"Cannot parse {path}: '{TOOL_TABLE}' is not a table")
+    if "ish" not in tool:
+        return raw
+    options = tool["ish"]
+    if not isinstance(options, dict):
+        raise ConfigError(f"Cannot parse {path}: 'tool.ish' is not a table")
+    return options
+
+
 def _read_toml(path: Path) -> dict[str, Any]:
     """Read one config file. Return an empty mapping when it is absent.
 
@@ -309,7 +366,19 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise ConfigError(f"Cannot parse {path}: {exc}") from exc
 
     log.debug("Read config from %s", path)
-    return _accept(str(path), raw)
+    return _accept(str(path), _options_in(path, raw))
+
+
+def _read_named(path: Path) -> dict[str, Any]:
+    """Read the config file the caller named.
+
+    A file that is not there is an error here, unlike a file the loader
+    looks for on its own. The caller named this one, so silence would
+    hide a typed path and apply defaults instead.
+    """
+    if not path.is_file():
+        raise ConfigError(f"Cannot read {path}: there is no such config file")
+    return _read_toml(path)
 
 
 def config_names(directory: Path) -> tuple[Path, ...]:
@@ -360,11 +429,15 @@ def project_configs(start: Path) -> list[Path]:
 
 
 def _from_env(environ: Mapping[str, str]) -> dict[str, Any]:
-    """Read options from ``ISH_*`` environment variables."""
+    """Read options from ``ISH_*`` environment variables.
+
+    Pass over ``ISH_CONFIG``. It names a file to read, so it is not an
+    option, and reporting it as one unknown would be wrong.
+    """
     raw = {
         key.removeprefix(ENV_PREFIX).lower(): value
         for key, value in environ.items()
-        if key.startswith(ENV_PREFIX)
+        if key.startswith(ENV_PREFIX) and key != CONFIG_ENV_VAR
     }
     return _accept("the environment", raw)
 
@@ -379,21 +452,30 @@ def load_settings(
 
     Apply *overrides* last, so command-line options win. Omit a key from
     *overrides* to leave the lower-precedence value in place.
+
+    A ``config`` key in *overrides*, or ``ISH_CONFIG`` in the
+    environment, names one file to read in place of the project files
+    at and above *start*. The key wins over the variable, the way a
+    flag wins over the environment everywhere else.
     """
     settings = Settings()
     start = start or Path.cwd()
     environ = environ if environ is not None else os.environ
+    supplied = {k: v for k, v in (overrides or {}).items() if v is not None}
+    named = supplied.pop(CONFIG_OPTION, None) or environ.get(CONFIG_ENV_VAR)
 
     settings = replace(settings, **_read_toml(user_config_path()))
 
-    # Outermost first, so the nearest file wins key by key.
-    for project in project_configs(start):
-        settings = replace(settings, **_read_toml(project))
+    if named:
+        settings = replace(settings, **_read_named(Path(named).expanduser()))
+    else:
+        # Outermost first, so the nearest file wins key by key.
+        for project in project_configs(start):
+            settings = replace(settings, **_read_toml(project))
 
     settings = replace(settings, **_from_env(environ))
 
-    if overrides:
-        supplied = {k: v for k, v in overrides.items() if v is not None}
+    if supplied:
         settings = replace(settings, **_accept("the command line", supplied))
 
     return settings

@@ -128,10 +128,25 @@ class TestIndexStatus:
     def test_reports_counts_and_backend(
         self, tools: IshTools, stub_backend, project: Path
     ) -> None:
+        tools._session_for(project.resolve()).index()
+
         out = tools.index_status({"path": str(project)})
         assert "chunks   : 3" in out
         assert "3 python" in out
         assert "ollama" in out
+
+    def test_the_status_reads_and_does_not_build(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        """A status call that indexed first held the caller for the whole run.
+
+        The server refreshes each tree on a thread of its own, so a
+        status call has nothing to build and nothing to wait for.
+        """
+        out = tools.index_status({"path": str(project)})
+
+        assert "chunks   : 0" in out
+        assert tools._session_for(project.resolve())._indexed is False
 
 
 class TestReuse:

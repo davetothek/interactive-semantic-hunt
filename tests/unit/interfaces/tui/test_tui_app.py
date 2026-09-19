@@ -11,6 +11,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from pygments.styles import get_style_by_name
+from textual.filter import Monochrome, NoColor
 from textual.widgets import Input, OptionList, Static
 
 from ish.application.categories import by_language
@@ -18,7 +20,7 @@ from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.application.progress import EMBED, Progress
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
-from ish.interfaces.tui.app import IshApp
+from ish.interfaces.tui.app import DARK_SYNTAX, LIGHT_SYNTAX, IshApp
 
 # What the registered languages hold, the way the real session reads it
 # off the registry and hands it to the filter.
@@ -112,6 +114,11 @@ def preview_content(app: IshApp):
     return app.query_one("#preview-pane", Static).content
 
 
+def preview_style(app: IshApp):
+    """Return the Pygments style class the preview reads the source in."""
+    return preview_content(app)._theme._pygments_style_class
+
+
 def preview_text(app: IshApp) -> str:
     """Read the preview pane as plain text."""
     return str(preview_content(app))
@@ -170,15 +177,24 @@ class TestSearching:
     """Verify the typing path."""
 
     def test_typing_runs_one_debounced_search(self) -> None:
+        """Five keystrokes make one search.
+
+        Hold the debounce open while the keys arrive, and read it
+        twice: nothing is searched while it runs, and the whole word is
+        searched once it ends. At the default of 120 ms a slow machine
+        takes longer than that between two keys, and the assertion then
+        reads the machine rather than the debounce.
+        """
         fake = FakeSession()
-        app = IshApp(fake, Path("."))
+        app = IshApp(fake, Path("."), debounce_ms=800)
 
         async def body():
             async with app.run_test() as pilot:
                 await _ready(app, pilot)
                 await pilot.press(*"alpha")
-                await asyncio.sleep(SETTLE)
-                # The debounce collapses five keystrokes into one query.
+                assert fake.queries == []
+
+                await asyncio.sleep(1.0)
                 assert fake.queries == ["alpha"]
 
         run(body())
@@ -1148,5 +1164,164 @@ class TestStaleResultsAreNotShown:
                     await pilot.press("backspace")
                 await asyncio.sleep(SETTLE)
                 assert app._current_results is shown
+
+        run(body())
+
+
+class TestTheme:
+    """Verify that the picker draws in the theme the settings name."""
+
+    def test_the_named_theme_is_taken(self) -> None:
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.theme == "solarized-light"
+
+        run(body())
+
+    def test_an_empty_name_keeps_the_default(self) -> None:
+        app = IshApp(FakeSession(), Path("."))
+        default = IshApp(FakeSession(), Path(".")).theme
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.theme == default
+
+        run(body())
+
+    def test_an_unknown_name_is_reported(self) -> None:
+        """A picker that ignores a setting without a word looks broken."""
+        app = IshApp(FakeSession(), Path("."), theme="no-such-theme")
+        default = IshApp(FakeSession(), Path(".")).theme
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.theme == default
+                said = [n.message for n in app._notifications]
+                assert any("no-such-theme" in message for message in said)
+
+        run(body())
+
+    def test_the_preview_follows_a_dark_theme(self) -> None:
+        app = IshApp(FakeSession(), Path("."), theme="gruvbox")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(DARK_SYNTAX)
+
+        run(body())
+
+    def test_the_preview_follows_a_light_theme(self) -> None:
+        """A dark code block under a light theme reads as a broken pane."""
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
+
+        run(body())
+
+    def test_the_key_moves_to_the_next_theme(self) -> None:
+        app = IshApp(FakeSession(), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                names = sorted(app.available_themes)
+                following = names[(names.index(app.theme) + 1) % len(names)]
+
+                await pilot.press("ctrl+t")
+                assert app.theme == following
+                said = [n.message for n in app._notifications]
+                assert any(following in message for message in said)
+
+        run(body())
+
+    def test_the_key_wraps_at_the_last_theme(self) -> None:
+        app = IshApp(FakeSession(), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                names = sorted(app.available_themes)
+                app.theme = names[-1]
+
+                await pilot.press("ctrl+t")
+                assert app.theme == names[0]
+
+        run(body())
+
+    def test_the_preview_follows_the_key(self) -> None:
+        """The pane holds a theme it was built with, so build it again."""
+        app = IshApp(FakeSession(), Path("."), theme="gruvbox")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(DARK_SYNTAX)
+
+                names = sorted(app.available_themes)
+                # Stand one before a light theme, then step onto it.
+                light = "solarized-light"
+                app.theme = names[names.index(light) - 1]
+                await pilot.press("ctrl+t")
+
+                assert app.theme == light
+                assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
+
+        run(body())
+
+    def test_the_key_works_with_nothing_to_preview(self) -> None:
+        app = IshApp(FakeSession(chunks=[]), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                names = sorted(app.available_themes)
+                following = names[(names.index(app.theme) + 1) % len(names)]
+
+                await pilot.press("ctrl+t")
+                assert app.theme == following
+
+        run(body())
+
+
+class TestNoColor:
+    """Verify that NO_COLOR still strips the color a theme adds.
+
+    Textual reads the variable as the app is built and adds a filter
+    that every line goes through. A theme and the preview are both new
+    surfaces, and both draw through that filter.
+    """
+
+    def test_the_variable_makes_the_picker_monochrome(self, monkeypatch) -> None:
+        monkeypatch.setenv("NO_COLOR", "1")
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        assert app.no_color is True
+        assert any(isinstance(f, NoColor | Monochrome) for f in app._filters)
+
+    def test_color_stays_without_the_variable(self, monkeypatch) -> None:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        assert app.no_color is False
+        assert not any(isinstance(f, NoColor | Monochrome) for f in app._filters)
+
+    def test_the_preview_still_draws(self, monkeypatch) -> None:
+        """Monochrome is a filter over the lines, not a reason to stop."""
+        monkeypatch.setenv("NO_COLOR", "1")
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
 
         run(body())

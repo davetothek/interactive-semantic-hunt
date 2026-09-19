@@ -26,7 +26,11 @@ from ish.application.index import Index
 from ish.application.languages import LanguageResolver, resolve_with
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
-from ish.application.ports.vector_store import VectorReader, VectorStore
+from ish.application.ports.vector_store import (
+    StoreBusy,
+    VectorReader,
+    VectorStore,
+)
 from ish.application.progress import REFRESH, Progress, ProgressCallback
 from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
@@ -183,10 +187,23 @@ def build_stores(
             return store, store
         primary = open_index(indexes.path_for(resolved), resolved)
 
-    others = [open_index(db, tree) for tree, db in existing.items() if tree != resolved]
+    others = []
+    for tree, db in existing.items():
+        if tree == resolved:
+            continue
+        try:
+            others.append(open_index(db, tree))
+        except StoreBusy as exc:
+            # One index under a writer must not stop a search of the
+            # tree above it. Name it: fewer results otherwise read as
+            # an index that holds less than it does.
+            log.warning("%s Leaving it out of this search.", exc)
+
     if not others:
+        if primary is None:
+            # Every index this search was going to read is held.
+            raise StoreBusy(f"Another process holds every index under {resolved}.")
         # Nothing below, so the named tree's own index is the whole search.
-        assert primary is not None
         return primary, primary
 
     if primary is None and not settings.refresh:
