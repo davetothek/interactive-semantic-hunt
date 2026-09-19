@@ -6,6 +6,9 @@
   `main`. A hook blocks the push.
 - Push only to the branch you were told to use.
 - One issue per commit. Put `Closes #N` in the body.
+- A change a user of the tool would notice gets a line under `## Unreleased`
+  in `CHANGELOG.md`, in the same commit. `poe release` promotes that section
+  and refuses an empty one.
 - Do not discard uncommitted work. `git checkout -- <path>`, `git restore
   <path>`, `git reset --hard`, and `git stash drop` are blocked by a hook.
   Use `git stash` to set work aside, or commit it.
