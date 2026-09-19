@@ -177,15 +177,24 @@ class TestSearching:
     """Verify the typing path."""
 
     def test_typing_runs_one_debounced_search(self) -> None:
+        """Five keystrokes make one search.
+
+        Hold the debounce open while the keys arrive, and read it
+        twice: nothing is searched while it runs, and the whole word is
+        searched once it ends. At the default of 120 ms a slow machine
+        takes longer than that between two keys, and the assertion then
+        reads the machine rather than the debounce.
+        """
         fake = FakeSession()
-        app = IshApp(fake, Path("."))
+        app = IshApp(fake, Path("."), debounce_ms=800)
 
         async def body():
             async with app.run_test() as pilot:
                 await _ready(app, pilot)
                 await pilot.press(*"alpha")
-                await asyncio.sleep(SETTLE)
-                # The debounce collapses five keystrokes into one query.
+                assert fake.queries == []
+
+                await asyncio.sleep(1.0)
                 assert fake.queries == ["alpha"]
 
         run(body())
