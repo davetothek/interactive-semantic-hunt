@@ -121,6 +121,7 @@ nvim $(ish -i src/)
 | Flag | Purpose |
 |---|---|
 | `-i`, `--interactive` | Run the TUI picker |
+| `-c`, `--config PATH` | Read the options from this file, not from the search upward |
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
 | `--color {auto,always,never}` | Control log color |
@@ -235,7 +236,8 @@ means they always show the current content.
 ## Configure
 
 Every command-line option is also a key in the config file, under the same
-name. Put project settings in `.ish/config.toml` at the root of your
+name. The one exception is `--config` itself: a file cannot name where to
+find itself. Put project settings in `.ish/config.toml` at the root of your
 repository:
 
 ```toml
@@ -311,7 +313,8 @@ User-level defaults go in `~/.config/ish/config.toml`, which honors
 ```
 defaults
   < ~/.config/ish/config.toml
-  < .ish/config.toml            (every one from the target path upward)
+  < .ish/config.toml            (every one from the target path upward,
+                                 or the one file --config names)
   < ISH_* environment
   < command line
 ```
@@ -328,6 +331,47 @@ and still inherit the `type_patterns` the repository above it set.
 
 Set any option from the environment with the `ISH_` prefix, for example
 `ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.
+
+### Name one config file
+
+Point ish at a file with `--config PATH`, its short form `-c`, or the
+`ISH_CONFIG` variable:
+
+```sh
+ish "how is ranking done" --config ~/work/firmware.toml
+ISH_CONFIG=~/work/firmware.toml ish -i 30.Firmware/
+```
+
+The named file stands in place of the files above the tree, which ish then
+does not look for. Your user file still applies below it, so a machine-wide
+preference survives a file chosen for one run. The flag wins over the
+variable. A named file that is not there is an error: a mistyped path would
+otherwise run on the defaults and say nothing about it.
+
+### Share a file with other tools
+
+A config file may keep the options under a `[tool.ish]` table, where
+`[tool.black]` and `[tool.ruff]` also live, so one file can hold sections for
+several tools:
+
+```toml
+[project]
+name = "firmware"
+
+[tool.black]
+line-length = 88
+
+[tool.ish]
+limit = 10
+ignore = [".git", "build"]
+```
+
+ish reads that table alone then, and passes over every other section. A file
+with no `[tool.ish]` table is a flat list of options, as above, so a file
+written before this keeps working.
+
+ish does not look for a `pyproject.toml` on its own. Name one with
+`--config` or `ISH_CONFIG` to have its `[tool.ish]` table read.
 
 ## Extend
 

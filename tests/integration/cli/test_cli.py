@@ -265,6 +265,134 @@ class TestConfigFile:
         assert captured.out == ""
 
 
+class TestNamedConfigFile:
+    """Verify that --config and ISH_CONFIG reach the running command.
+
+    Each case builds the same tree and asks whether `build` was pruned,
+    so the assertion says whether the named file was read.
+    """
+
+    def _tree(self, tmp_path: Path) -> None:
+        (tmp_path / "app.py").write_text("def keep(): pass\n")
+        (tmp_path / "build").mkdir()
+        (tmp_path / "build" / "gen.py").write_text("def drop(): pass\n")
+
+    def test_a_named_file_with_a_tool_table(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._tree(tmp_path)
+        named = tmp_path / "elsewhere.toml"
+        named.write_text('[tool.ish]\nignore = ["build"]\n')
+
+        exit_code = main(["", str(tmp_path), "--config", str(named)])
+        out = capsys.readouterr().out
+
+        assert exit_code == 0
+        assert "keep" in out
+        assert "drop" not in out
+
+    def test_a_named_file_with_flat_keys(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A file written before the tool table keeps working."""
+        monkeypatch.chdir(tmp_path)
+        self._tree(tmp_path)
+        named = tmp_path / "elsewhere.toml"
+        named.write_text('ignore = ["build"]\n')
+
+        exit_code = main(["", str(tmp_path), "-c", str(named)])
+        out = capsys.readouterr().out
+
+        assert exit_code == 0
+        assert "keep" in out
+        assert "drop" not in out
+
+    def test_a_foreign_section_is_not_reported(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A `pyproject.toml` holds other tools. They are not ish options."""
+        monkeypatch.chdir(tmp_path)
+        self._tree(tmp_path)
+        named = tmp_path / "pyproject.toml"
+        named.write_text(
+            "[project]\nname = 'thing'\n\n"
+            "[tool.black]\nline-length = 88\n\n"
+            '[tool.ish]\nignore = ["build"]\n'
+        )
+
+        exit_code = main(["", str(tmp_path), "--config", str(named)])
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert "drop" not in captured.out
+        assert "black" not in captured.err
+        assert "project" not in captured.err
+
+    def test_the_environment_names_the_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._tree(tmp_path)
+        named = tmp_path / "elsewhere.toml"
+        named.write_text('[tool.ish]\nignore = ["build"]\n')
+        monkeypatch.setenv("ISH_CONFIG", str(named))
+
+        exit_code = main(["", str(tmp_path)])
+        out = capsys.readouterr().out
+
+        assert exit_code == 0
+        assert "keep" in out
+        assert "drop" not in out
+
+    def test_a_tool_ish_that_is_not_a_table_exits_cleanly(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._tree(tmp_path)
+        named = tmp_path / "elsewhere.toml"
+        named.write_text("[tool]\nish = 'yes'\n")
+
+        exit_code = main(["", str(tmp_path), "--config", str(named)])
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "'tool.ish' is not a table" in captured.err
+        assert captured.out == ""
+
+    def test_a_missing_named_file_exits_cleanly(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A mistyped path must not run quietly on the defaults."""
+        monkeypatch.chdir(tmp_path)
+        self._tree(tmp_path)
+
+        exit_code = main(["", str(tmp_path), "--config", str(tmp_path / "gone.toml")])
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        assert "no such config file" in captured.err
+        assert captured.out == ""
+
+
 class TestGrepFormat:
     """Verify the shape an editor picker consumes, end to end."""
 
