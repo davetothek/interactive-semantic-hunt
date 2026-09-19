@@ -112,6 +112,7 @@ def _run_tui(args: CliArgs) -> int:
             args.path,
             limit=args.settings.tui_limit,
             debounce_ms=args.settings.tui_debounce_ms,
+            theme=args.settings.tui_theme,
         )
         selected = app.run()
 

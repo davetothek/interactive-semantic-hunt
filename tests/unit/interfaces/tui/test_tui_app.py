@@ -1150,3 +1150,42 @@ class TestStaleResultsAreNotShown:
                 assert app._current_results is shown
 
         run(body())
+
+
+class TestTheme:
+    """Verify that the picker draws in the theme the settings name."""
+
+    def test_the_named_theme_is_taken(self) -> None:
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.theme == "solarized-light"
+
+        run(body())
+
+    def test_an_empty_name_keeps_the_default(self) -> None:
+        app = IshApp(FakeSession(), Path("."))
+        default = IshApp(FakeSession(), Path(".")).theme
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.theme == default
+
+        run(body())
+
+    def test_an_unknown_name_is_reported(self) -> None:
+        """A picker that ignores a setting without a word looks broken."""
+        app = IshApp(FakeSession(), Path("."), theme="no-such-theme")
+        default = IshApp(FakeSession(), Path(".")).theme
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert app.theme == default
+                said = [n.message for n in app._notifications]
+                assert any("no-such-theme" in message for message in said)
+
+        run(body())

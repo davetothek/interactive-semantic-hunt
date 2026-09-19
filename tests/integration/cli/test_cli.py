@@ -211,6 +211,20 @@ def test_interactive_tui_ollama(
     assert exit_code == 0
 
 
+def test_interactive_tui_takes_the_theme(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The theme reaches the picker, resolved like any other option."""
+    from unittest.mock import MagicMock
+
+    mock_app_class = MagicMock()
+    mock_app_class.return_value.run.return_value = None
+    monkeypatch.setattr("ish.interfaces.tui.app.IshApp", mock_app_class)
+
+    assert main(["", str(project), "-i", "--tui-theme", "nord"]) == 0
+    assert mock_app_class.call_args.kwargs["theme"] == "nord"
+
+
 def test_interactive_tui_st(
     project: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -117,6 +117,7 @@ class IshApp(App[Match | None]):
         *,
         limit: int = 50,
         debounce_ms: int = 120,
+        theme: str = "",
     ) -> None:
         super().__init__()
         # The session resolves filters, opens the index, and answers.
@@ -125,6 +126,9 @@ class IshApp(App[Match | None]):
         self.root_path = root_path
         self.limit = limit
         self.debounce = debounce_ms / 1000
+        # Take the theme at mount, not here. The app has no screen yet,
+        # and a name nobody registered must reach the user.
+        self._wanted_theme = theme
         # Which search is the current one. A cancelled task cannot stop
         # the thread it already handed work to, so the thread asks.
         self._generation = 0
@@ -168,8 +172,23 @@ class IshApp(App[Match | None]):
         large tree takes most of a second, and a field that cannot be
         typed into reads as an interface that has not started.
         """
+        self._take_theme(self._wanted_theme)
         self.query_one(Input).focus()
         self.build_index()
+
+    def _take_theme(self, name: str) -> None:
+        """Draw in the theme the settings name.
+
+        Keep the default for an empty name. Report a name no theme
+        answers to, because a picker that silently ignores a setting
+        looks broken.
+        """
+        if not name:
+            return
+        if name not in self.available_themes:
+            self.notify(f"There is no theme named {name}", severity="warning")
+            return
+        self.theme = name
 
     def build_index(self) -> None:
         """Scan and embed the directory on a thread that never blocks exit."""
