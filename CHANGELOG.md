@@ -14,6 +14,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   The named file stands in place of the files ish looks for by walking up
   from the tree. The user file below it still applies, so a machine-wide
   preference survives a file chosen for one run.
+- Read the options from a `[tool.ish]` table when a config file holds one,
+  so one file can carry sections for several tools. ish passes over
+  `[tool.black]` and every other section beside its own. A file with no
+  `[tool.ish]` table is a flat list of options, as before.
 
 ### Fixed
 

@@ -305,6 +305,35 @@ def _accept(source: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     return accepted
 
 
+TOOL_TABLE = "tool"
+"""The table other tools keep their own settings under."""
+
+
+def _options_in(path: Path, raw: dict[str, Any]) -> Mapping[str, Any]:
+    """Return the ish options in *raw*, wherever the file keeps them.
+
+    A file shared with other tools holds the options under
+    ``[tool.ish]``, where ``[tool.black]`` and ``[tool.ruff]`` also
+    live. Read that table alone then. Pass over every other key at the
+    top level, and every other table under ``tool``: they belong to
+    another tool, and reporting them as unknown options would be wrong.
+
+    A file with no ``tool.ish`` table is an ish file, so every key in it
+    is an option, as before.
+    """
+    tool = raw.get(TOOL_TABLE)
+    if tool is None:
+        return raw
+    if not isinstance(tool, dict):
+        raise ConfigError(f"Cannot parse {path}: '{TOOL_TABLE}' is not a table")
+    if "ish" not in tool:
+        return raw
+    options = tool["ish"]
+    if not isinstance(options, dict):
+        raise ConfigError(f"Cannot parse {path}: 'tool.ish' is not a table")
+    return options
+
+
 def _read_toml(path: Path) -> dict[str, Any]:
     """Read one config file. Return an empty mapping when it is absent.
 
@@ -325,7 +354,7 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise ConfigError(f"Cannot parse {path}: {exc}") from exc
 
     log.debug("Read config from %s", path)
-    return _accept(str(path), raw)
+    return _accept(str(path), _options_in(path, raw))
 
 
 def _read_named(path: Path) -> dict[str, Any]:
