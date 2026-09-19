@@ -17,6 +17,15 @@ from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 
 
+class StoreBusy(Exception):
+    """Raise when another process holds the index and will not let go.
+
+    A store waits a short time for a lock and then says so. A caller
+    that waits without a limit cannot tell a slow index run from a
+    dead one, and it reports nothing while it waits.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class FileStamp:
     """Identify a file version without reading it.

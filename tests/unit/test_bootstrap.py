@@ -372,6 +372,82 @@ class TestFederatedWiring:
             reader.close()
 
 
+class TestBusyIndexes:
+    """Verify that an index under a writer does not stop a search above it.
+
+    An index run holds its own index for the length of the run. A
+    parent reads several, so it must answer from the rest and say
+    which one it left out.
+    """
+
+    def _project(self, tmp_path, names):
+        """Index each child of a project and return the file holding each."""
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        project = tmp_path / "proj"
+        settings = replace(Settings(), cache_dir=str(indexes))
+        catalog = bootstrap.catalog(settings)
+        held = {}
+        for name in names:
+            tree = project / name
+            tree.mkdir(parents=True)
+            # The catalog names the file for a tree, so the index the
+            # composition root opens is the one this test holds.
+            db = catalog.path_for(tree.resolve())
+            SqliteVectorStore(db, model_id="m", root=tree.resolve()).close()
+            held[name] = db
+        return settings, project, held
+
+    def _hold(self, monkeypatch, busy):
+        """Make opening each index in *busy* report a writer."""
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+        from ish.application.ports.vector_store import StoreBusy
+
+        def open_or_report(path, *, model_id, root):
+            if path in busy:
+                raise StoreBusy(f"Another process holds the index {path}.")
+            return SqliteVectorStore(path, model_id=model_id, root=root)
+
+        monkeypatch.setattr(
+            "ish.adapters.vector_store.sqlite.SqliteVectorStore", open_or_report
+        )
+
+    def test_a_held_index_is_left_out_and_named(self, tmp_path, monkeypatch, caplog):
+        settings, project, held = self._project(tmp_path, ["one", "two"])
+        self._hold(monkeypatch, {held["one"]})
+
+        with caplog.at_level("WARNING"):
+            primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
+        try:
+            assert primary is None
+            assert len(reader._readers) == 1
+            assert str(held["one"]) in caplog.text
+        finally:
+            reader.close()
+
+    def test_every_index_held_is_an_error(self, tmp_path, monkeypatch):
+        """Nothing is left to read, so say so rather than answer nothing."""
+        from ish.application.ports.vector_store import StoreBusy
+
+        settings, project, held = self._project(tmp_path, ["one"])
+        self._hold(monkeypatch, set(held.values()))
+
+        with pytest.raises(StoreBusy, match="every index"):
+            bootstrap.build_stores(settings, project, _StubEmbedder())
+
+    def test_the_named_tree_reports_its_own_writer(self, tmp_path, monkeypatch):
+        """The caller asked about this tree, so silence would be wrong."""
+        from ish.application.ports.vector_store import StoreBusy
+
+        settings, project, held = self._project(tmp_path, ["one"])
+        self._hold(monkeypatch, set(held.values()))
+
+        with pytest.raises(StoreBusy, match="holds the index"):
+            bootstrap.build_stores(settings, project / "one", _StubEmbedder())
+
+
 class TestRefreshIndexes:
     """Verify that refreshing a parent visits every index beneath it."""
 

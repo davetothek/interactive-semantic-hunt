@@ -31,6 +31,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A call against an index that another process was writing waited without a
+  limit. One index run held a status call for 1800 s, which returned no
+  error and no progress. A store now waits two seconds for the lock and then
+  names the file that is held. A search over several indexes leaves out the
+  one under a writer, says which one, and answers from the rest.
+- `index_status` and `Ish.status()` no longer bring the index up to date
+  first. A status call reported nothing for as long as the run it started.
+  They now report what the index holds. Call `build_index` or `index()` for
+  fresh numbers.
 - The preview pane read the source in a dark Pygments theme whatever the
   picker was drawing in, so a light theme still showed a dark code block.
   The preview now follows the picker: `gruvbox-dark` under a dark theme,

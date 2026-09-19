@@ -28,7 +28,7 @@ from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ish.application.ports.vector_store import FileStamp
+from ish.application.ports.vector_store import FileStamp, StoreBusy
 from ish.application.ranking import ResultFilter, rank, split_identifier
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
@@ -133,6 +133,26 @@ def _fts_query(text: str) -> str:
     return " OR ".join(f'"{word}"' for word in words)
 
 
+BUSY_SECONDS = 2.0
+"""How long to wait for a lock before the store says the index is busy.
+
+Long enough for a commit in flight to land. Short enough that a caller
+hears an answer. One index run held a call for 1800 s, and the caller
+gave up with nothing to act on.
+"""
+
+
+def _busy(path: Path, exc: sqlite3.OperationalError) -> Exception:
+    """Return the error to raise for *exc*, named when a writer holds the file."""
+    text = str(exc)
+    if "lock" not in text and "busy" not in text:
+        return exc
+    return StoreBusy(
+        f"Another process holds the index {path}. "
+        f"An index run keeps the file until the run ends."
+    )
+
+
 class SqliteVectorStore:
     """Persist chunks and embeddings in a single SQLite file."""
 
@@ -152,11 +172,19 @@ class SqliteVectorStore:
         # measured on 23,215 chunks, 118 ms a query against 2 ms.
         self._matrix_cache: tuple[tuple[int, int], list[int], Any] | None = None
         self._writes = 0
-        self._db = sqlite3.connect(db_path, check_same_thread=False)
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.execute("PRAGMA synchronous=NORMAL")
-        self._db.execute("PRAGMA foreign_keys=ON")
-        self._prepare()
+        self._db = sqlite3.connect(
+            db_path, timeout=BUSY_SECONDS, check_same_thread=False
+        )
+        try:
+            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db.execute("PRAGMA synchronous=NORMAL")
+            self._db.execute("PRAGMA foreign_keys=ON")
+            self._prepare()
+        except sqlite3.OperationalError as exc:
+            # Opening is where a caller met the writer and waited. Say
+            # which file is held, and let the caller decide what to do.
+            self._db.close()
+            raise _busy(db_path, exc) from exc
 
     # ------------------------------------------------------------------
     # Lifecycle
