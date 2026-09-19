@@ -4,9 +4,26 @@ from pathlib import Path
 
 import pytest
 
-from ish.application.categories import TYPES, category_of, compile_categories
+from ish.application.categories import (
+    TYPES,
+    by_language,
+    category_of,
+    compile_categories,
+)
 from ish.application.filters import Filters, build_result_filter
 from ish.domain.chunk import Chunk
+
+# What the registered languages hold, as bootstrap reads it off them.
+HOLDS = {
+    "markdown": "doc",
+    "asciidoc": "doc",
+    "yaml": "config",
+    "json": "config",
+    "python": "code",
+    "cpp": "code",
+}
+
+sort_by_language = by_language(HOLDS)
 
 
 def make_chunk(path: str, language: str = "python") -> Chunk:
@@ -41,14 +58,23 @@ class TestCategories:
         ],
     )
     def test_category(self, path: str, language: str, expected: str) -> None:
-        assert category_of(make_chunk(path, language)) == expected
+        assert sort_by_language(make_chunk(path, language)) == expected
 
     def test_a_fixture_counts_as_a_test_not_config(self) -> None:
         """A YAML fixture belongs with the tests that read it."""
-        assert category_of(make_chunk("/p/tests/data/case.yaml", "yaml")) == "test"
+        assert sort_by_language(make_chunk("/p/tests/data/case.yaml", "yaml")) == "test"
 
     def test_a_doc_inside_tests_counts_as_a_test(self) -> None:
-        assert category_of(make_chunk("/p/tests/README.md", "markdown")) == "test"
+        assert sort_by_language(make_chunk("/p/tests/README.md", "markdown")) == "test"
+
+    def test_a_language_nothing_says_anything_about_holds_code(self) -> None:
+        """A user parser that declares no category reads as code."""
+        assert sort_by_language(make_chunk("/p/src/a.toy", "toy")) == "code"
+
+    def test_with_no_registry_only_the_path_speaks(self) -> None:
+        """All a caller with no registry can know."""
+        assert category_of(make_chunk("/p/README.md", "markdown")) == "code"
+        assert category_of(make_chunk("/p/tests/a.py")) == "test"
 
     def test_every_category_is_listed(self) -> None:
         assert set(TYPES) == {"code", "doc", "test", "config"}
@@ -66,9 +92,9 @@ class TestConfigurableCategories:
 
     def test_a_pattern_sorts_a_path(self) -> None:
         """The case that the built-in rule misses."""
-        sort_into = compile_categories(("test:/[0-9.]*(Tests|Verification)/",))
+        sort_into = compile_categories(("test:/[0-9.]*(Tests|Verification)/",), HOLDS)
         chunk = make_chunk("/p/20.Tests/30.Verification/case.yaml", "yaml")
-        assert category_of(chunk) == "config"
+        assert sort_by_language(chunk) == "config"
         assert sort_into(chunk) == "test"
 
     def test_the_first_match_wins(self) -> None:
@@ -76,16 +102,16 @@ class TestConfigurableCategories:
         assert sort_into(make_chunk("/p/spec/a.py")) == "doc"
 
     def test_an_unmatched_path_falls_back(self) -> None:
-        sort_into = compile_categories(("test:/nothing/",))
+        sort_into = compile_categories(("test:/nothing/",), HOLDS)
         assert sort_into(make_chunk("/p/README.md", "markdown")) == "doc"
 
     def test_the_filter_uses_the_patterns(self) -> None:
-        sort_into = compile_categories(("test:Tests/",))
+        sort_into = compile_categories(("test:Tests/",), HOLDS)
         chunk = make_chunk("/p/20.Tests/case.yaml", "yaml")
         keep = build_result_filter(Filters(type=("test",)), sort_into)
         assert keep is not None and keep(chunk)
         # Without the pattern the same chunk is configuration.
-        plain = build_result_filter(Filters(type=("test",)))
+        plain = build_result_filter(Filters(type=("test",)), sort_by_language)
         assert plain is not None and not plain(chunk)
 
     def test_a_malformed_rule_names_itself(self) -> None:

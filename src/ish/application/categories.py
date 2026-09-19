@@ -5,19 +5,24 @@ path is consulted before the language, so a YAML fixture under tests/ is
 a test rather than config. A repository may add rules of its own, as
 ``type:regex``, because a naming convention belongs to a repository and
 not to a language.
+
+What a language itself holds is declared where the language is
+registered, and reaches this module as a mapping. So adding a language
+that holds prose or configuration needs no edit here.
 """
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from ish.domain.chunk import Chunk
 
 Categorizer = Callable[[Chunk], str]
 """Say which category a chunk falls into."""
 
-# What a language is for. A language named in neither table is code.
-_DOC_LANGUAGES = frozenset({"asciidoc", "markdown"})
-_CONFIG_LANGUAGES = frozenset({"json", "toml", "yaml"})
+CODE = "code"
+DOC = "doc"
+TEST = "test"
+CONFIG = "config"
 
 # Where a test lives. Judge a chunk by its path rather than its language,
 # so a fixture counts as a test alongside the code that reads it.
@@ -28,11 +33,32 @@ _TEST_PATH = re.compile(
 )
 
 # The categories a chunk can fall into. Every chunk has exactly one.
-TYPES = ("code", "doc", "test", "config")
+TYPES = (CODE, DOC, TEST, CONFIG)
+
+
+def by_language(languages: Mapping[str, str]) -> Categorizer:
+    """Return the built-in reading: a test path, then what the language holds.
+
+    Rank the path above the language, because a YAML fixture belongs
+    with the tests it feeds rather than with the configuration. A
+    language *languages* does not name holds code.
+    """
+
+    def category_of(chunk: Chunk) -> str:
+        if _TEST_PATH.search(chunk.path.as_posix()):
+            return TEST
+        return languages.get(chunk.language, CODE)
+
+    return category_of
+
+
+category_of = by_language({})
+"""Sort a chunk with no registry to hand: a test by its path, else code."""
 
 
 def compile_categories(
     patterns: Sequence[str],
+    languages: Mapping[str, str] | None = None,
 ) -> Categorizer:
     """Turn ``type:regex`` rules into a function that sorts a chunk.
 
@@ -66,29 +92,15 @@ def compile_categories(
                 f"The type pattern {rule!r} has an invalid regular expression: {exc}"
             ) from exc
 
+    fallback = category_of if languages is None else by_language(languages)
     if not compiled:
-        return category_of
+        return fallback
 
     def categorize(chunk: Chunk) -> str:
         path = chunk.path.as_posix()
         for name, pattern in compiled:
             if pattern.search(path):
                 return name
-        return category_of(chunk)
+        return fallback(chunk)
 
     return categorize
-
-
-def category_of(chunk: Chunk) -> str:
-    """Return what a chunk is for: test, doc, config, or code.
-
-    Rank the path above the language, because a YAML fixture belongs
-    with the tests it feeds rather than with the configuration.
-    """
-    if _TEST_PATH.search(chunk.path.as_posix()):
-        return "test"
-    if chunk.language in _DOC_LANGUAGES:
-        return "doc"
-    if chunk.language in _CONFIG_LANGUAGES:
-        return "config"
-    return "code"

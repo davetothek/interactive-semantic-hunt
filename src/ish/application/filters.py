@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 
 from ish.application.categories import Categorizer, category_of
-from ish.application.languages import canonical_language, unique
+from ish.application.languages import LanguageResolver, as_typed, unique
 from ish.application.ranking import ResultFilter
 from ish.domain.chunk import Chunk
 
@@ -32,18 +32,14 @@ class Filters:
     type: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Store the canonical name of every language and kind.
+        """Tidy every name, and keep each one once.
 
-        Normalize once, at the edge, so that everything downstream —
-        the filter, the display, and any comparison — agrees on one
-        spelling of each name.
+        Hold the language as the reader spelled it, so the header shows
+        what they typed. Which language a spelling means is known only
+        to the registry, so ``build_result_filter()`` resolves it there.
         """
-        object.__setattr__(
-            self, "lang", unique(canonical_language(name) for name in self.lang)
-        )
-        object.__setattr__(
-            self, "type", unique(name.strip().lower() for name in self.type)
-        )
+        object.__setattr__(self, "lang", unique(as_typed(name) for name in self.lang))
+        object.__setattr__(self, "type", unique(as_typed(name) for name in self.type))
 
     def __bool__(self) -> bool:
         """Report whether anything is narrowed."""
@@ -99,15 +95,21 @@ def parse_query(text: str) -> tuple[str, Filters]:
 
 
 def build_result_filter(
-    filters: Filters, categorize: Categorizer | None = None
+    filters: Filters,
+    categorize: Categorizer | None = None,
+    resolve: LanguageResolver | None = None,
 ) -> ResultFilter:
     """Build the result filter, or None when nothing narrows the view.
 
     These narrow what a search returns. They must never reach the index,
     because a filter that decided what to index would make the next run
     prune everything it excluded.
+
+    Resolve each language name with *resolve*, so ``lang:c`` matches the
+    chunks the C++ parser stamped. Without it a spelling stands for
+    itself, which is all a caller with no registry can know.
     """
-    languages = frozenset(filters.lang)
+    languages = frozenset((resolve or as_typed)(name) for name in filters.lang)
     types = frozenset(filters.type)
     sort_into = categorize or category_of
     try:

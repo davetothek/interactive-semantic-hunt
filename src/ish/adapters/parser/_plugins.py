@@ -3,7 +3,10 @@
 The ``Parser`` protocol is the whole contract, so a parser needs no
 registration beyond being found: a module that exposes ``parser()``
 returning something with a language, its suffixes, and a ``parse``
-method is a parser.
+method is a parser. It may also name ``aliases`` and a ``category``,
+the way a registered language does, and reads as code when it does not.
+Read those two tolerantly, because a plugin is written to a documented
+minimum rather than to this table.
 
 Only the user's own configuration directory is read. A parser is code,
 and code that arrives with a checked-out repository is code nobody
@@ -16,6 +19,7 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from ish.adapters.parser import CODE, Language
 from ish.application.ports.parser import Parser
 
 log = logging.getLogger(__name__)
@@ -29,8 +33,8 @@ def plugin_dir() -> Path:
     return Path(base) / "ish" / "parsers"
 
 
-def load_parsers(directory: Path | None = None) -> dict[str, Callable[[], Parser]]:
-    """Return a factory for every parser found, keyed by its language.
+def load_parsers(directory: Path | None = None) -> dict[str, Language]:
+    """Return every parser found, keyed by the language it reads.
 
     Report and skip a module that cannot be loaded or does not satisfy
     the protocol, so one broken parser cannot stop the tool.
@@ -39,7 +43,7 @@ def load_parsers(directory: Path | None = None) -> dict[str, Callable[[], Parser
     if not directory.is_dir():
         return {}
 
-    found: dict[str, Callable[[], Parser]] = {}
+    found: dict[str, Language] = {}
     for path in sorted(directory.glob("*.py")):
         if path.name.startswith("_"):
             continue
@@ -53,7 +57,11 @@ def load_parsers(directory: Path | None = None) -> dict[str, Callable[[], Parser
                 parser.language,
             )
             continue
-        found[parser.language] = _factory(path)
+        found[parser.language] = Language(
+            build=_factory(path),
+            aliases=frozenset(str(name) for name in getattr(parser, "aliases", ())),
+            category=str(getattr(parser, "category", CODE)),
+        )
         log.debug(
             "Loaded parser %r from %s for %s",
             parser.language,
