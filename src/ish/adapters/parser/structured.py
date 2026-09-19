@@ -71,7 +71,9 @@ class StructuredParser:
             return [whole]
 
         chunks: list[Chunk] = []
-        self._split(root, path, lines, [title], chunks)
+        oversized: list[tuple[str, int]] = []
+        self._split(root, path, lines, [title], chunks, oversized)
+        _report_oversized(path, oversized)
         log.debug("Split %s into %d chunks", path, len(chunks))
         return chunks or [whole]
 
@@ -106,6 +108,7 @@ class StructuredParser:
         lines: list[str],
         trail: list[str],
         chunks: list[Chunk],
+        oversized: list[tuple[str, int]],
         *,
         may_split_list: bool = True,
     ) -> None:
@@ -124,13 +127,7 @@ class StructuredParser:
         divisible = (may_split_list and _has_entries(node)) or size > MAX_CHUNK_CHARS
         if not children or not divisible:
             if size > MAX_CHUNK_CHARS:
-                log.warning(
-                    "%s: %s holds %d characters and cannot be split further. "
-                    "Only its opening will be searchable.",
-                    path,
-                    symbol,
-                    size,
-                )
+                oversized.append((symbol, size))
             kind = "document" if len(trail) == 1 else "section"
             chunks.append(self._chunk(path, lines, start, end, symbol, kind))
             return
@@ -150,8 +147,40 @@ class StructuredParser:
                 lines,
                 [*trail, name],
                 chunks,
+                oversized,
                 may_split_list=deeper,
             )
+
+
+def _report_oversized(path: Path, values: list[tuple[str, int]]) -> None:
+    """Report the values of one file that no rule can divide.
+
+    One line a file rather than one a value. A generated document holds
+    thousands of them, and a warning for each buries every other line of
+    an index run.
+    """
+    if not values:
+        return
+
+    symbol, size = max(values, key=lambda value: value[1])
+    if len(values) == 1:
+        log.warning(
+            "%s: %s holds %d characters and cannot be divided. "
+            "Only its opening is searchable.",
+            path,
+            symbol,
+            size,
+        )
+        return
+
+    log.warning(
+        "%s: %d values cannot be divided, the largest %s at %d characters. "
+        "Only their openings are searchable.",
+        path,
+        len(values),
+        symbol,
+        size,
+    )
 
 
 class _Ranged:

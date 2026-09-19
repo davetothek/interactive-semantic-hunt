@@ -7,6 +7,7 @@ the adapter needs no third-party package.
 
 import logging
 import os
+import time
 from collections.abc import Sequence
 
 from ish.adapters.embedder.prefixes import PrefixingEmbedder
@@ -30,6 +31,24 @@ TIMEOUT_SECONDS = 600
 # the request an index run has in flight, so it must wait; a wait of
 # minutes is a failure to report rather than an answer worth serving.
 QUERY_TIMEOUT_SECONDS = 60
+
+# How many times to send a batch the daemon did not answer. A dead socket
+# held one index run for 10 hours while the daemon itself stayed healthy,
+# and embedding is incremental per file, so another attempt costs one
+# batch rather than the run.
+RETRY_ATTEMPTS = 3
+# Wait this long before the second attempt, then double it. A daemon that
+# is loading a model, or restarting, needs time rather than another
+# request.
+RETRY_BACKOFF_SECONDS = 1.0
+
+
+class _Transient(RuntimeError):
+    """A failure worth another attempt.
+
+    A timeout and an unreachable daemon can both pass. A refused request
+    cannot, so it is an ordinary error and stops the run.
+    """
 
 
 def _normalize_host(host: str) -> str:
@@ -65,24 +84,54 @@ class OllamaEmbedder(PrefixingEmbedder):
         return cls(model) if model else cls()
 
     def _embed(
-        self, texts: Sequence[str], timeout: float = TIMEOUT_SECONDS
+        self,
+        texts: Sequence[str],
+        timeout: float = TIMEOUT_SECONDS,
+        attempts: int = RETRY_ATTEMPTS,
     ) -> Sequence[Sequence[float]]:
         """Encode texts into vectors, one batch of requests at a time."""
         items = list(texts)
         vectors: list[Sequence[float]] = []
         for start in range(0, len(items), self._batch_size):
-            vectors.extend(
-                self._embed_batch(items[start : start + self._batch_size], timeout)
-            )
+            batch = items[start : start + self._batch_size]
+            vectors.extend(self._sent(batch, timeout, attempts))
         return vectors
 
     def _embed_interactive(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
-        """Encode a query, waiting only as long as a person will."""
-        return self._embed(texts, timeout=QUERY_TIMEOUT_SECONDS)
+        """Encode a query, waiting only as long as a person will.
+
+        Send it once. Somebody is watching, and a second wait of a minute
+        is worse than a message that says what went wrong.
+        """
+        return self._embed(texts, timeout=QUERY_TIMEOUT_SECONDS, attempts=1)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _sent(
+        self, batch: list[str], timeout: float, attempts: int
+    ) -> list[Sequence[float]]:
+        """Send one batch, and send it again when the daemon does not answer.
+
+        Make the last attempt outside the loop, so its failure reaches
+        the caller as it is.
+        """
+        wait = RETRY_BACKOFF_SECONDS
+        for attempt in range(1, attempts):
+            try:
+                return self._embed_batch(batch, timeout)
+            except _Transient as exc:
+                log.warning(
+                    "%s Sending it again in %.0f s. Attempt %d of %d.",
+                    exc,
+                    wait,
+                    attempt + 1,
+                    attempts,
+                )
+                time.sleep(wait)
+                wait *= 2
+        return self._embed_batch(batch, timeout)
 
     def _embed_batch(self, batch: list[str], timeout: float) -> list[Sequence[float]]:
         """Send one batch and return its vectors."""
@@ -103,7 +152,7 @@ class OllamaEmbedder(PrefixingEmbedder):
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = json.loads(response.read())
         except TimeoutError as exc:
-            raise RuntimeError(
+            raise _Transient(
                 f"Ollama at {self.host} did not answer within {timeout:g} s. "
                 f"It serves one embedding request at a time, so a query waits "
                 f"for the batch an index run has in flight."
@@ -121,7 +170,7 @@ class OllamaEmbedder(PrefixingEmbedder):
                 f"Ollama refused the request ({exc.code}): {detail}. {hint}"
             ) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(
+            raise _Transient(
                 f"Cannot reach Ollama at {self.host}: {exc.reason}. "
                 f"Start it with 'ollama serve', or install another backend "
                 f"and select it, as in "

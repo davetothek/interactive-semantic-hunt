@@ -1,0 +1,118 @@
+# Queries against this repository, and the chunk that answers each.
+#
+# category: conceptual — a description in plain words, no identifier.
+#           identifier — the name itself, as a developer would type it.
+# path:     the suffix of the file that holds the answer.
+# symbol:   optional, a substring of the chunk's symbol.
+#
+# Add a query when a ranking defect is found. Do not remove one that fails.
+
+[[query]]
+text = "fuse two rankings with reciprocal rank fusion"
+category = "conceptual"
+path = "application/ranking.py"
+symbol = "fuse_rankings"
+
+[[query]]
+text = "decide whether a query looks like an identifier"
+category = "conceptual"
+path = "application/ranking.py"
+symbol = "is_code_like"
+
+[[query]]
+text = "split a yaml document at the first list of things it holds"
+category = "conceptual"
+path = "adapters/parser/structured.py"
+
+[[query]]
+text = "cap the size of a chunk before it reaches the embedder"
+category = "conceptual"
+path = "adapters/parser/_limits.py"
+
+[[query]]
+text = "find headings while skipping fenced code blocks"
+category = "conceptual"
+path = "adapters/parser/markup.py"
+
+[[query]]
+text = "load parsers a user wrote from the config directory"
+category = "conceptual"
+path = "adapters/parser/_plugins.py"
+
+[[query]]
+text = "add a task prefix to a query before embedding it"
+category = "conceptual"
+path = "adapters/embedder/prefixes.py"
+
+[[query]]
+text = "which stored index covers a given path"
+category = "conceptual"
+path = "adapters/vector_store/catalog.py"
+
+[[query]]
+text = "ask git which files are ignored"
+category = "conceptual"
+path = "adapters/vcs/git.py"
+
+[[query]]
+text = "resolve settings from defaults, config files, environment and flags"
+category = "conceptual"
+path = "settings.py"
+symbol = "load_settings"
+
+[[query]]
+text = "the composition root that wires adapters into use cases"
+category = "conceptual"
+path = "bootstrap.py"
+
+[[query]]
+text = "read the source lines a chunk points at"
+category = "conceptual"
+path = "application/preview.py"
+
+[[query]]
+text = "fuse_rankings"
+category = "identifier"
+path = "application/ranking.py"
+symbol = "fuse_rankings"
+
+[[query]]
+text = "SizeLimited"
+category = "identifier"
+path = "adapters/parser/_limits.py"
+symbol = "SizeLimited"
+
+[[query]]
+text = "build_stores"
+category = "identifier"
+path = "bootstrap.py"
+symbol = "build_stores"
+
+[[query]]
+text = "load_settings"
+category = "identifier"
+path = "settings.py"
+symbol = "load_settings"
+
+[[query]]
+text = "PrefixingEmbedder"
+category = "identifier"
+path = "adapters/embedder/prefixes.py"
+symbol = "PrefixingEmbedder"
+
+[[query]]
+text = "IndexCatalog"
+category = "identifier"
+path = "adapters/vector_store/catalog.py"
+symbol = "IndexCatalog"
+
+[[query]]
+text = "parse_query"
+category = "identifier"
+path = "application/filters.py"
+symbol = "parse_query"
+
+[[query]]
+text = "category_of"
+category = "identifier"
+path = "application/categories.py"
