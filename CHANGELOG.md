@@ -44,6 +44,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   picker was drawing in, so a light theme still showed a dark code block.
   The preview now follows the picker: `gruvbox-dark` under a dark theme,
   `gruvbox-light` under a light one.
+
+## 0.2.2 - 2026-09-19
+
+### Fixed
+
 - An index run that met a dead socket waited on it for hours while the
   daemon stayed healthy. A batch the daemon does not answer is now sent
   again, up to three times with a growing wait. A query is still sent once,
