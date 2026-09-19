@@ -115,6 +115,10 @@ class IshApp(App[Match | None]):
         ("up", "move(-1)", "Previous"),
         ("ctrl+n", "move(1)", "Next"),
         ("ctrl+p", "move(-1)", "Previous"),
+        # Textual keeps its own theme switcher on the command palette,
+        # which this picker turns off. Without a key here there is no
+        # way to change theme while it runs.
+        ("ctrl+t", "cycle_theme", "Theme"),
     ]
 
     def __init__(
@@ -406,6 +410,19 @@ class IshApp(App[Match | None]):
         target = max(0, min(option_list.option_count - 1, current + delta))
         option_list.highlighted = target
         self._update_preview(target)
+
+    def action_cycle_theme(self) -> None:
+        """Draw in the next registered theme, and name it.
+
+        The choice lasts for this run. `tui_theme` says which theme the
+        next run starts in, so a picker never writes to a file the user
+        owns.
+        """
+        names = sorted(self.available_themes)
+        self.theme = names[(names.index(self.theme) + 1) % len(names)]
+        self.notify(f"Theme: {self.theme}")
+        # The preview reads its colors as it is built, so build it again.
+        self._update_preview(self.query_one(OptionList).highlighted or 0)
 
     def _choose(self, index: int | None) -> None:
         """Exit with the result at *index*, if there is one."""

@@ -23,6 +23,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `tui_theme` key. Textual holds a theme for a light terminal as well as for
   a dark one. An empty value keeps the Textual default, and a name no theme
   answers to is reported in the picker.
+- Change the theme while the picker runs, with `ctrl+t`. Each press steps to
+  the next theme and names it. The choice lasts for the run, and `tui_theme`
+  says which theme the next run starts in. Textual keeps its own switcher on
+  the command palette, which the picker turns off to keep `ctrl+p` for the
+  previous result.
 
 ### Fixed
 

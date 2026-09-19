@@ -1216,3 +1216,67 @@ class TestTheme:
                 assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
 
         run(body())
+
+    def test_the_key_moves_to_the_next_theme(self) -> None:
+        app = IshApp(FakeSession(), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                names = sorted(app.available_themes)
+                following = names[(names.index(app.theme) + 1) % len(names)]
+
+                await pilot.press("ctrl+t")
+                assert app.theme == following
+                said = [n.message for n in app._notifications]
+                assert any(following in message for message in said)
+
+        run(body())
+
+    def test_the_key_wraps_at_the_last_theme(self) -> None:
+        app = IshApp(FakeSession(), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                names = sorted(app.available_themes)
+                app.theme = names[-1]
+
+                await pilot.press("ctrl+t")
+                assert app.theme == names[0]
+
+        run(body())
+
+    def test_the_preview_follows_the_key(self) -> None:
+        """The pane holds a theme it was built with, so build it again."""
+        app = IshApp(FakeSession(), Path("."), theme="gruvbox")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(DARK_SYNTAX)
+
+                names = sorted(app.available_themes)
+                # Stand one before a light theme, then step onto it.
+                light = "solarized-light"
+                app.theme = names[names.index(light) - 1]
+                await pilot.press("ctrl+t")
+
+                assert app.theme == light
+                assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
+
+        run(body())
+
+    def test_the_key_works_with_nothing_to_preview(self) -> None:
+        app = IshApp(FakeSession(chunks=[]), Path("."))
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                names = sorted(app.available_themes)
+                following = names[(names.index(app.theme) + 1) % len(names)]
+
+                await pilot.press("ctrl+t")
+                assert app.theme == following
+
+        run(body())
