@@ -17,7 +17,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - Read the options from a `[tool.ish]` table when a config file holds one,
   so one file can carry sections for several tools. ish passes over
   `[tool.black]` and every other section beside its own. A file with no
-  `[tool.ish]` table is a flat list of options, as before.
+  `[tool.ish]` table is a flat list of options, as before. The README shows
+  both, beside the order ish reads the sources in.
 
 ### Fixed
 
