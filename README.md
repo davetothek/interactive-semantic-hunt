@@ -60,8 +60,9 @@ ish "parse a python file" src/
 ```
 
 Run the interactive picker and open the selection in your editor. Type to
-search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `escape`
-to quit. Narrow without leaving the query line:
+search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `ctrl+t`
+to change the theme, `escape` to quit. Narrow without leaving the query
+line:
 
 ```text
 state machine transitions              every language
@@ -138,9 +139,28 @@ nvim $(ish -i src/)
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
+| `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
 or parsed is counted in one line; `-v` names them.
+
+### Theme the picker
+
+`ctrl+t` steps to the next theme while the picker runs and names the one it
+lands on. The choice lasts for that run. Say where the next run starts with
+`tui_theme`, in the config file or as `--tui-theme NAME`:
+
+```toml
+tui_theme = "solarized-light"
+```
+
+Textual holds a theme for a light terminal as well as for a dark one, and
+the preview follows: it reads the source in `gruvbox-light` under a light
+theme and in `gruvbox-dark` under a dark one. A name no theme answers to is
+reported in the picker, which then keeps the default.
+
+`NO_COLOR` still wins over all of it. Set it and the picker draws in
+monochrome, the preview included, whatever theme is chosen.
 
 ## Use from Neovim
 

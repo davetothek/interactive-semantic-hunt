@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from pygments.styles import get_style_by_name
+from textual.filter import Monochrome, NoColor
 from textual.widgets import Input, OptionList, Static
 
 from ish.application.categories import by_language
@@ -1278,5 +1279,40 @@ class TestTheme:
 
                 await pilot.press("ctrl+t")
                 assert app.theme == following
+
+        run(body())
+
+
+class TestNoColor:
+    """Verify that NO_COLOR still strips the color a theme adds.
+
+    Textual reads the variable as the app is built and adds a filter
+    that every line goes through. A theme and the preview are both new
+    surfaces, and both draw through that filter.
+    """
+
+    def test_the_variable_makes_the_picker_monochrome(self, monkeypatch) -> None:
+        monkeypatch.setenv("NO_COLOR", "1")
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        assert app.no_color is True
+        assert any(isinstance(f, NoColor | Monochrome) for f in app._filters)
+
+    def test_color_stays_without_the_variable(self, monkeypatch) -> None:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        assert app.no_color is False
+        assert not any(isinstance(f, NoColor | Monochrome) for f in app._filters)
+
+    def test_the_preview_still_draws(self, monkeypatch) -> None:
+        """Monochrome is a filter over the lines, not a reason to stop."""
+        monkeypatch.setenv("NO_COLOR", "1")
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
 
         run(body())
