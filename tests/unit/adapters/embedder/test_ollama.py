@@ -8,7 +8,16 @@ from collections.abc import Sequence
 
 import pytest
 
+from ish.adapters.embedder import ollama
 from ish.adapters.embedder.ollama import DEFAULT_MODEL, OllamaEmbedder
+
+
+@pytest.fixture(autouse=True)
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record every wait between attempts instead of taking it."""
+    waits: list[float] = []
+    monkeypatch.setattr(ollama.time, "sleep", waits.append)
+    return waits
 
 
 class Recorder:
@@ -199,6 +208,76 @@ class TestWaiting:
         message = str(exc_info.value)
         assert "did not answer" in message
         assert "one embedding request at a time" in message
+
+
+class TestRetry:
+    """Verify a batch the daemon did not answer is sent again."""
+
+    class Flaky(Recorder):
+        """Fail the first *failures* requests, then answer."""
+
+        def __init__(self, failures: int, error: Exception) -> None:
+            super().__init__()
+            self._failures = failures
+            self._error = error
+
+        def __call__(self, request, timeout=None):
+            if len(self.requests) < self._failures:
+                self.requests.append(json.loads(request.data))
+                raise self._error
+            return super().__call__(request, timeout=timeout)
+
+    def _flaky(self, monkeypatch, failures: int, error=None) -> "TestRetry.Flaky":
+        rec = self.Flaky(failures, error or TimeoutError("timed out"))
+        monkeypatch.setattr(urllib.request, "urlopen", rec)
+        return rec
+
+    def test_a_timeout_is_sent_again(self, monkeypatch, caplog, no_sleep) -> None:
+        rec = self._flaky(monkeypatch, failures=1)
+        with caplog.at_level("WARNING"):
+            vectors = OllamaEmbedder("all-minilm").embed_documents(["a"])
+
+        assert vectors == [[1.0]]
+        assert len(rec.requests) == 2
+        assert no_sleep == [ollama.RETRY_BACKOFF_SECONDS]
+        assert "Attempt 2 of 3" in caplog.text
+
+    def test_an_unreachable_daemon_is_sent_again(self, monkeypatch, no_sleep) -> None:
+        rec = self._flaky(
+            monkeypatch, failures=1, error=urllib.error.URLError("refused")
+        )
+        assert OllamaEmbedder("all-minilm").embed_documents(["a"]) == [[1.0]]
+        assert len(rec.requests) == 2
+        assert len(no_sleep) == 1
+
+    def test_the_wait_doubles_and_the_last_failure_is_raised(
+        self, monkeypatch, no_sleep
+    ) -> None:
+        rec = self._flaky(monkeypatch, failures=3)
+        with pytest.raises(RuntimeError, match="did not answer"):
+            OllamaEmbedder().embed_documents(["a"])
+
+        assert len(rec.requests) == ollama.RETRY_ATTEMPTS
+        assert no_sleep == [1.0, 2.0]
+
+    def test_a_query_is_sent_once(self, monkeypatch, no_sleep) -> None:
+        """Somebody is waiting on a query, so a second minute is not spent."""
+        rec = self._flaky(monkeypatch, failures=1)
+        with pytest.raises(RuntimeError, match="did not answer"):
+            OllamaEmbedder().embed_query("asked")
+
+        assert len(rec.requests) == 1
+        assert no_sleep == []
+
+    def test_a_refused_request_is_not_sent_again(self, monkeypatch, no_sleep) -> None:
+        """A missing model will still be missing. Say so at once."""
+        error = urllib.error.HTTPError("u", 404, "missing", {}, io.BytesIO(b"no"))
+        rec = self._flaky(monkeypatch, failures=1, error=error)
+        with pytest.raises(RuntimeError, match="ollama pull"):
+            OllamaEmbedder().embed_documents(["a"])
+
+        assert len(rec.requests) == 1
+        assert no_sleep == []
 
 
 class TestFailures:

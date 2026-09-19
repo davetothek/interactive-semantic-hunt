@@ -279,7 +279,22 @@ class TestOversizedDocuments:
         with caplog.at_level("WARNING"):
             chunks = yaml_parser.parse(YML, source)
         assert chunks
-        assert "cannot be split" in caplog.text
+        assert "cannot be divided" in caplog.text
+
+    def test_many_unsplittable_values_make_one_warning(
+        self, yaml_parser, caplog
+    ) -> None:
+        """A generated document holds thousands. Report the file, not each one."""
+        rows = "\n".join(
+            f"  - name: row {i}\n    blob: {'x' * 9000}" for i in range(12)
+        )
+        source = f"metadata:\n  description: Many\nrows:\n{rows}\n"
+        with caplog.at_level("WARNING"):
+            yaml_parser.parse(YML, source)
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "12 values cannot be divided" in warnings[0].getMessage()
+        assert "the largest Many > rows > row 0 > blob" in warnings[0].getMessage()
 
     def test_a_large_json_document_is_split(self, json_parser) -> None:
         import json as json_module
