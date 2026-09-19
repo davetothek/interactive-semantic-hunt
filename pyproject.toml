@@ -105,10 +105,14 @@ exclude_lines = [
 
 [tool.poe.tasks]
 test = "pytest"
-lint = "ruff check --fix src tests scripts"
-format = "ruff format src tests scripts"
+# The hooks under .claude/ guard the repository. They are standard-library
+# scripts outside the package, so they get their own run without the
+# coverage gate, and a broken guard fails the build like any other code.
+hooks = "pytest .claude/hooks/tests --no-cov -p no:cacheprovider"
+lint = "ruff check --fix src tests scripts .claude/hooks"
+format = "ruff format src tests scripts .claude/hooks"
 typecheck = "ty check src scripts"
-check = ["lint", "typecheck", "test"]
+check = ["lint", "typecheck", "test", "hooks"]
 release = "python scripts/release.py"
 
 [[tool.ty.overrides]]
