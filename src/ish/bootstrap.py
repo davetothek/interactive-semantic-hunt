@@ -11,18 +11,19 @@ the recipe for adding one. This module only selects from them.
 
 import logging
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ish.adapters.embedder import EMBEDDERS
-from ish.adapters.parser import available_parsers
+from ish.adapters.parser import Language, available_parsers, categories, spellings
 from ish.adapters.vector_store.catalog import IndexCatalog
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
 from ish.application.index import Index
-from ish.application.languages import canonical_language
+from ish.application.languages import LanguageResolver, resolve_with
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import VectorReader, VectorStore
@@ -36,9 +37,39 @@ from ish.settings import Settings
 log = logging.getLogger(__name__)
 
 
-def all_parsers(settings: Settings) -> dict[str, Callable[[], Parser]]:
-    """Return every parser the settings allow: built in, and the user's own."""
+def all_parsers(settings: Settings) -> dict[str, Language]:
+    """Return every language the settings allow: built in, and the user's own."""
     return available_parsers(settings.plugins)
+
+
+@dataclass(frozen=True, slots=True)
+class Vocabulary:
+    """What the registered languages are called, and what they hold.
+
+    Read the registry once and carry the answers, because a long-lived
+    interface narrows on every keystroke and the registry may read the
+    user's plugin directory to answer.
+    """
+
+    resolve: LanguageResolver
+    """Turn any spelling of a language into the name it is registered under."""
+
+    categorize: Categorizer
+    """Sort a chunk into code, doc, test, or config."""
+
+    spellings: tuple[str, ...] = ()
+    """Every name a reader may type for a language, sorted."""
+
+
+def build_vocabulary(settings: Settings) -> Vocabulary:
+    """Read the registry and the configured type rules into one value."""
+    parsers = all_parsers(settings)
+    names = spellings(parsers)
+    return Vocabulary(
+        resolve=resolve_with(names),
+        categorize=compile_categories(settings.type_patterns, categories(parsers)),
+        spellings=tuple(sorted(names)),
+    )
 
 
 def build_parsers(settings: Settings) -> list[Parser]:
@@ -50,9 +81,8 @@ def build_parsers(settings: Settings) -> list[Parser]:
     available = all_parsers(settings)
     # Accept the same spellings the query line accepts, so `--languages c`
     # and `lang:c` name one parser.
-    wanted = tuple(canonical_language(name) for name in settings.languages) or tuple(
-        available
-    )
+    resolve = resolve_with(spellings(available))
+    wanted = tuple(resolve(name) for name in settings.languages) or tuple(available)
 
     unknown = [name for name in wanted if name not in available]
     if unknown:
@@ -61,11 +91,11 @@ def build_parsers(settings: Settings) -> list[Parser]:
             f"Unknown language(s): {', '.join(unknown)}. Valid languages: {valid}"
         )
 
-    from ish.adapters.parser.limits import SizeLimited
+    from ish.adapters.parser._limits import SizeLimited
 
     # Wrap here, so every language and every plugin keeps its chunks
     # inside what the embedding model can read.
-    return [SizeLimited(available[name]()) for name in wanted]
+    return [SizeLimited(available[name].build()) for name in wanted]
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -297,14 +327,16 @@ def _placed(
     return within
 
 
-def build_categorizer(settings: Settings) -> Categorizer:
-    """Return the function that sorts a chunk into a type."""
-    return compile_categories(settings.type_patterns)
+def build_result_filter(
+    settings: Settings, filters: Filters, vocabulary: Vocabulary | None = None
+) -> ResultFilter:
+    """Build the result filter from the registry and the configured types.
 
-
-def build_result_filter(settings: Settings, filters: Filters) -> ResultFilter:
-    """Build the result filter, using the types the settings define."""
-    return make_result_filter(filters, build_categorizer(settings))
+    Take a *vocabulary* that was read once, so a session narrowing every
+    keystroke does not read the registry again.
+    """
+    known = vocabulary or build_vocabulary(settings)
+    return make_result_filter(filters, known.categorize, known.resolve)
 
 
 def settings_filters(settings: Settings) -> Filters:

@@ -1,44 +1,35 @@
-"""Name languages the way a reader types them.
+"""Resolve the name a reader types to the name a parser is registered under.
 
 A parser owns several file kinds, so the name it is registered under is
 not always the one that comes to mind: the C++ parser reads C, and few
-people write "asciidoc" when they mean adoc. Resolve every spelling to
-the one name ish stores a language under, so the filter, the display,
-and every comparison agree.
+people write "asciidoc" when they mean adoc. Each language declares the
+names it answers to where it is registered, so this module holds no
+table of its own and a new language brings its own vocabulary.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 
-LANGUAGE_ALIASES = {
-    "c": "cpp",
-    "c++": "cpp",
-    "cc": "cpp",
-    "cxx": "cpp",
-    "h": "cpp",
-    "hpp": "cpp",
-    "adoc": "asciidoc",
-    "asc": "asciidoc",
-    "md": "markdown",
-    "mdown": "markdown",
-    "py": "python",
-    "python3": "python",
-    "yml": "yaml",
-}
+LanguageResolver = Callable[[str], str]
+"""Return the name ish stores a language under, for any spelling of it."""
 
 
-def canonical_language(name: str) -> str:
-    """Return the name ish stores a language under.
+def resolve_with(names: Mapping[str, str]) -> LanguageResolver:
+    """Return a resolver over *names*, a spelling to language map.
 
     Leave an unknown name alone, so a filter for a language no parser
     reads returns nothing rather than an error.
     """
-    key = name.strip().lower()
-    return LANGUAGE_ALIASES.get(key, key)
+
+    def resolve(name: str) -> str:
+        spelling = name.strip().lower()
+        return names.get(spelling, spelling)
+
+    return resolve
 
 
-def language_names() -> tuple[str, ...]:
-    """Return every name a user may type for a language, sorted."""
-    return tuple(sorted(LANGUAGE_ALIASES))
+def as_typed(name: str) -> str:
+    """Return the name as typed, tidied. Use where no registry is to hand."""
+    return name.strip().lower()
 
 
 def unique(names: Iterable[str]) -> tuple[str, ...]:

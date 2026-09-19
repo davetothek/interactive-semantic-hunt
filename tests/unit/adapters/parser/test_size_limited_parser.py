@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.parser.limits import MAX_CHUNK_CHARS, SizeLimited
+from ish.adapters.parser._limits import MAX_CHUNK_CHARS, SizeLimited
 from ish.domain.chunk import Chunk
 
 

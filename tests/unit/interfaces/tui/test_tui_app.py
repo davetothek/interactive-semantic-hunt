@@ -13,11 +13,16 @@ from pathlib import Path
 import pytest
 from textual.widgets import Input, OptionList, Static
 
+from ish.application.categories import by_language
 from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.application.progress import EMBED, Progress
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.interfaces.tui.app import IshApp
+
+# What the registered languages hold, the way the real session reads it
+# off the registry and hands it to the filter.
+HOLDS = by_language({"markdown": "doc", "python": "code"})
 
 # Long enough to clear the 200 ms debounce in do_search.
 SETTLE = 0.45
@@ -69,7 +74,7 @@ class FakeSession:
 
     def search(self, query: str, limit: int = 5) -> list[Match]:
         text, _typed = parse_query(query)
-        keep = build_result_filter(self.filters_of(query))
+        keep = build_result_filter(self.filters_of(query), HOLDS)
         self.queries.append(text)
         chosen = [
             c
@@ -79,7 +84,7 @@ class FakeSession:
         return [Match(c, 0.91) for c in chosen[:limit]]
 
     def chunks(self, query: str = "") -> list[Chunk]:
-        keep = build_result_filter(self.filters_of(query))
+        keep = build_result_filter(self.filters_of(query), HOLDS)
         return [c for c in self._chunks if keep is None or keep(c)]
 
     def close(self) -> None:
