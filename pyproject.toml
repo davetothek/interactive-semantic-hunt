@@ -109,8 +109,8 @@ test = "pytest"
 # scripts outside the package, so they get their own run without the
 # coverage gate, and a broken guard fails the build like any other code.
 hooks = "pytest .claude/hooks/tests --no-cov -p no:cacheprovider"
-lint = "ruff check --fix src tests scripts .claude/hooks"
-format = "ruff format src tests scripts .claude/hooks"
+lint = "ruff check --fix src tests scripts .claude/hooks .claude/skills"
+format = "ruff format src tests scripts .claude/hooks .claude/skills"
 typecheck = "ty check src scripts"
 check = ["lint", "typecheck", "test", "hooks"]
 release = "python scripts/release.py"
