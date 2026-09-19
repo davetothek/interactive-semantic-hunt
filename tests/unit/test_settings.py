@@ -356,3 +356,63 @@ class TestNamedConfigFile:
             start=tmp_path, environ={CONFIG_ENV_VAR: "~/named.toml"}
         )
         assert settings.limit == 15
+
+
+class TestToolTable:
+    """Verify that a file may keep the options under ``[tool.ish]``.
+
+    One file then holds sections for several tools, the way a
+    ``pyproject.toml`` holds ``[tool.black]`` beside the rest.
+    """
+
+    def test_options_come_from_the_tool_table(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[tool.ish]\nlimit = 21\n")
+        assert load_settings(start=tmp_path, environ={}).limit == 21
+
+    def test_a_sibling_tool_is_not_an_unknown_option(self, tmp_path, caplog) -> None:
+        """A table under ``tool`` belongs to another tool, so say nothing."""
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            "[tool.black]\nline-length = 88\n\n[tool.ish]\nlimit = 21\n",
+        )
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert caplog.text == ""
+
+    def test_a_foreign_top_level_key_is_passed_over(self, tmp_path, caplog) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            "[project]\nname = 'other'\n\n[tool.ish]\nlimit = 21\n",
+        )
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert caplog.text == ""
+
+    def test_a_flat_file_still_reads_every_key(self, tmp_path) -> None:
+        """A file written before this keeps working, unchanged."""
+        _write(tmp_path / CONFIG_FILENAME, "limit = 21\nmodel = 'flat'\n")
+        settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert settings.model == "flat"
+
+    def test_a_tool_table_without_ish_reads_the_file_flat(
+        self, tmp_path, caplog
+    ) -> None:
+        """Nothing claims the file, so it is an ish file with a stray key."""
+        _write(tmp_path / CONFIG_FILENAME, "limit = 21\n\n[tool.black]\nskip = 1\n")
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.limit == 21
+        assert "tool" in caplog.text
+
+    def test_a_tool_ish_that_is_not_a_table_is_an_error(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[tool]\nish = 'yes'\n")
+        with pytest.raises(ConfigError, match="'tool.ish' is not a table"):
+            load_settings(start=tmp_path, environ={})
+
+    def test_a_tool_that_is_not_a_table_is_an_error(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "tool = 'black'\n")
+        with pytest.raises(ConfigError, match="'tool' is not a table"):
+            load_settings(start=tmp_path, environ={})
