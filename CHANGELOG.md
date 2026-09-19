@@ -19,6 +19,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `[tool.black]` and every other section beside its own. A file with no
   `[tool.ish]` table is a flat list of options, as before. The README shows
   both, beside the order ish reads the sources in.
+- Choose the theme the picker draws in, with `--tui-theme NAME` or the
+  `tui_theme` key. Textual holds a theme for a light terminal as well as for
+  a dark one. An empty value keeps the Textual default, and a name no theme
+  answers to is reported in the picker.
 
 ### Fixed
 

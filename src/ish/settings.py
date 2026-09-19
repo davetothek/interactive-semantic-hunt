@@ -218,6 +218,18 @@ class Settings:
             metavar="SECONDS",
         ),
     )
+    # Index scope, although a theme decides nothing about what is
+    # indexed. Scope answers one question: may a call override this?
+    # The answer is no. Only the TUI draws, and it takes the theme once
+    # at startup, so a per-call override would have nothing to apply it
+    # to. The two buckets hold no third answer.
+    tui_theme: str = field(
+        default="",
+        metadata=_opt(
+            "Theme for the TUI. Empty uses the Textual default.",
+            metavar="NAME",
+        ),
+    )
     tui_debounce_ms: int = field(
         default=120,
         metadata=_opt(
