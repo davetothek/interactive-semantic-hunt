@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
-from ish.settings import Settings, load_settings
+from ish.settings import CONFIG_OPTION, Settings, load_settings
 
 # Options whose accepted values come from a registry rather than a literal.
 _DYNAMIC_CHOICES = {
@@ -74,6 +74,64 @@ def add_settings_options(parser: argparse.ArgumentParser) -> None:
         group.add_argument(*flags, dest=f.name, default=None, help=help_text, **kwargs)
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Return the parser for the whole command line.
+
+    Keep every flag here, so one reader sees what the command accepts
+    and a test can hold the parser to the option set.
+    """
+    parser = argparse.ArgumentParser(
+        prog="ish",
+        description="Discover and list semantic code chunks in source files.",
+    )
+    parser.add_argument(
+        "query",
+        nargs="?",
+        default="",
+        help="Semantic search query. Leave empty to scan and output all chunks.",
+    )
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="Root path to scan (default: current directory).",
+    )
+    parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="Run the interactive TUI.",
+    )
+    # Not one of the settings, and deliberately so: a config file cannot
+    # hold the path to itself. See CONFIG_OPTION in ish.settings.
+    parser.add_argument(
+        "-c",
+        f"--{CONFIG_OPTION}",
+        dest=CONFIG_OPTION,
+        default=None,
+        metavar="PATH",
+        help="Read options from this file instead of searching upward for one.",
+    )
+    add_settings_options(parser)
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {_version()}",
+    )
+    return parser
+
+
+def _version() -> str:
+    """Return the installed version, or a word that says it is unknown."""
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version("interactive-semantic-hunt")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class CliArgs:
     """Hold the per-run inputs plus the resolved settings."""
@@ -89,45 +147,7 @@ class CliArgs:
     @classmethod
     def from_args(cls, argv: list[str] | None = None) -> "CliArgs":
         """Parse command-line arguments and return a typed data class."""
-        parser = argparse.ArgumentParser(
-            prog="ish",
-            description="Discover and list semantic code chunks in source files.",
-        )
-        parser.add_argument(
-            "query",
-            nargs="?",
-            default="",
-            help="Semantic search query. Leave empty to scan and output all chunks.",
-        )
-        parser.add_argument(
-            "path",
-            nargs="?",
-            default=".",
-            help="Root path to scan (default: current directory).",
-        )
-        parser.add_argument(
-            "-i",
-            "--interactive",
-            action="store_true",
-            help="Run the interactive TUI.",
-        )
-        add_settings_options(parser)
-
-        import importlib.metadata
-
-        try:
-            version = importlib.metadata.version("interactive-semantic-hunt")
-        except importlib.metadata.PackageNotFoundError:
-            version = "unknown"
-
-        parser.add_argument(
-            "-V",
-            "--version",
-            action="version",
-            version=f"%(prog)s {version}",
-        )
-
-        args = parser.parse_args(argv)
+        args = build_parser().parse_args(argv)
 
         # Positional resolution: `ish src/` binds "src/" to `query`, so move
         # a value to `path` when it is written as a path and exists on disk.
@@ -146,6 +166,9 @@ class CliArgs:
             query_val = ""
 
         overrides = {f.name: getattr(args, f.name, None) for f in fields(Settings)}
+        # The file to read travels with the flags, so a tree below
+        # resolves its settings from the same file the caller named.
+        overrides[CONFIG_OPTION] = args.config
         path = Path(path_val).resolve()
 
         return cls(
