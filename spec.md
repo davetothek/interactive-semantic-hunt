@@ -46,7 +46,7 @@ block, because a rule is context and a hook is enforcement.
 - `.claude/hooks/guard_git.py` — `PreToolUse` on `Bash`.
 - `.claude/hooks/guard_version.py` — `PreToolUse` on `Edit|Write`.
 - `.claude/hooks/tests/` with a `poe hooks` target, in `poe check` and CI.
-- `.claude/rules/` — eleven rule files, listed under **Rules layout**.
+- `.claude/rules/` — twelve rule files, listed under **Rules layout**.
 - `.claude/skills/` — eight skills: `work-issue`, `release`, `add-language`,
   `add-embedder`, `check`, `benchmark`, `pr`, `measure`.
 - `CLAUDE.md` restructured to the architecture map and the measured evidence,
@@ -101,9 +101,10 @@ block, because a rule is context and a hook is enforcement.
 - WHEN a `Bash` command runs `git push --force-with-lease` THEN `guard_git`
   SHALL return `permissionDecision: ask`.
 - WHEN a `Bash` command runs `git checkout -- <path>`, `git checkout <ref> --
-  <path>`, `git restore <path>` without `--staged`, `git reset --hard`, or
-  `git stash drop` THEN `guard_git` SHALL exit 2 and say the command discards
-  uncommitted work.
+  <path>`, `git checkout .`, `git restore <path>` without `--staged`,
+  `git reset --hard`, `git stash drop`, `git stash clear`, or `git clean -f`
+  THEN `guard_git` SHALL exit 2 and say the command discards uncommitted
+  work.
 - WHEN a `Bash` command runs `uv add`, `uv remove`, or `pip install` THEN
   `guard_git` SHALL return `permissionDecision: ask` with the reason "ask
   before adding a dependency".
@@ -141,7 +142,9 @@ block, because a rule is context and a hook is enforcement.
   user, because six permission tests pass vacuously as root.
 - WHEN `/benchmark` runs THEN it SHALL produce the table under **Ranking** in
   `CLAUDE.md` (top-1 and MRR for conceptual, identifier, combined) for the
-  current tree, and SHALL name the baseline it compares against.
+  current tree from `queries.toml`, and SHALL name the baseline it compares
+  against. WHEN no backend answers THEN it SHALL exit 1 with the backend's
+  own message and SHALL NOT print a table.
 - WHEN `/measure` runs THEN it SHALL produce a before/after line in the form
   the evidence bullets use: what was measured, on what corpus, both numbers.
 
@@ -196,6 +199,7 @@ block, because a rule is context and a hook is enforcement.
 | `interfaces.md` | `src/ish/interfaces/**` | everything shared goes in `Ish`, MCP stdout is the transport, query-scope only per call, TUI focus and thread rules, daemon threads |
 | `testing.md` | `tests/**` | mirror the source tree, fakes not real parsers, 100 % with the test that reaches each line, run as an unprivileged user, Textual pilot for the TUI |
 | `claude-config.md` | `.claude/**` | how to change a hook (edit, add a test row, run `poe hooks`), that hooks are stdlib only, where routing decisions are logged |
+| `python.md` | `**/*.py` | the 3.12 floor, `collections.abc` imports, no `__future__` annotations, lazy heavy imports on the query path, hooks as the 3.11 exception |
 
 ## Boundaries
 
@@ -229,12 +233,27 @@ block, because a rule is context and a hook is enforcement.
   Sonnet took a majority of subtasks and no Sonnet subtask touched a protected
   path.
 
+## Verified while building
+
+- Each hook costs about 44 ms including interpreter start: 100 runs of
+  `guard_git` in 4.4 s. All three run under the system Python 3.11.
+- `/check` ran green through `run_as_tester.sh`: 1011 tests at 100 %
+  coverage as the unprivileged user, lint and types clean, 95 hook tests.
+- `benchmark.py` against an unreachable backend exits 1 with the Ollama
+  adapter's message and no table. The retry from #60 fired twice on the way,
+  which is the first live sighting of that fix.
+- `CLAUDE.md` is 246 lines and shares no sentence over 40 characters with any
+  rule file, checked by script.
+- Every path in `queries.toml` names a file that exists.
+
 ## Open questions / assumptions
 
-- **Assumption:** `updatedInput` under `hookSpecificOutput` is honored without
-  a `permissionDecision` beside it, leaving the normal permission flow
-  untouched. The doc lists the fields as independent. Verify on the first live
-  `Agent` call and add `permissionDecision: allow` if not.
+- **Assumption, still open:** `updatedInput` under `hookSpecificOutput` is
+  honored without a `permissionDecision` beside it. The doc lists the fields
+  as independent. Hooks load at session start, so this session could not test
+  it. Verify in the first session that loads the config: spawn an `Explore`
+  agent with no `model` and read `model-routing.jsonl`. Add
+  `permissionDecision: allow` to `replace_input()` in `_common.py` if not.
 - **Assumption:** the `Agent` tool's `tool_input` carries `description`,
   `prompt`, `subagent_type`, `model`, `run_in_background`, `isolation`, as its
   schema in this session shows. The router echoes whatever fields arrive, so a
@@ -246,9 +265,11 @@ block, because a rule is context and a hook is enforcement.
   correctness.
 - **Assumption:** `haiku` is a good fit for `Explore` here. If Explore results
   come back thin, the first change is `Explore → sonnet`, one line.
-- **Open:** whether `/benchmark` needs Ollama running. The 20-query table in
-  `CLAUDE.md` was produced against a live backend, so the skill documents the
-  requirement and fails clearly without it rather than faking numbers.
+- **Open:** the benchmark numbers themselves. `queries.toml` holds 20 queries
+  written for this repository, unverified against a live backend. The first
+  run with Ollama is the baseline. A query that misses is not removed; it is
+  either a ranking defect or a query that needs a better expected chunk, and
+  the miss list says which.
 - **Open:** whether a `SubagentStart` hook should inject the three unscoped
   rules into every subagent. Subagents load `CLAUDE.md` and rules already
   unless `omitClaudeMd` is set, so v1 does not add one.
