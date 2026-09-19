@@ -7,6 +7,12 @@ exactly these names, so the two interfaces cannot drift apart.
 Resolve options in this order, where later sources win::
 
     defaults < user config < project config < environment < command line
+
+The path to a config file is the one name outside that set. A file
+cannot name where to find itself, so ``--config`` and ``ISH_CONFIG``
+are read here rather than declared as a field. A file named that way
+stands in place of the project files, which the loader then does not
+look for.
 """
 
 import logging
@@ -24,6 +30,16 @@ CONFIG_BASENAME = "config.toml"
 # The older flat name, still read so an existing file keeps working.
 CONFIG_FILENAME = "ish.toml"
 ENV_PREFIX = "ISH_"
+
+CONFIG_OPTION = "config"
+"""Name the config file to read, as a flag and as an override key.
+
+This is the one name that is not a field of ``Settings``. A file
+cannot hold the path to itself, so the name must stay out of the
+option set that the command line and the file share.
+"""
+CONFIG_ENV_VAR = ENV_PREFIX + CONFIG_OPTION.upper()
+"""The environment variable that names a config file."""
 
 DEFAULT_EMBEDDER = "ollama"
 DEFAULT_IGNORE = (".git", ".venv", "venv", "__pycache__")
@@ -312,6 +328,18 @@ def _read_toml(path: Path) -> dict[str, Any]:
     return _accept(str(path), raw)
 
 
+def _read_named(path: Path) -> dict[str, Any]:
+    """Read the config file the caller named.
+
+    A file that is not there is an error here, unlike a file the loader
+    looks for on its own. The caller named this one, so silence would
+    hide a typed path and apply defaults instead.
+    """
+    if not path.is_file():
+        raise ConfigError(f"Cannot read {path}: there is no such config file")
+    return _read_toml(path)
+
+
 def config_names(directory: Path) -> tuple[Path, ...]:
     """Return the config files to look for in *directory*, in order.
 
@@ -360,11 +388,15 @@ def project_configs(start: Path) -> list[Path]:
 
 
 def _from_env(environ: Mapping[str, str]) -> dict[str, Any]:
-    """Read options from ``ISH_*`` environment variables."""
+    """Read options from ``ISH_*`` environment variables.
+
+    Pass over ``ISH_CONFIG``. It names a file to read, so it is not an
+    option, and reporting it as one unknown would be wrong.
+    """
     raw = {
         key.removeprefix(ENV_PREFIX).lower(): value
         for key, value in environ.items()
-        if key.startswith(ENV_PREFIX)
+        if key.startswith(ENV_PREFIX) and key != CONFIG_ENV_VAR
     }
     return _accept("the environment", raw)
 
@@ -379,21 +411,30 @@ def load_settings(
 
     Apply *overrides* last, so command-line options win. Omit a key from
     *overrides* to leave the lower-precedence value in place.
+
+    A ``config`` key in *overrides*, or ``ISH_CONFIG`` in the
+    environment, names one file to read in place of the project files
+    at and above *start*. The key wins over the variable, the way a
+    flag wins over the environment everywhere else.
     """
     settings = Settings()
     start = start or Path.cwd()
     environ = environ if environ is not None else os.environ
+    supplied = {k: v for k, v in (overrides or {}).items() if v is not None}
+    named = supplied.pop(CONFIG_OPTION, None) or environ.get(CONFIG_ENV_VAR)
 
     settings = replace(settings, **_read_toml(user_config_path()))
 
-    # Outermost first, so the nearest file wins key by key.
-    for project in project_configs(start):
-        settings = replace(settings, **_read_toml(project))
+    if named:
+        settings = replace(settings, **_read_named(Path(named).expanduser()))
+    else:
+        # Outermost first, so the nearest file wins key by key.
+        for project in project_configs(start):
+            settings = replace(settings, **_read_toml(project))
 
     settings = replace(settings, **_from_env(environ))
 
-    if overrides:
-        supplied = {k: v for k, v in overrides.items() if v is not None}
+    if supplied:
         settings = replace(settings, **_accept("the command line", supplied))
 
     return settings
