@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from pygments.styles import get_style_by_name
 from textual.widgets import Input, OptionList, Static
 
 from ish.application.categories import by_language
@@ -18,7 +19,7 @@ from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.application.progress import EMBED, Progress
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
-from ish.interfaces.tui.app import IshApp
+from ish.interfaces.tui.app import DARK_SYNTAX, LIGHT_SYNTAX, IshApp
 
 # What the registered languages hold, the way the real session reads it
 # off the registry and hands it to the filter.
@@ -110,6 +111,11 @@ async def _ready(app: IshApp, pilot, timeout: float = 5.0) -> None:
 def preview_content(app: IshApp):
     """Read whatever the preview pane currently holds."""
     return app.query_one("#preview-pane", Static).content
+
+
+def preview_style(app: IshApp):
+    """Return the Pygments style class the preview reads the source in."""
+    return preview_content(app)._theme._pygments_style_class
 
 
 def preview_text(app: IshApp) -> str:
@@ -1187,5 +1193,26 @@ class TestTheme:
                 assert app.theme == default
                 said = [n.message for n in app._notifications]
                 assert any("no-such-theme" in message for message in said)
+
+        run(body())
+
+    def test_the_preview_follows_a_dark_theme(self) -> None:
+        app = IshApp(FakeSession(), Path("."), theme="gruvbox")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(DARK_SYNTAX)
+
+        run(body())
+
+    def test_the_preview_follows_a_light_theme(self) -> None:
+        """A dark code block under a light theme reads as a broken pane."""
+        app = IshApp(FakeSession(), Path("."), theme="solarized-light")
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
 
         run(body())

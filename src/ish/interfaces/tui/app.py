@@ -58,6 +58,13 @@ class _DaemonWorker:
                 loop.call_soon_threadsafe(_settle, future.set_result, result)
 
 
+# The Pygments themes the preview reads the source in. A Textual theme
+# says whether the terminal is dark, not which colors Pygments knows,
+# so the pair is named here.
+DARK_SYNTAX = "gruvbox-dark"
+LIGHT_SYNTAX = "gruvbox-light"
+
+
 def _settle(setter, value) -> None:
     """Complete a future unless the caller stopped waiting."""
     try:
@@ -295,12 +302,20 @@ class IshApp(App[Match | None]):
         syntax = Syntax(
             code,
             chunk.language or "text",
-            theme="gruvbox-dark",
+            theme=self._syntax_theme(),
             line_numbers=True,
             start_line=chunk.start_line,
             word_wrap=True,
         )
         self.query_one("#preview-pane", Static).update(syntax)
+
+    def _syntax_theme(self) -> str:
+        """Return the Pygments theme that pairs with the active theme.
+
+        A dark code block under a light theme reads as a pane that
+        failed to draw.
+        """
+        return DARK_SYNTAX if self.current_theme.dark else LIGHT_SYNTAX
 
     @work(exclusive=True)
     async def do_search(self, query: str) -> None:
