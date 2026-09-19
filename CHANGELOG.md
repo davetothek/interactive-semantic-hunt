@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.2.2 - 2026-09-19
+
 ### Fixed
 
 - An index run that met a dead socket waited on it for hours while the
