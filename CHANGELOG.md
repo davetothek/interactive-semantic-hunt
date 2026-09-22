@@ -58,6 +58,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The picker and the resident server load the model as soon as their
+  refresh is done, while nothing waits on them. A daemon unloads an idle
+  model and loads it again on the next request, which costs seconds, and
+  the first keystroke paid that.
 - The Neovim and VS Code clients ask the server to refresh when a file is
   saved, once a search has started the server. An edit was searchable only
   on the server's next poll, up to `refresh_seconds` later, which is 30 s

@@ -177,6 +177,11 @@ class IshTools:
 
         try:
             bootstrap.refresh_indexes(self._settings, root, on_progress=note)
+            # The watch thread has nothing waiting on it, so pay the
+            # model load here rather than on the next query.
+            session = self._by_root.get(root)
+            if session is not None:
+                session.warm()
         except Exception as exc:  # noqa: BLE001 - a watch must not die
             log.warning("Cannot refresh %s: %s", root, exc)
         finally:

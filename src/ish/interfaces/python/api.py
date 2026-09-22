@@ -125,6 +125,15 @@ class Ish:
         self._indexed = True
         return held
 
+    def warm(self) -> None:
+        """Load the model before the first query waits on it.
+
+        Call it once the index is open and nothing is waiting, so a
+        model the daemon had unloaded costs the wait here and not on
+        the first keystroke.
+        """
+        self._use_case.warm()
+
     def _ensure_indexed(self) -> None:
         """Bring the index up to date once, before the first question."""
         if not self._indexed:

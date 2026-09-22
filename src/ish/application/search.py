@@ -14,6 +14,10 @@ from ish.domain.match import Match
 
 log = logging.getLogger(__name__)
 
+# What a warm-up embeds. The vector is thrown away. The request is
+# what matters: it makes the daemon load the model.
+WARM_QUERY = "warm the model"
+
 
 class Search:
     """Orchestrate semantic search over a directory tree."""
@@ -65,6 +69,20 @@ class Search:
         if not held:
             log.warning("No chunks found to index.")
         return held
+
+    def warm(self) -> None:
+        """Load the model behind the backend before anyone waits on it.
+
+        A daemon unloads an idle model and loads it again on the next
+        request, which costs seconds. Pay that here, off the keystroke
+        path, so the first query answers as fast as the second. Report
+        a failure at INFO and leave it: the first real query meets the
+        same failure and names it to the person waiting.
+        """
+        try:
+            self._embedder.embed_query(WARM_QUERY)
+        except Exception as exc:  # noqa: BLE001 - the first query reports it
+            log.info("Cannot warm the backend: %s", exc)
 
     def all_chunks(self, keep: ResultFilter = None) -> list[Chunk]:
         """Return the chunks the store holds, for a plain listing.

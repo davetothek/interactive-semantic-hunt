@@ -245,3 +245,20 @@ class TestReadingWhatIsStored:
             assert ish.search("parse", stored=True) == ish.search("parse")
         finally:
             ish.close()
+
+
+class TestWarmUp:
+    def test_warm_asks_the_backend_and_indexes_nothing(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.search import Search
+
+        asked: list[str] = []
+        monkeypatch.setattr(Search, "warm", lambda self: asked.append("warm"))
+        ish = _ish(project)
+        try:
+            ish.warm()
+            assert asked == ["warm"]
+            assert ish._indexed is False
+        finally:
+            ish.close()
