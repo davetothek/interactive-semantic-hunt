@@ -81,6 +81,11 @@
           "default": 120,
           "minimum": 0,
           "description": "How long typing must pause before a search is sent."
+        },
+        "ish.preview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the highlighted chunk in the editor while the picker is open."
         }
       }
     }
