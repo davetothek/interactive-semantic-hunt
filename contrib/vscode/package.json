@@ -42,6 +42,11 @@
         "category": "ish"
       },
       {
+        "command": "ish.refresh",
+        "title": "Refresh the index",
+        "category": "ish"
+      },
+      {
         "command": "ish.restart",
         "title": "Restart the server",
         "category": "ish"
