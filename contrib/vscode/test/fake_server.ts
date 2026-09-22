@@ -70,8 +70,8 @@ lines.on("line", (line) => {
       text(id, "after the noise");
       return;
     case "crash":
+      // Exit never returns, so the fall-through below is never taken.
       process.exit(3);
-    // falls through only in type space; exit never returns
     case "search_code":
       text(
         id,
