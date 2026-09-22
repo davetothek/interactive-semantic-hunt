@@ -101,6 +101,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show the highlighted chunk in the editor while the picker is open."
+        },
+        "ish.refreshOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask the server to refresh the index when a file in a searched workspace folder is saved."
         }
       }
     },

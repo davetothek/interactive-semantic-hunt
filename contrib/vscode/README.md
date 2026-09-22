@@ -53,6 +53,11 @@ bound only while this picker is open.
 | `ish: Refresh the index` | bring the index up to date now, and show the progress |
 | `ish: Restart the server` | stop every `ish-mcp` this window started |
 
+Saving a file tells the server to refresh the index, once the tree has
+been searched in this window, so an edit is searchable moments after
+the save rather than on the server's next poll. `ish.refreshOnSave`
+turns it off.
+
 The server's stderr goes to the `ish` output channel.
 
 ## Settings
@@ -64,6 +69,7 @@ The server's stderr goes to the `ish` output channel.
 | `ish.limit` | `40` | how many results one search returns |
 | `ish.debounceMs` | `120` | how long typing must pause before a search is sent |
 | `ish.preview` | `true` | show the highlighted chunk while the picker is open |
+| `ish.refreshOnSave` | `true` | refresh the index when a file in a searched folder is saved |
 
 What is indexed, which backend embeds it, and how paths are sorted into
 `code`, `doc`, `test`, and `config` come from ish's own config file,

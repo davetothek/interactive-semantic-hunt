@@ -58,6 +58,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The Neovim and VS Code clients ask the server to refresh when a file is
+  saved, once a search has started the server. An edit was searchable only
+  on the server's next poll, up to `refresh_seconds` later, which is 30 s
+  by default. The editor is the one place that knows a file was saved.
 - The picker paints before it scans. It lists what the index held last time
   at once, answers a query from that while the staleness scan and the
   refresh run behind the query field, and lists again when they land. The

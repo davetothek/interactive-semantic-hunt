@@ -23,6 +23,9 @@ const WATCH_MS = 700;
 const WATCH_LIMIT_MS = 10 * 60 * 1000;
 /** How long to leave the finished mark up before clearing it. */
 const DONE_MS = 1500;
+/** How long after a save to wait for the next one before refreshing.
+ * A format-on-save writes a file twice within a moment. */
+const SAVE_DEBOUNCE_MS = 1000;
 
 /** One list entry. A result opens a file. A candidate finishes a word. */
 interface Item extends vscode.QuickPickItem {
@@ -48,6 +51,7 @@ interface Settings {
   limit: number;
   debounceMs: number;
   preview: boolean;
+  refreshOnSave: boolean;
 }
 
 function settings(): Settings {
@@ -58,6 +62,7 @@ function settings(): Settings {
     limit: read.get<number>("limit", 40),
     debounceMs: read.get<number>("debounceMs", 120),
     preview: read.get<boolean>("preview", true),
+    refreshOnSave: read.get<boolean>("refreshOnSave", true),
   };
 }
 
@@ -66,6 +71,11 @@ class Servers implements vscode.Disposable {
   private readonly byRoot = new Map<string, IshServer>();
 
   constructor(private readonly output: vscode.OutputChannel) {}
+
+  /** Whether a server has been started for *root*. */
+  has(root: string): boolean {
+    return this.byRoot.has(root);
+  }
 
   for(root: string): IshServer {
     let server = this.byRoot.get(root);
@@ -460,6 +470,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const servers = new Servers(output);
   const watch = new IndexWatch();
   context.subscriptions.push(output, servers, watch);
+  let saveTimer: NodeJS.Timeout | undefined;
+  context.subscriptions.push({ dispose: () => clearTimeout(saveTimer) });
 
   const withRoot = (body: (root: string, editor: vscode.TextEditor | undefined) => void) => {
     return () => {
@@ -496,6 +508,21 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("ish.complete", () => {
       void active?.complete();
+    }),
+    // The editor is the one place that knows a file was saved, so tell
+    // the server then, rather than have it find out on its next poll,
+    // up to `refresh_seconds` later. Only a tree somebody has searched
+    // has a server, so a save elsewhere starts nothing.
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      if (!settings().refreshOnSave || document.uri.scheme !== "file") {
+        return;
+      }
+      const root = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
+      if (root === undefined || !servers.has(root)) {
+        return;
+      }
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => watch.start(servers.for(root), root), SAVE_DEBOUNCE_MS);
     }),
     vscode.commands.registerCommand("ish.restart", () => {
       servers.dispose();
