@@ -196,3 +196,16 @@ class TestStatus:
             status = ish.status()
             assert sum(status["types"].values()) == status["chunks"]
             assert sum(status["languages"].values()) == status["chunks"]
+
+
+class TestCompleting:
+    """Verify the session finishes a filter word, so every picker binds one function."""
+
+    def test_a_key_is_finished(self, project: Path) -> None:
+        assert _ish(project).complete("state machine ty") == "state machine type:"
+
+    def test_a_subtree_of_the_session_path_is_offered(self, project: Path) -> None:
+        assert _ish(project).candidates("under:/") == ["/docs/", "/src/", "/tests/"]
+
+    def test_one_answer_offers_no_candidates(self, project: Path) -> None:
+        assert _ish(project).candidates("type:d") == []

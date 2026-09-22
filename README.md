@@ -72,11 +72,16 @@ type:doc how do I configure this       the prose, not the code
 type:test,doc retry backoff            the tests and what they document
 ```
 
-Press Tab to finish a filter word. `ty` becomes `type:`, `lang:cp` becomes
-`lang:cpp`, and `under:/s` becomes `under:/src/`; a word with several answers
-grows as far as they agree and names the rest. `ish-complete` does the work
-from the command line, and `complete_filter` does it over MCP, so any picker
-can call whichever it has.
+Press Tab to finish a filter word, in the picker and in Neovim alike. `ty`
+becomes `type:`, `lang:cp` becomes `lang:cpp`, and `under:/s` becomes
+`under:/src/`; a word with several answers grows as far as they agree and
+names the rest. `ish-complete` does the work from the command line, and
+`complete_filter` does it over MCP, so any picker can call whichever it has.
+
+The shell finishes the same words on the command line. Source
+`contrib/shell/ish.bash` from `~/.bashrc`, or copy `contrib/shell/_ish` to a
+directory on zsh's `$fpath`, and `ish lang:cp<Tab>` becomes `ish lang:cpp`.
+Both call `ish-complete`, so the shell learns nothing about the languages.
 
 `lang:`, `under:`, and `type:` work in the query line of every interface —
 the command line, the picker, Neovim, and MCP. The words are taken out

@@ -16,7 +16,6 @@ from typing import Any
 from ish import bootstrap
 from ish.application.categories import TYPES
 from ish.application.progress import Progress
-from ish.interfaces.completion import candidates, complete
 from ish.interfaces.format import render
 from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
@@ -268,12 +267,9 @@ class IshTools:
         start.
         """
         query = str(arguments.get("query") or "")
-        root = self._resolve(arguments.get("path"))
+        session = self._session_for(self._resolve(arguments.get("path")))
         return json.dumps(
-            {
-                "text": complete(query, self._settings, root),
-                "candidates": candidates(query, self._settings, root),
-            }
+            {"text": session.complete(query), "candidates": session.candidates(query)}
         )
 
     def tools(self) -> list[Tool]:
