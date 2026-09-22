@@ -182,6 +182,17 @@ class TestStatus:
             assert set(status["languages"]) == {"python", "markdown"}
             assert set(status["types"]) == {"code", "doc", "test"}
 
+    def test_status_counts_the_files_that_yielded_nothing(
+        self, project: Path, offline
+    ) -> None:
+        """A file of attribute definitions looks indexed and holds nothing."""
+        (project / "docs" / "attrs.adoc").write_text(":project: Widget\n")
+        with _ish(project) as ish:
+            ish.index()
+            status = ish.status()
+            assert status["files"] == 3
+            assert status["empty_files"] == 1
+
     def test_status_reads_and_does_not_build(self, project: Path, offline) -> None:
         """A status call that indexed first held the caller for the whole run."""
         with _ish(project) as ish:

@@ -12,6 +12,7 @@ and the composition root hands that index to the refresh directly.
 
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 
 from ish.application.ports.vector_store import VectorReader
 from ish.application.ranking import ResultFilter
@@ -48,6 +49,13 @@ class FederatedReader:
         if len(self._readers) == 1:
             return self._readers[0].count()
         return len(self.chunks())
+
+    def indexed_paths(self) -> Sequence[Path]:
+        """Return every file any index has read, each once."""
+        seen: set[Path] = set()
+        for reader in self._readers:
+            seen.update(reader.indexed_paths())
+        return sorted(seen)
 
     def search(
         self,

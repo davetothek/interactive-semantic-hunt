@@ -75,6 +75,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A Markdown or AsciiDoc file with no heading made no chunks and said
+  nothing, while it entered the index as a file and looked indexed. On one
+  tree 2,844 files held no chunks. Such a file is now one chunk named after
+  the file when it holds a line of prose, and stays out when it holds only
+  attribute definitions, includes, conditionals, comments, and table rows.
+  `index_status` and `Ish.status()` report how many files were read and
+  yielded nothing.
 - An index run wrote every chunk row after the last vector of the run, so
   a reader saw 0 files and 0 chunks for the whole of one 2 h 43 m run under
   `--reindex`, and a run that stopped kept its vectors and none of its

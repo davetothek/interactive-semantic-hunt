@@ -199,6 +199,20 @@ class TestSearch:
         assert store.chunks()[0].symbol is None
 
 
+class TestIndexedPaths:
+    """Verify a file read and found empty is still reported as read."""
+
+    def test_a_file_with_no_chunks_is_listed(self, store: SqliteVectorStore) -> None:
+        store.add_vectors({"h": [1.0, 0.0]})
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
+        store.set_file(Path("empty.adoc"), STAMP, [])
+        assert store.indexed_paths() == [Path("a.py"), Path("empty.adoc")]
+        assert {c.path for c in store.chunks()} == {Path("a.py")}
+
+    def test_an_empty_store_lists_nothing(self, store: SqliteVectorStore) -> None:
+        assert store.indexed_paths() == []
+
+
 class TestMaintenance:
     """Verify replacement, removal, and vector pruning."""
 

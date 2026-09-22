@@ -44,7 +44,8 @@ The `add-language` skill walks through it.
   things it holds. Do not split an entry's own fields.
 - `markup.py` reads Markdown and AsciiDoc as one parser built twice. A
   section runs to the next heading. The symbol is the heading path. Skip
-  fenced blocks.
+  fenced blocks. A file with no heading is one chunk named after the file
+  when it holds a line of prose, and nothing when it holds only machinery.
 - `tree_sitter.py` reads C and C++ as one parser, `cpp`, which owns `.h`. A
   type is a definition only when it has a body. A declaration is a chunk only
   when it declares a function, and is dropped when the same file defines it.

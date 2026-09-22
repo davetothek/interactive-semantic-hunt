@@ -256,6 +256,8 @@ class IshTools:
             f"Index for {root}\n"
             f"  refreshing: {doing or 'no'}\n"
             f"  chunks   : {status['chunks']}\n"
+            f"  files    : {status['files']} with chunks, "
+            f"{status['empty_files']} with none\n"
             f"  languages: {breakdown or 'none'}\n"
             f"  embedder : {self._settings.embedder}\n"
             f"  file     : {bootstrap.catalog(self._settings).path_for(root)}"

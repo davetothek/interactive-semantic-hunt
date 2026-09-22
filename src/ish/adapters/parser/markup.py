@@ -8,6 +8,12 @@ its symbol is the path of headings above it.
 Both formats also carry fenced code, where a run of ``#`` or ``=`` is
 source rather than a heading. Track the fences and ignore what is
 inside them.
+
+A file with no heading is one chunk when it holds prose, and nothing
+when it holds only machinery. Measured on one specification tree: 2,844
+files held no heading, and a sample of 400 of them was attribute
+definitions, include shells, and table rows. A paragraph of real prose
+with no heading would otherwise disappear with no signal.
 """
 
 import re
@@ -19,6 +25,14 @@ from ish.domain.chunk import Chunk
 # A fence is three or more backticks or tildes in Markdown, and four
 # hyphens or dots in AsciiDoc.
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,}|-{4,}|\.{4,}|={4,}\s*$)")
+
+# A line that is machinery rather than prose: an attribute definition,
+# an include, a conditional, a comment, a table row or rule, a block
+# attribute list, or a heading marker with no title.
+_MACHINERY = re.compile(
+    r"^\s*(:[\w-]+!?:|include::|ifdef::|ifndef::|ifeval::|endif::|//|<!--|\|"
+    r"|\[.*\]\s*$|[#=]+\s*$)"
+)
 
 
 class MarkupParser:
@@ -44,7 +58,7 @@ class MarkupParser:
         lines = source.splitlines(keepends=True)
         headings = self._headings(lines)
         if not headings:
-            return []
+            return self._whole(path, lines)
 
         chunks: list[Chunk] = []
         trail: list[str] = []
@@ -69,25 +83,53 @@ class MarkupParser:
             )
         return chunks
 
-    def _headings(self, lines: list[str]) -> list[tuple[int, int, str]]:
-        """Find every heading outside a fenced block."""
-        found: list[tuple[int, int, str]] = []
-        fence: str | None = None
+    def _whole(self, path: Path, lines: list[str]) -> list[Chunk]:
+        """Return the document as one chunk when it holds prose, else nothing.
 
+        Name it after the file, because nothing inside names it. A file
+        of attribute definitions, includes, and table rows holds nothing
+        a query would ask for, so it stays out as before.
+        """
+        if not any(_is_prose(line) for _number, line in self._outside_fences(lines)):
+            return []
+        return [
+            Chunk(
+                path=path,
+                text="".join(lines),
+                kind="document",
+                language=self.language,
+                symbol=path.stem,
+                start_line=1,
+                end_line=len(lines),
+            )
+        ]
+
+    @staticmethod
+    def _outside_fences(lines: list[str]):
+        """Yield each numbered line that is not inside a fenced block."""
+        fence: str | None = None
         for number, line in enumerate(lines, 1):
             fence_match = _FENCE.match(line)
             if fence_match:
                 token = fence_match.group(1).strip()
                 if fence is None:
                     fence = token[0]
-                    continue
-                if token[0] == fence:
+                elif token[0] == fence:
                     fence = None
                 continue
-            if fence is not None:
-                continue
+            if fence is None:
+                yield number, line
 
+    def _headings(self, lines: list[str]) -> list[tuple[int, int, str]]:
+        """Find every heading outside a fenced block."""
+        found: list[tuple[int, int, str]] = []
+        for number, line in self._outside_fences(lines):
             heading = self._heading.match(line)
             if heading:
                 found.append((number, len(heading.group(1)), heading.group(2).strip()))
         return found
+
+
+def _is_prose(line: str) -> bool:
+    """Return True for a line a reader wrote to be read."""
+    return bool(line.strip()) and not _MACHINERY.match(line)

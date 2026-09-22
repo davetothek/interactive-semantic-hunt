@@ -132,8 +132,17 @@ class TestIndexStatus:
 
         out = tools.index_status({"path": str(project)})
         assert "chunks   : 3" in out
+        assert "files    : 1 with chunks, 0 with none" in out
         assert "3 python" in out
         assert "ollama" in out
+
+    def test_a_file_that_yielded_nothing_is_counted(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        (project / "notes.md").write_text("<!-- nothing to read -->\n")
+        tools._session_for(project.resolve()).index()
+        out = tools.index_status({"path": str(project)})
+        assert "files    : 1 with chunks, 1 with none" in out
 
     def test_the_status_reads_and_does_not_build(
         self, tools: IshTools, stub_backend, project: Path

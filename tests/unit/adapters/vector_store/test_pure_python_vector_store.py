@@ -61,6 +61,14 @@ class TestIndexMaintenance:
     def test_starts_empty(self, store: PurePythonVectorStore) -> None:
         assert store.file_stamps() == {}
         assert store.chunks() == []
+        assert store.indexed_paths() == []
+
+    def test_a_file_with_no_chunks_is_listed_as_read(
+        self, store: PurePythonVectorStore
+    ) -> None:
+        store.set_file(Path("empty.adoc"), STAMP, [])
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
+        assert store.indexed_paths() == [Path("a.py"), Path("empty.adoc")]
 
     def test_set_file_records_stamp_and_chunks(
         self, store: PurePythonVectorStore

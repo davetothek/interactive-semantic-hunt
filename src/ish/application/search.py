@@ -84,6 +84,10 @@ class Search:
         except Exception as exc:  # noqa: BLE001 - the first query reports it
             log.info("Cannot warm the backend: %s", exc)
 
+    def indexed_paths(self) -> Sequence[Path]:
+        """Return every file the store has read, chunks or none."""
+        return self._reader.indexed_paths()
+
     def all_chunks(self, keep: ResultFilter = None) -> list[Chunk]:
         """Return the chunks the store holds, for a plain listing.
 

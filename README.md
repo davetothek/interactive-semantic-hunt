@@ -279,6 +279,12 @@ ish "how is exposure set" project    # searches both
 Searching a parent never rewrites an index below it. Pass `--no-federate` to use
 only the index of the exact path.
 
+A Markdown or AsciiDoc file with no heading is one chunk, named after the
+file, when it holds a line of prose. A file of attribute definitions,
+includes, and table rows holds nothing a query asks for and stays out.
+`index_status` and `Ish.status()` count the files that were read and
+yielded nothing, so a tree of such files is not mistaken for an index.
+
 The index records where each chunk is — its path, line range, kind, and name —
 together with the embedding vector. It does not store the source, so it is not a
 second readable copy of your code. Previews are read from the file, which also
