@@ -45,7 +45,11 @@ class Scan:
         include: Sequence[str] = (),
         exclude: Sequence[str] = (),
         ignored_by: Callable[[Path], bool] | None = None,
+        root: Path | None = None,
     ) -> None:
+        # The tree an include pattern is anchored at. Without one, a
+        # pattern is matched against the whole path.
+        self._root = root
         self._ignored_dirs = frozenset(ignored_dirs) or DEFAULT_IGNORED_DIRS
         self._include = _compile(include, "include")
         self._exclude = _compile(exclude, "exclude")
@@ -118,13 +122,34 @@ class Scan:
         if any(part in self._ignored_dirs for part in path.parts):
             return False
 
+        # An include pattern is anchored at the root of the tree. One
+        # firmware tree kept fourteen worktrees, each holding a copy of
+        # the directory the pattern named, and a pattern that matched at
+        # any depth admitted 168,763 files for a corpus of a tenth that.
+        if self._include:
+            inside = self._relative(path)
+            if not any(p.match(inside) for p in self._include):
+                return False
         # Search the whole path, so "vendor/" matches at any depth.
         text = path.as_posix()
-        if self._include and not any(p.search(text) for p in self._include):
-            return False
         if any(p.search(text) for p in self._exclude):
             return False
         return not (self._ignored_by is not None and self._ignored_by(path))
+
+    def _relative(self, path: Path) -> str:
+        """Return *path* written from the root of the tree, POSIX style.
+
+        Return the whole path when no root is known or the path lies
+        outside it. The root itself, scanned as a single file, is named
+        by its own name.
+        """
+        if self._root is None:
+            return path.as_posix()
+        try:
+            inside = path.relative_to(self._root)
+        except ValueError:
+            return path.as_posix()
+        return path.name if inside == Path() else inside.as_posix()
 
     def parse_file(self, path: Path) -> Sequence[Chunk] | None:
         """Read and parse one discovered file.
