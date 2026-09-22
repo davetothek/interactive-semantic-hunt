@@ -31,6 +31,7 @@ from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
+from ish.interfaces import completion
 from ish.settings import Settings, load_settings
 
 log = logging.getLogger(__name__)
@@ -235,6 +236,27 @@ class Ish:
         )
         found = bootstrap.build_scan(self.settings, self.path).run(self.path)
         return [chunk for chunk in found if keep is None or keep(chunk)]
+
+    # ------------------------------------------------------------------
+    # Completing
+    # ------------------------------------------------------------------
+
+    def complete(self, text: str) -> str:
+        """Return *text* with its last filter word finished, or unchanged.
+
+        Grow the word the way a shell does: one answer finishes it and
+        adds a space, several grow it as far as they agree. A word that
+        fits nothing is left alone, so the key is never destructive.
+        """
+        return completion.complete(text, self.settings, self.path)
+
+    def candidates(self, text: str) -> list[str]:
+        """Return what the last word of *text* could still become.
+
+        Empty when one answer fits or none does. A picker shows these
+        beside the query when a completion could not choose.
+        """
+        return completion.candidates(text, self.settings, self.path)
 
     def status(self) -> dict[str, object]:
         """Report what is indexed for this tree.

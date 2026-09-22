@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from pygments.styles import get_style_by_name
+from textual.binding import Binding
 from textual.filter import Monochrome, NoColor
 from textual.widgets import Input, OptionList, Static
 
@@ -20,7 +21,9 @@ from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.application.progress import EMBED, Progress
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
+from ish.interfaces import completion
 from ish.interfaces.tui.app import DARK_SYNTAX, LIGHT_SYNTAX, IshApp
+from ish.settings import Settings
 
 # What the registered languages hold, the way the real session reads it
 # off the registry and hands it to the filter.
@@ -88,6 +91,12 @@ class FakeSession:
     def chunks(self, query: str = "") -> list[Chunk]:
         keep = build_result_filter(self.filters_of(query), HOLDS)
         return [c for c in self._chunks if keep is None or keep(c)]
+
+    def complete(self, text: str) -> str:
+        return completion.complete(text, Settings(), Path("."))
+
+    def candidates(self, text: str) -> list[str]:
+        return completion.candidates(text, Settings(), Path("."))
 
     def close(self) -> None:
         return None
@@ -974,7 +983,10 @@ class TestQuittingIsImmediate:
         assert not app._still_here()
 
     def test_quit_is_bound_to_the_usual_keys(self) -> None:
-        keys = {binding[0] for binding in IshApp.BINDINGS}
+        keys = {
+            binding.key if isinstance(binding, Binding) else binding[0]
+            for binding in IshApp.BINDINGS
+        }
         assert {"escape", "ctrl+c", "ctrl+q"} <= keys
 
 
@@ -1325,3 +1337,45 @@ class TestNoColor:
                 assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
 
         run(body())
+
+
+class TestTabCompletes:
+    """Verify Tab finishes a filter word without leaving the query field.
+
+    The screen binds Tab to moving focus, and a picker whose query
+    field lost focus on Tab would stop taking keystrokes. The word is
+    finished the way a shell finishes a path, and the choices are named
+    when it cannot be finished.
+    """
+
+    def _press(self, keys: str):
+        app = IshApp(FakeSession(), Path("."))
+        said: list[str] = []
+        app.notify = lambda message, **_more: said.append(message)  # type: ignore[method-assign]
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                for key in keys.split():
+                    await pilot.press(key)
+                await pilot.pause()
+                field = app.query_one(Input)
+                return field.value, field.cursor_position, field.has_focus, said
+
+        return run(body())
+
+    def test_a_key_is_finished_and_the_cursor_follows(self) -> None:
+        value, cursor, focused, _said = self._press("t y tab")
+        assert value == "type:"
+        assert cursor == len("type:")
+        assert focused is True, "the query field must keep focus"
+
+    def test_an_ambiguous_word_grows_and_names_the_choices(self) -> None:
+        value, _cursor, _focused, said = self._press("t y p e colon c tab")
+        assert value == "type:co"
+        assert said == ["code  config"]
+
+    def test_a_word_that_fits_nothing_is_left_alone(self) -> None:
+        value, _cursor, _focused, said = self._press("a l p h a tab")
+        assert value == "alpha"
+        assert said == []

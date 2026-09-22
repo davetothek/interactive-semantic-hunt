@@ -9,6 +9,7 @@ from pathlib import Path
 from rich.syntax import Syntax
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -119,6 +120,10 @@ class IshApp(App[Match | None]):
         # which this picker turns off. Without a key here there is no
         # way to change theme while it runs.
         ("ctrl+t", "cycle_theme", "Theme"),
+        # Tab finishes a filter word the way a shell does. The screen
+        # binds it to moving focus, and the query field never gives up
+        # focus, so the binding takes priority and the key means this.
+        Binding("tab", "complete", "Complete", priority=True),
     ]
 
     def __init__(
@@ -423,6 +428,23 @@ class IshApp(App[Match | None]):
         self.notify(f"Theme: {self.theme}")
         # The preview reads its colors as it is built, so build it again.
         self._update_preview(self.query_one(OptionList).highlighted or 0)
+
+    def action_complete(self) -> None:
+        """Finish the filter word the query ends in, and name the rest.
+
+        `ty` becomes `type:`, `lang:cp` becomes `lang:cpp`, and a word
+        with several answers grows as far as they agree. Show the
+        choices when the word is still ambiguous, or pressing the key
+        looks like nothing happened.
+        """
+        field = self.query_one(Input)
+        grown = self.session.complete(field.value)
+        if grown != field.value:
+            field.value = grown
+            field.cursor_position = len(grown)
+        choices = self.session.candidates(grown)
+        if choices:
+            self.notify("  ".join(choices), title="Complete")
 
     def _choose(self, index: int | None) -> None:
         """Exit with the result at *index*, if there is one."""

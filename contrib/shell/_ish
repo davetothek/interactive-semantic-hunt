@@ -1,0 +1,46 @@
+#compdef ish
+# Zsh completion for ish.
+#
+# Finish a filter word on the command line the way the picker does:
+# `ish ty<Tab>` becomes `ish type:`, `ish lang:cp<Tab>` becomes
+# `ish lang:cpp`, and a word with several answers is listed.
+# `ish-complete` does the work, so the shell learns nothing about the
+# registered languages.
+#
+# Copy this file to a directory on $fpath as `_ish`, then run
+# `compinit` again, or `autoload -Uz _ish` in an open shell.
+
+_ish() {
+  local cur=$words[CURRENT]
+
+  case $cur in
+    -*)
+      local -a flags
+      flags=(${(f)"$(ish --help 2>/dev/null | grep -oE -- '(^|[ ,[])--?[a-z][a-z-]*' | tr -d ' ,[' | sort -u)"})
+      compadd -- $flags
+      return
+      ;;
+  esac
+
+  local grown listed
+  grown=$(ish-complete "$cur" 2>/dev/null) || return 1
+  listed=$(ish-complete --candidates "$cur" 2>/dev/null)
+
+  if [[ -z $listed ]]; then
+    # One answer, or none. A key ends in a colon and takes its value
+    # right after it. A value ends in a space, and the shell adds one.
+    compadd -S '' -- "${grown%% }"
+    return
+  fi
+
+  # Several answers. Name each in full, with the key put back, so the
+  # menu shows what the word could become.
+  local prefix=""
+  [[ $cur == *:* ]] && prefix="${cur%%:*}:"
+  listed=${listed%%  ...*}
+  local -a choices
+  choices=(${=listed})
+  compadd -S '' -- ${prefix}${^choices}
+}
+
+_ish "$@"

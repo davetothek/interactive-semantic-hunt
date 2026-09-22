@@ -15,6 +15,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   the resident server already holds. `ish-complete` gave the same answer
   through a fresh process, which cost about 107 ms a Tab, nearly all of it
   interpreter start.
+- Finish a filter word with Tab in the picker. `ty` becomes `type:` and
+  `lang:cp` becomes `lang:cpp`, as in Neovim, and a word with several
+  answers names them. The query field keeps focus.
+- Finish a filter word in the shell. `contrib/shell/ish.bash` and
+  `contrib/shell/_ish` bind `ish-complete` for bash and zsh, so
+  `ish lang:cp<Tab>` becomes `ish lang:cpp` on the command line.
 - Name the config file to read, with `--config PATH`, `-c`, or `ISH_CONFIG`.
   The named file stands in place of the files ish looks for by walking up
   from the tree. The user file below it still applies, so a machine-wide
