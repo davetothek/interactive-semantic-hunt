@@ -153,6 +153,9 @@ class IshApp(App[Match | None]):
         # Whether the index is open. Until it is, a query is remembered
         # rather than answered.
         self._index_ready = False
+        # Whether what the index already held is on screen. A query is
+        # answered from that while the refresh runs behind it.
+        self._stored_ready = False
         # Search on one daemon thread. The embedding backend serves one
         # request at a time anyway, so running several only makes the
         # newest query wait behind queries nobody wants any more, and
@@ -213,8 +216,17 @@ class IshApp(App[Match | None]):
         ).start()
 
     def _build_index(self) -> None:
-        """Scan and embed, reporting progress into the preview pane."""
+        """Scan and embed, reporting progress into the preview pane.
+
+        Show what the index already holds first. Opening an index of a
+        large tree spends most of a second walking it for changes, and
+        the stored answers are good for almost every query in the
+        meantime. The refresh replaces them when it lands.
+        """
         try:
+            held = self.session.chunks(stored=True)
+            if held and self._still_here():
+                self.call_from_thread(self._on_stored_ready, held)
             self.session.index(self._report_progress)
             self._all_chunks = list(self.session.chunks())
             if self._still_here():
@@ -237,8 +249,25 @@ class IshApp(App[Match | None]):
             self.call_from_thread(self._show_status, str(step))
 
     def _show_status(self, message: str) -> None:
-        """Write a line into the preview pane while there is nothing to preview."""
+        """Say what the refresh is doing, where it covers nothing.
+
+        The preview pane is free while there is nothing to preview. Once
+        the stored listing is up, the pane shows a chunk, so the message
+        goes to the header instead of over the preview.
+        """
+        if self._current_results:
+            self.sub_title = f"{message}..."
+            return
         self.query_one("#preview-pane", Static).update(f"{message}...")
+
+    def _on_stored_ready(self, chunks: Sequence[Chunk]) -> None:
+        """Show what the index held before this run, and answer from it."""
+        self._stored_ready = True
+        typed = self.query_one(Input).value
+        if typed.strip():
+            self.do_search(typed)
+            return
+        self._show_listing(chunks)
 
     def _on_index_ready(self) -> None:
         """Show what the index holds, and answer anything typed meanwhile."""
@@ -340,9 +369,10 @@ class IshApp(App[Match | None]):
         described = self.session.filters_of(query).describe()
         self.sub_title = described
 
-        if not self._index_ready:
-            # The index is still opening. It answers this query itself
-            # when it is ready, so leave the progress message standing.
+        if not self._index_ready and not self._stored_ready:
+            # The index is still opening and held nothing before. It
+            # answers this query itself when it is ready, so leave the
+            # progress message standing.
             return
 
         self._generation += 1
@@ -379,12 +409,18 @@ class IshApp(App[Match | None]):
         """
         if generation != self._generation:
             return None
+        if not self._index_ready:
+            # The refresh is still running behind the field. Answer from
+            # what is stored, and the refresh asks again when it lands.
+            return list(self.session.search(query, self.limit, stored=True))
         return list(self.session.search(query, self.limit))
 
     def _listing_if_current(self, generation: int, query: str) -> list[Chunk] | None:
         """List the chunks, unless a later keystroke has replaced this."""
         if generation != self._generation:
             return None
+        if not self._index_ready:
+            return self.session.chunks(query, stored=True)
         return self.session.chunks(query)
 
     async def on_input_changed(self, event: Input.Changed) -> None:

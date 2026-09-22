@@ -61,8 +61,10 @@ ish "parse a python file" src/
 
 Run the interactive picker and open the selection in your editor. Type to
 search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `ctrl+t`
-to change the theme, `escape` to quit. Narrow without leaving the query
-line:
+to change the theme, `escape` to quit. The picker lists what the index held
+last time before it looks for changes, and answers from that while the
+refresh runs, with the progress in the header. Narrow without leaving the
+query line:
 
 ```text
 state machine transitions              every language
