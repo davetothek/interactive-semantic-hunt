@@ -101,6 +101,13 @@ class TestReading:
         duplicate = store_with(("same", [1.0, 0.0]))
         assert FederatedReader([shared, duplicate]).count() == 1
 
+    def test_indexed_paths_join_every_index_once(self) -> None:
+        one = store_with(("alpha", [1.0]))
+        two = store_with(("alpha", [1.0]))
+        two.set_file(Path("empty.adoc"), STAMP, [])
+        federated = FederatedReader([one, two])
+        assert federated.indexed_paths() == [Path("alpha.py"), Path("empty.adoc")]
+
     def test_close_releases_every_index(self) -> None:
         class Closing(PurePythonVectorStore):
             closed = 0

@@ -103,6 +103,10 @@ class PurePythonVectorStore:
         """Return how many chunks the store holds."""
         return sum(len(entries) for entries in self._chunks.values())
 
+    def indexed_paths(self) -> Sequence[Path]:
+        """Return every file the store has read, chunks or none."""
+        return sorted(self._stamps)
+
     def search(
         self,
         query_vector: Sequence[float],

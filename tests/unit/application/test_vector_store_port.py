@@ -33,6 +33,9 @@ class FakeVectorStore:
     def count(self) -> int:
         return 0
 
+    def indexed_paths(self) -> Sequence[Path]:
+        return []
+
     def search(
         self, query_vector: Sequence[float], limit: int = 5
     ) -> Sequence[tuple[Chunk, float]]:
@@ -64,6 +67,9 @@ class TestVectorStoreProtocol:
 
             def count(self):
                 return 0
+
+            def indexed_paths(self):
+                return []
 
             def search(self, query_vector, query_text="", limit=5, keep=None):
                 return []

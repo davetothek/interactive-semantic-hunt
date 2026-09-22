@@ -295,10 +295,15 @@ class Ish:
             languages[chunk.language] = languages.get(chunk.language, 0) + 1
             kind = sort_into(chunk)
             kinds[kind] = kinds.get(kind, 0) + 1
+        with_chunks = {chunk.path for chunk in chunks}
+        # A file read and found to hold nothing looks indexed and is
+        # not searchable. Count it, so the gap has a name.
+        read = set(self._use_case.indexed_paths())
         return {
             "path": self.path,
             "chunks": len(chunks),
-            "files": len({chunk.path for chunk in chunks}),
+            "files": len(with_chunks),
+            "empty_files": len(read - with_chunks),
             "indexes": sorted(bootstrap.catalog(self.settings).below(self.path)),
             "languages": dict(sorted(languages.items())),
             "types": dict(sorted(kinds.items())),

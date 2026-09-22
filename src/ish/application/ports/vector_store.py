@@ -54,6 +54,14 @@ class VectorReader(Protocol):
         """Return how many chunks the store holds, without building them."""
         ...
 
+    def indexed_paths(self) -> Sequence[Path]:
+        """Return every file the store has read, whether or not it yielded chunks.
+
+        A file that yielded nothing is stamped so it is read once, and a
+        status that counted only chunks could not say it was there.
+        """
+        ...
+
     def search(
         self,
         query_vector: Sequence[float],

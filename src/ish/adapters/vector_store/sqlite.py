@@ -416,6 +416,12 @@ class SqliteVectorStore:
             row = self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()
         return int(row[0])
 
+    def indexed_paths(self) -> Sequence[Path]:
+        """Return every file the store has read, chunks or none."""
+        with self._lock:
+            rows = self._db.execute("SELECT path FROM files ORDER BY path").fetchall()
+        return [Path(str(row[0])) for row in rows]
+
     @staticmethod
     def _to_chunk(row: Sequence[Any]) -> Chunk:
         """Build a Chunk from the stored column order.
