@@ -11,8 +11,17 @@ import * as path from "node:path";
 
 import * as vscode from "vscode";
 
+import { DONE, render as renderProgress } from "./progress";
 import { iconFor, parseResults, type Result } from "./results";
 import { IshServer } from "./server";
+
+/** How often to ask what the index is doing, while it is doing it. */
+const WATCH_MS = 700;
+/** Give up watching after this long. A refresh of hours reports on
+ * its own the next time a picker opens. */
+const WATCH_LIMIT_MS = 10 * 60 * 1000;
+/** How long to leave the finished mark up before clearing it. */
+const DONE_MS = 1500;
 
 /** One list entry. A result opens a file. */
 interface Item extends vscode.QuickPickItem {
@@ -66,6 +75,96 @@ class Servers implements vscode.Disposable {
       server.stop();
     }
     this.byRoot.clear();
+  }
+}
+
+/**
+ * Follow a refresh until it finishes, drawing what it is doing.
+ *
+ * The index is brought up to date when the picker opens, not on every
+ * keystroke, and the results improve while it runs. Say so in the
+ * status bar: a picker that quietly answers from yesterday's index is
+ * worse than a slow one. One item serves every tree, and a new watch
+ * replaces the one before it.
+ */
+class IndexWatch implements vscode.Disposable {
+  private readonly item: vscode.StatusBarItem;
+  private generation = 0;
+  private timer: NodeJS.Timeout | undefined;
+
+  constructor() {
+    this.item = vscode.window.createStatusBarItem(
+      "ish.index",
+      vscode.StatusBarAlignment.Left,
+      10,
+    );
+    this.item.name = "ish index";
+  }
+
+  /** Ask *server* to refresh *root*, and watch it until it is done. */
+  start(server: IshServer, root: string): void {
+    const mine = ++this.generation;
+    clearTimeout(this.timer);
+    let waited = 0;
+    let told = false;
+
+    const show = (text: string): void => {
+      this.item.text = renderProgress(text);
+      this.item.tooltip = text === DONE ? "ish: the index is up to date" : `ish: ${text}`;
+      this.item.show();
+    };
+    const finish = (sayDone: boolean): void => {
+      if (!sayDone) {
+        this.item.hide();
+        return;
+      }
+      // Leave a mark for a moment, so a refresh that finished can be
+      // told from one that never ran.
+      show(DONE);
+      this.timer = setTimeout(() => {
+        if (mine === this.generation) {
+          this.item.hide();
+        }
+      }, DONE_MS);
+    };
+    const tick = async (): Promise<void> => {
+      if (mine !== this.generation) {
+        return;
+      }
+      waited += WATCH_MS;
+      if (waited > WATCH_LIMIT_MS) {
+        finish(false);
+        return;
+      }
+      let state;
+      try {
+        state = await server.status(root);
+      } catch {
+        finish(false); // the server stopped answering
+        return;
+      }
+      if (mine !== this.generation) {
+        return;
+      }
+      if (state.refreshing !== undefined) {
+        told = true;
+        show(state.refreshing);
+        this.timer = setTimeout(() => void tick(), WATCH_MS);
+      } else {
+        finish(told);
+      }
+    };
+
+    void server.refresh(root).then(
+      () => void tick(),
+      () => finish(false), // the picker reports a server that is down
+    );
+  }
+
+  dispose(): void {
+    this.generation++;
+    clearTimeout(this.timer);
+    this.item.dispose();
   }
 }
 
@@ -178,9 +277,13 @@ async function open(root: string, result: Result): Promise<void> {
 }
 
 /** Run the picker over *root*, starting from *seed* in the query field. */
-function search(servers: Servers, root: string, seed = ""): void {
+function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): void {
   const wanted = settings();
   const server = servers.for(root);
+  // Look for changes now, once, rather than on every keystroke. The
+  // search runs against whatever is already stored and improves as the
+  // refresh lands.
+  watch.start(server, root);
   const before = placeOf(vscode.window.activeTextEditor);
   const pick = vscode.window.createQuickPick<Item>();
   pick.title = `ish: ${path.basename(root)}`;
@@ -276,7 +379,8 @@ function search(servers: Servers, root: string, seed = ""): void {
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("ish");
   const servers = new Servers(output);
-  context.subscriptions.push(output, servers);
+  const watch = new IndexWatch();
+  context.subscriptions.push(output, servers, watch);
 
   const withRoot = (body: (root: string, editor: vscode.TextEditor | undefined) => void) => {
     return () => {
@@ -293,7 +397,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ish.search",
-      withRoot((root) => search(servers, root)),
+      withRoot((root) => search(servers, watch, root)),
     ),
     vscode.commands.registerCommand(
       "ish.searchHere",
@@ -304,8 +408,12 @@ export function activate(context: vscode.ExtensionContext): void {
         const file = editor?.document.uri.fsPath;
         const here = file === undefined ? "" : path.relative(root, path.dirname(file));
         const seed = here === "" ? "" : `under:/${here.split(path.sep).join("/")}/ `;
-        search(servers, root, seed);
+        search(servers, watch, root, seed);
       }),
+    ),
+    vscode.commands.registerCommand(
+      "ish.refresh",
+      withRoot((root) => watch.start(servers.for(root), root)),
     ),
     vscode.commands.registerCommand("ish.restart", () => {
       servers.dispose();
