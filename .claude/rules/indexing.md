@@ -50,7 +50,8 @@ paths:
 
 - Opening an index writes nothing to it. Read the stored root first and write
   only a different one.
-- Persist vectors every 64 chunks. Chunk rows land at the end of a file.
+- Persist vectors every 64 chunks, and write the rows of every file whose
+  vectors are all stored right after. A reader sees the run as it goes.
 - A schema change bumps `SCHEMA_VERSION` and vacuums. Dropping a table
   without a vacuum leaves its pages readable on disk.
 - The index stores where a chunk is, never what it says: vectors, paths,

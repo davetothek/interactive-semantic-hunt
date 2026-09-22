@@ -508,3 +508,184 @@ class TestIncrementalEmbedding:
 
         assert stats.vectors_embedded == 7
         assert len(store.chunks()) == 7
+
+
+class RecordingStore(PurePythonVectorStore):
+    """Record the order of writes, so a test can see when rows land."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.writes: list[str] = []
+
+    def add_vectors(self, vectors):
+        self.writes.append(f"vectors:{len(vectors)}")
+        super().add_vectors(vectors)
+
+    def set_file(self, path, stamp, chunks):
+        self.writes.append(f"file:{path.name}")
+        super().set_file(path, stamp, chunks)
+
+
+class TestRowsLandAsTheRunGoes:
+    """Verify a file's rows are written once its vectors are stored.
+
+    Rows landed only after every vector of the run, so a reader saw 0
+    files and 0 chunks for the whole of a 2 h 43 m run, and a run that
+    stopped kept its vectors and none of its rows.
+    """
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        for n in range(6):
+            (tmp_path / f"f{n}.py").write_text(f"chunk{n}\n")
+        return tmp_path
+
+    def test_rows_are_written_between_batches(
+        self, embedder, tree: Path, monkeypatch
+    ) -> None:
+        from ish.application import index as module
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 2)
+        store = RecordingStore()
+        build(embedder, store).refresh(tree)
+
+        assert store.writes == [
+            "vectors:2",
+            "file:f0.py",
+            "file:f1.py",
+            "vectors:2",
+            "file:f2.py",
+            "file:f3.py",
+            "vectors:2",
+            "file:f4.py",
+            "file:f5.py",
+        ]
+
+    def test_a_file_waits_for_the_last_of_its_vectors(
+        self, embedder, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A file with three chunks and a batch of two is written once."""
+        from ish.application import index as module
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 2)
+        (tmp_path / "big.py").write_text("one\ntwo\nthree\n")
+        (tmp_path / "small.py").write_text("four\n")
+        store = RecordingStore()
+        build(embedder, store).refresh(tmp_path)
+
+        assert store.writes == [
+            "vectors:2",
+            "vectors:2",
+            "file:big.py",
+            "file:small.py",
+        ]
+        assert len(store.chunks()) == 4
+
+    def test_a_file_needing_no_vector_is_written_at_once(
+        self, embedder, tmp_path: Path, monkeypatch
+    ) -> None:
+        from ish.application import index as module
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 2)
+        (tmp_path / "a.py").write_text("shared\n")
+        store = RecordingStore()
+        build(embedder, store).refresh(tmp_path)
+        store.writes.clear()
+
+        # A new file whose only text already has a vector.
+        (tmp_path / "b.py").write_text("shared\n")
+        stats = build(embedder, store).refresh(tmp_path)
+
+        assert store.writes == ["file:b.py"]
+        assert stats.vectors_embedded == 0
+
+    def test_a_stopped_run_keeps_the_rows_it_earned(
+        self, tree: Path, monkeypatch
+    ) -> None:
+        from ish.application import index as module
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 2)
+
+        class Flaky:
+            model_name = "flaky"
+            calls = 0
+
+            def embed_documents(self, texts):
+                self.calls += 1
+                if self.calls > 2:
+                    raise TimeoutError("the daemon stopped answering")
+                return [[float(len(t))] for t in texts]
+
+            def embed_query(self, text):
+                return [1.0]
+
+        store = RecordingStore()
+        with pytest.raises(TimeoutError):
+            build(Flaky(), store).refresh(tree)
+
+        # Two batches landed, and the four files they covered with them.
+        assert {p.name for p in store.file_stamps()} == {
+            "f0.py",
+            "f1.py",
+            "f2.py",
+            "f3.py",
+        }
+        assert len(store.chunks()) == 4
+
+    def test_progress_counts_the_whole_run(self, embedder, tree: Path, monkeypatch):
+        from ish.application import index as module
+        from ish.application.progress import EMBED
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 2)
+        steps = []
+        build(embedder, PurePythonVectorStore()).refresh(tree, steps.append)
+        embeds = [(s.done, s.total) for s in steps if s.stage == EMBED]
+        assert embeds == [(0, 6), (2, 6), (4, 6), (6, 6)]
+
+    def test_a_second_connection_sees_rows_before_the_run_ends(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """What a reader in another process sees while a run is going."""
+        import sqlite3
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+        from ish.application import index as module
+
+        monkeypatch.setattr(module, "EMBED_BATCH", 2)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        for n in range(6):
+            (tree / f"f{n}.py").write_text(f"chunk{n}\n")
+        db_path = tmp_path / "index.db"
+        seen: list[int] = []
+
+        class Peeking:
+            """Read the index through a second connection on each request."""
+
+            model_name = "peek"
+
+            def embed_documents(self, texts):
+                other = sqlite3.connect(db_path)
+                try:
+                    seen.append(
+                        other.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                    )
+                finally:
+                    other.close()
+                return [[float(len(t))] for t in texts]
+
+            def embed_query(self, text):
+                return [1.0]
+
+        store = SqliteVectorStore(db_path, model_id="peek", root=tree)
+        try:
+            Index(
+                scan=Scan(parsers=[LineParser()]),
+                embedder=Peeking(),
+                vector_store=store,
+            ).refresh(tree)
+        finally:
+            store.close()
+
+        # The third request already sees the four rows the first two earned.
+        assert seen == [0, 2, 4]

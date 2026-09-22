@@ -75,6 +75,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- An index run wrote every chunk row after the last vector of the run, so
+  a reader saw 0 files and 0 chunks for the whole of one 2 h 43 m run under
+  `--reindex`, and a run that stopped kept its vectors and none of its
+  rows. The rows of a file now land as soon as its vectors are stored,
+  every 64 chunks, so a second process sees the run as it goes and a
+  stopped run keeps what it earned.
 - An `exclude` pattern rejected each file after the walk had reached it,
   while `ignore` kept the walk out of a directory altogether. One query at
   the root of a 589,968-file tree took 10 s with its heavy directories in
