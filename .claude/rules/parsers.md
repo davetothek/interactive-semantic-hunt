@@ -24,7 +24,8 @@ The `add-language` skill walks through it.
 - Two parsers claiming one suffix is a hard error. Resolve it with the
   `languages` option, not by editing the other parser.
 - Do not cap chunk size inside a parser. `SizeLimited` wraps every parser in
-  `build_parsers()`, so a plugin gets the cap without asking.
+  `build_parsers()`, so a plugin gets the cap without asking. `CountLimited`
+  wraps outside it and reads a file of more than `max_chunks` chunks as one.
 - `MAX_CHUNK_CHARS` is a constant, not a setting. It describes what the
   embedding model can read.
 - Import a grammar or a library inside the method that needs it. Listing the

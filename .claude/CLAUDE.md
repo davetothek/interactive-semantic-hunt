@@ -66,7 +66,7 @@ one module that joins them.
 | Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
 | Adapter | `src/ish/adapters/parser/tree_sitter.py` | Tree-sitter parser, C and C++ flavor |
 | Adapter | `src/ish/adapters/parser/structured.py` | YAML and JSON documents |
-| Adapter | `src/ish/adapters/parser/_limits.py` | `SizeLimited`, the chunk size cap |
+| Adapter | `src/ish/adapters/parser/_limits.py` | `SizeLimited` and `CountLimited`, the chunk size and count caps |
 | Adapter | `src/ish/adapters/parser/_plugins.py` | Parsers a user wrote |
 | Adapter | `src/ish/adapters/embedder/__init__.py` | `EMBEDDERS` — every backend, and the recipe for adding one |
 | Adapter | `src/ish/adapters/embedder/prefixes.py` | `PrefixingEmbedder`, task prefixes, query cache |

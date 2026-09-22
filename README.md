@@ -142,6 +142,7 @@ nvim $(ish -i src/)
 | `--under REGEX` | Show results only from matching paths |
 | `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |
 | `--type-patterns TYPE:REGEX ...` | Say what a path holds, overriding the built-in reading |
+| `--max-chunks N` | Index a file that yields more chunks than this as one chunk (default 1000) |
 | `--model NAME` | Override the backend model |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
@@ -350,6 +351,12 @@ ish "" . --no-cache --exclude '/generated/' | wc -l  # what the pattern leaves
 
 If most of a tree is generated, it is usually less work to exclude the
 directory than to name each suffix.
+
+A file that slips past every pattern is caught by its size in chunks. A file
+that yields more than `max_chunks` of them, 1000 by default, is indexed as
+one chunk under its own name, and the run says so once. A file that large is
+generated: the largest hand-written file measured split into 374 pieces, the
+register map into 32,768. Raise the limit for a tree that is different.
 
 `--lang` and `--under` narrow what a search *returns*. They never change what is
 indexed, so a narrowed query cannot shrink the index:
