@@ -35,8 +35,55 @@
         "command": "ish.search",
         "title": "Search by meaning",
         "category": "ish"
+      },
+      {
+        "command": "ish.searchHere",
+        "title": "Search below this file's directory",
+        "category": "ish"
+      },
+      {
+        "command": "ish.restart",
+        "title": "Restart the server",
+        "category": "ish"
       }
-    ]
+    ],
+    "keybindings": [
+      {
+        "command": "ish.search",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i"
+      }
+    ],
+    "configuration": {
+      "title": "ish",
+      "properties": {
+        "ish.command": {
+          "type": "string",
+          "default": "ish-mcp",
+          "description": "The command that starts the server. It must be on PATH, or name the full path."
+        },
+        "ish.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Arguments passed to the server command."
+        },
+        "ish.limit": {
+          "type": "integer",
+          "default": 40,
+          "minimum": 1,
+          "description": "How many results one search returns."
+        },
+        "ish.debounceMs": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 0,
+          "description": "How long typing must pause before a search is sent."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "tsc -p ./",

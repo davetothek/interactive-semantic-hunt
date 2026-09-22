@@ -34,3 +34,20 @@ test("the extension declares no activation event of its own", () => {
   // VS Code 1.74, so an explicit list would only fall out of step.
   assert.deepEqual(manifest.activationEvents, []);
 });
+
+test("every keybinding names a declared command", () => {
+  const declared = new Set(
+    manifest.contributes.commands.map((c: { command: string }) => c.command),
+  );
+  for (const binding of manifest.contributes.keybindings ?? []) {
+    assert.ok(declared.has(binding.command), binding.command);
+  }
+});
+
+test("every setting the manifest declares is read by the extension", () => {
+  const properties = manifest.contributes.configuration?.properties ?? {};
+  for (const name of Object.keys(properties)) {
+    const key = name.replace(/^ish\./, "");
+    assert.match(source, new RegExp(`\\.get<[^>]+>\\("${key}"`), name);
+  }
+});
