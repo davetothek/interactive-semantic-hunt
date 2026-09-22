@@ -10,6 +10,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Search from VS Code. `contrib/vscode/` is an extension that drives the
+  resident `ish-mcp` server from a QuickPick, the same shape as the Neovim
+  client: live results as you type, a preview of the highlighted chunk, the
+  index refreshed when the picker opens with its progress in the status
+  bar, and Tab to finish a filter word. It ships on its own schedule.
 - Complete a filter word over MCP, with `complete_filter`. It answers with
   the completed query and the candidates in one call, from the registries
   the resident server already holds. `ish-complete` gave the same answer
