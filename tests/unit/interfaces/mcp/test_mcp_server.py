@@ -674,6 +674,25 @@ class TestAnEditBecomesSearchable:
         finally:
             quick.close()
 
+    def test_a_refresh_warms_the_session_it_serves(
+        self, quick: IshTools, project: Path, monkeypatch
+    ) -> None:
+        """The watch thread has nothing waiting on it, so it loads the model."""
+        from ish.interfaces.python.api import Ish
+
+        warmed: list[Path] = []
+        monkeypatch.setattr(Ish, "warm", lambda self: warmed.append(self.path))
+        quick.search({"query": "config", "path": str(project)})
+        quick.refresh({"path": str(project)})
+        try:
+            for _ in range(100):
+                if warmed:
+                    break
+                time.sleep(0.05)
+            assert warmed and warmed[0] == project.resolve()
+        finally:
+            quick.close()
+
     def test_a_failing_refresh_does_not_kill_the_watch(
         self, quick: IshTools, project: Path, monkeypatch, caplog
     ) -> None:

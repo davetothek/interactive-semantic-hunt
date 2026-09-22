@@ -231,6 +231,9 @@ class IshApp(App[Match | None]):
             self._all_chunks = list(self.session.chunks())
             if self._still_here():
                 self.call_from_thread(self._on_index_ready)
+            # Nothing waits on this thread now, so pay the model load
+            # here rather than on the first keystroke.
+            self.session.warm()
         except Exception as e:
             if self._still_here():
                 self.call_from_thread(self._on_index_error, str(e))

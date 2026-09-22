@@ -102,6 +102,9 @@ class FakeSession:
     def candidates(self, text: str) -> list[str]:
         return completion.candidates(text, Settings(), Path("."))
 
+    def warm(self) -> None:
+        return None
+
     def close(self) -> None:
         return None
 
@@ -855,6 +858,9 @@ class TestStaleWorkIsDropped:
             time.sleep(self.delay)
             return [Match(c, 0.5) for c in self._chunks[:limit]]
 
+        def warm(self) -> None:
+            return None
+
         def close(self) -> None:
             return None
 
@@ -941,6 +947,9 @@ class TestQuittingIsImmediate:
             time.sleep(30)
             return []
 
+        def warm(self) -> None:
+            return None
+
         def close(self) -> None:
             return None
 
@@ -1024,6 +1033,9 @@ class TestTypingBeforeTheIndexOpens:
         def search(self, query, limit=5):
             self.queries.append(query)
             return [Match(c, 0.9) for c in self._chunks if query in (c.symbol or "")]
+
+        def warm(self) -> None:
+            return None
 
         def close(self) -> None:
             return None
@@ -1428,6 +1440,9 @@ class TestPaintBeforeTheScan:
             source = self._held if stored else self._fresh
             return [Match(c, 0.9) for c in source if query in (c.symbol or "")]
 
+        def warm(self) -> None:
+            return None
+
         def close(self) -> None:
             return None
 
@@ -1529,3 +1544,31 @@ class TestPaintBeforeTheScan:
                 return list(session.queries)
 
         assert run(body()) == [("alpha", True), ("alpha", False)]
+
+
+class TestWarmUp:
+    """Verify the model is loaded once the index is open and nobody waits."""
+
+    def test_warm_follows_the_index(self) -> None:
+        order: list[str] = []
+
+        class Recording(FakeSession):
+            def index(self, on_progress=None) -> int:
+                order.append("index")
+                return super().index(on_progress)
+
+            def warm(self) -> None:
+                order.append("warm")
+
+        app = IshApp(Recording(), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    if "warm" in order:
+                        break
+
+        run(body())
+        assert order == ["index", "warm"]
