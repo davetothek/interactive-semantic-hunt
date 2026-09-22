@@ -11,6 +11,7 @@ import * as path from "node:path";
 
 import * as vscode from "vscode";
 
+import { isFilterWord, takeCandidate } from "./completion";
 import { DONE, render as renderProgress } from "./progress";
 import { iconFor, parseResults, type Result } from "./results";
 import { IshServer } from "./server";
@@ -23,9 +24,22 @@ const WATCH_LIMIT_MS = 10 * 60 * 1000;
 /** How long to leave the finished mark up before clearing it. */
 const DONE_MS = 1500;
 
-/** One list entry. A result opens a file. */
+/** One list entry. A result opens a file. A candidate finishes a word. */
 interface Item extends vscode.QuickPickItem {
   result?: Result;
+  candidate?: string;
+}
+
+/** The picker in view, for the Tab command to reach. */
+interface Picker {
+  pick: vscode.QuickPick<Item>;
+  complete: () => Promise<void>;
+}
+let active: Picker | undefined;
+
+/** Tell the keybinding whether Tab means completion right now. */
+function setPickerOpen(open: boolean): void {
+  void vscode.commands.executeCommand("setContext", "ish.pickerOpen", open);
 }
 
 interface Settings {
@@ -210,6 +224,23 @@ function toNotice(text: string): Item {
 }
 
 /**
+ * The choices a filter word could still become, as entries to take.
+ *
+ * A QuickPick has no hook for a keystroke inside its input, so the
+ * candidates sit at the head of the list where Enter takes one, and
+ * Tab, bound while the picker is open, grows the word the way a shell
+ * does. Both finish the same word through the same server call.
+ */
+function toCandidates(candidates: readonly string[], value: string): Item[] {
+  return candidates.map((candidate) => ({
+    label: `$(filter) ${takeCandidate(value, candidate).trimEnd()}`,
+    description: "finish the filter word",
+    alwaysShow: true,
+    candidate,
+  }));
+}
+
+/**
  * Show the highlighted chunk without leaving the picker.
  *
  * The index stores where a chunk is, never what it says, so the file
@@ -296,6 +327,30 @@ function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): v
   let generation = 0;
   let timer: NodeJS.Timeout | undefined;
 
+  const results = async (query: string): Promise<Item[]> => {
+    try {
+      const lines = await server.search(query, root, wanted.limit);
+      const items = parseResults(lines).map(toItem);
+      return items.length > 0 ? items : [toNotice(`No results for ${query}`)];
+    } catch (error) {
+      return [toNotice(error instanceof Error ? error.message : String(error))];
+    }
+  };
+
+  // Offer the choices while a filter word is under way. An ordinary
+  // word costs no extra call, because the keys are known here.
+  const candidates = async (value: string): Promise<Item[]> => {
+    if (!isFilterWord(value)) {
+      return [];
+    }
+    try {
+      const answer = await server.complete(value, root);
+      return toCandidates(answer.candidates, value);
+    } catch {
+      return [];
+    }
+  };
+
   const run = async (value: string): Promise<void> => {
     const mine = ++generation;
     const query = value.trim();
@@ -304,21 +359,32 @@ function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): v
       return;
     }
     pick.busy = true;
-    let items: Item[];
-    try {
-      const lines = await server.search(query, root, wanted.limit);
-      items = parseResults(lines).map(toItem);
-      if (items.length === 0) {
-        items = [toNotice(`No results for ${query}`)];
-      }
-    } catch (error) {
-      items = [toNotice(error instanceof Error ? error.message : String(error))];
-    }
+    const [offered, found] = await Promise.all([candidates(value), results(query)]);
     if (mine !== generation) {
       return;
     }
     pick.busy = false;
-    pick.items = items;
+    pick.items = [...offered, ...found];
+  };
+
+  // Tab. Grow the word as far as the choices agree, and search again
+  // from the grown query. The candidates then appear at the head.
+  const complete = async (): Promise<void> => {
+    const value = pick.value;
+    let answer;
+    try {
+      answer = await server.complete(value, root);
+    } catch {
+      return;
+    }
+    if (pick.value !== value) {
+      return; // typing went on, so the answer is for a word gone by
+    }
+    if (answer.text !== value) {
+      pick.value = answer.text;
+    }
+    clearTimeout(timer);
+    await run(answer.text);
   };
 
   pick.onDidChangeValue((value) => {
@@ -351,6 +417,13 @@ function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): v
   let accepted = false;
   pick.onDidAccept(() => {
     const chosen = pick.selectedItems[0];
+    if (chosen?.candidate !== undefined) {
+      // Take the word and stay open. The query is not done yet.
+      pick.value = takeCandidate(pick.value, chosen.candidate);
+      clearTimeout(timer);
+      void run(pick.value);
+      return;
+    }
     if (chosen?.result === undefined) {
       return;
     }
@@ -363,12 +436,18 @@ function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): v
     clearTimeout(timer);
     generation++;
     previewed++;
+    if (active?.pick === pick) {
+      active = undefined;
+      setPickerOpen(false);
+    }
     pick.dispose();
     if (!accepted) {
       void restore(before, shown);
     }
   });
 
+  active = { pick, complete };
+  setPickerOpen(true);
   pick.show();
   if (seed !== "") {
     pick.value = seed;
@@ -415,6 +494,9 @@ export function activate(context: vscode.ExtensionContext): void {
       "ish.refresh",
       withRoot((root) => watch.start(servers.for(root), root)),
     ),
+    vscode.commands.registerCommand("ish.complete", () => {
+      void active?.complete();
+    }),
     vscode.commands.registerCommand("ish.restart", () => {
       servers.dispose();
       output.appendLine("Stopped every server. The next search starts one.");

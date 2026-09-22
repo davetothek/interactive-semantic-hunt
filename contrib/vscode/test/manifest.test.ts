@@ -51,3 +51,13 @@ test("every setting the manifest declares is read by the extension", () => {
     assert.match(source, new RegExp(`\\.get<[^>]+>\\("${key}"`), name);
   }
 });
+
+test("a binding on a plain key is scoped to the open picker", () => {
+  // Tab means completion only while the picker is open. Bound without
+  // a clause it would take Tab from every editor.
+  for (const binding of manifest.contributes.keybindings ?? []) {
+    if (!/[+]/.test(binding.key)) {
+      assert.match(binding.when ?? "", /ish\.pickerOpen/, binding.key);
+    }
+  }
+});

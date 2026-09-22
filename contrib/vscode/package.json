@@ -47,6 +47,11 @@
         "category": "ish"
       },
       {
+        "command": "ish.complete",
+        "title": "Finish the filter word",
+        "category": "ish"
+      },
+      {
         "command": "ish.restart",
         "title": "Restart the server",
         "category": "ish"
@@ -57,6 +62,11 @@
         "command": "ish.search",
         "key": "ctrl+alt+i",
         "mac": "cmd+alt+i"
+      },
+      {
+        "command": "ish.complete",
+        "key": "tab",
+        "when": "inQuickOpen && ish.pickerOpen"
       }
     ],
     "configuration": {
@@ -93,6 +103,14 @@
           "description": "Show the highlighted chunk in the editor while the picker is open."
         }
       }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "ish.complete",
+          "when": "false"
+        }
+      ]
     }
   },
   "scripts": {
