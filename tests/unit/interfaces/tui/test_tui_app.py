@@ -88,7 +88,11 @@ class FakeSession:
         ]
         return [Match(c, 0.91) for c in chosen[:limit]]
 
-    def chunks(self, query: str = "") -> list[Chunk]:
+    def chunks(self, query: str = "", stored: bool = False) -> list[Chunk]:
+        # Nothing was stored before this run. The tests that need a
+        # stored index bring a session of their own.
+        if stored:
+            return []
         keep = build_result_filter(self.filters_of(query), HOLDS)
         return [c for c in self._chunks if keep is None or keep(c)]
 
@@ -843,10 +847,10 @@ class TestStaleWorkIsDropped:
         def filters_of(self, query=""):
             return Filters()
 
-        def chunks(self, query=""):
-            return self._chunks
+        def chunks(self, query="", stored=False):
+            return [] if stored else self._chunks
 
-        def search(self, query, limit=5):
+        def search(self, query, limit=5, stored=False):
             self.begun.append(query)
             time.sleep(self.delay)
             return [Match(c, 0.5) for c in self._chunks[:limit]]
@@ -929,10 +933,10 @@ class TestQuittingIsImmediate:
         def filters_of(self, query=""):
             return Filters()
 
-        def chunks(self, query=""):
+        def chunks(self, query="", stored=False):
             return []
 
-        def search(self, query, limit=5):
+        def search(self, query, limit=5, stored=False):
             self.entered.set()
             time.sleep(30)
             return []
@@ -1014,8 +1018,8 @@ class TestTypingBeforeTheIndexOpens:
         def filters_of(self, query=""):
             return Filters()
 
-        def chunks(self, query=""):
-            return self._chunks
+        def chunks(self, query="", stored=False):
+            return [] if stored else self._chunks
 
         def search(self, query, limit=5):
             self.queries.append(query)
@@ -1379,3 +1383,149 @@ class TestTabCompletes:
         value, _cursor, _focused, said = self._press("a l p h a tab")
         assert value == "alpha"
         assert said == []
+
+
+class TestPaintBeforeTheScan:
+    """Verify a stored index is on screen before the refresh runs.
+
+    Startup was 0.77 s, most of it the staleness scan across every
+    index under the path. The stored answers are good for almost every
+    query while that runs, so they are listed first and searched first,
+    and the refresh replaces them when it lands.
+    """
+
+    class Stored:
+        """A session whose index already holds chunks, and refreshes slowly."""
+
+        def __init__(self, delay: float = 1.5) -> None:
+            self.delay = delay
+            self.queries: list[tuple[str, bool]] = []
+            self._held = [chunk("alpha"), chunk("beta", line=5)]
+            self._fresh = [*self._held, chunk("gamma", line=9)]
+            self.refreshed = threading.Event()
+            # The stored read waits for this, so a test can type first.
+            self.gate = threading.Event()
+            self.gate.set()
+
+        def index(self, on_progress=None):
+            if on_progress is not None:
+                on_progress(Progress(EMBED, done=1, total=2))
+            time.sleep(self.delay)
+            self.refreshed.set()
+            return len(self._fresh)
+
+        def filters_of(self, query=""):
+            return Filters()
+
+        def chunks(self, query="", stored=False):
+            if stored:
+                self.gate.wait(timeout=5)
+                return self._held
+            return self._fresh
+
+        def search(self, query, limit=5, stored=False):
+            self.queries.append((query, stored))
+            source = self._held if stored else self._fresh
+            return [Match(c, 0.9) for c in source if query in (c.symbol or "")]
+
+        def close(self) -> None:
+            return None
+
+    def test_the_stored_listing_shows_before_the_refresh_ends(self) -> None:
+        session = self.Stored()
+        app = IshApp(session, Path("."), limit=5)
+
+        async def body():
+            async with app.run_test():
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    if app._current_results:
+                        break
+                assert app._index_ready is False
+                assert not session.refreshed.is_set()
+                return [c.symbol for c, _ in app._current_results]
+
+        assert run(body()) == ["alpha", "beta"]
+
+    def test_a_query_is_answered_from_the_stored_index(self) -> None:
+        session = self.Stored()
+        app = IshApp(session, Path("."), limit=5, debounce_ms=400)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                for _ in range(150):
+                    await asyncio.sleep(0.02)
+                    if session.queries:
+                        break
+                assert app._index_ready is False
+                return list(session.queries)
+
+        assert run(body()) == [("alpha", True)]
+
+    def test_a_query_typed_before_the_stored_index_lands_is_answered(self) -> None:
+        """The stored read may lose the race with the first keystroke."""
+        session = self.Stored()
+        session.gate.clear()
+        app = IshApp(session, Path("."), limit=5, debounce_ms=50)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                await asyncio.sleep(0.2)
+                assert session.queries == []
+                session.gate.set()
+                for _ in range(150):
+                    await asyncio.sleep(0.02)
+                    if session.queries:
+                        break
+                return list(session.queries)
+
+        assert run(body()) == [("alpha", True)]
+
+    def test_progress_goes_to_the_header_over_a_listing(self) -> None:
+        """The pane shows a chunk now, so the message must not cover it."""
+        app = IshApp(self.Stored(), Path("."), limit=5)
+
+        async def body():
+            async with app.run_test():
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    if app._current_results and "Embedded" in str(app.sub_title):
+                        break
+                return str(app.sub_title), preview_text(app)
+
+        header, pane = run(body())
+        assert "Embedded 1 of 2 chunks" in header
+        assert "Embedded" not in pane
+
+    def test_the_refresh_replaces_the_stored_listing(self) -> None:
+        session = self.Stored(delay=0.3)
+        app = IshApp(session, Path("."), limit=5)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await asyncio.sleep(0.1)
+                return [c.symbol for c, _ in app._current_results]
+
+        assert run(body()) == ["alpha", "beta", "gamma"]
+
+    def test_the_refresh_answers_the_query_again(self) -> None:
+        session = self.Stored(delay=1.0)
+        app = IshApp(session, Path("."), limit=5, debounce_ms=400)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                await _ready(app, pilot)
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    if len(session.queries) >= 2:
+                        break
+                return list(session.queries)
+
+        assert run(body()) == [("alpha", True), ("alpha", False)]

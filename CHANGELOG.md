@@ -56,6 +56,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   the command palette, which the picker turns off to keep `ctrl+p` for the
   previous result.
 
+### Changed
+
+- The picker paints before it scans. It lists what the index held last time
+  at once, answers a query from that while the staleness scan and the
+  refresh run behind the query field, and lists again when they land. The
+  refresh progress moves to the header, so it never covers a preview. On
+  23,215 chunks the scan was most of a 0.77 s startup, spent before anything
+  was on screen.
+
 ### Fixed
 
 - An `exclude` pattern rejected each file after the walk had reached it,

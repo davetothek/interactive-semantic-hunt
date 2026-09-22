@@ -170,6 +170,7 @@ class Ish:
         under: str = "",
         type: Sequence[str] = (),
         hybrid: bool | None = None,
+        stored: bool = False,
     ) -> list[Match]:
         """Return the best matching chunks, most similar first.
 
@@ -177,6 +178,10 @@ class Ish:
         from the arguments, so a line typed by a person works unchanged.
         Raise ``ValueError`` when nothing is left to search for once the
         filter words are taken out, or when a filter is malformed.
+
+        With *stored*, answer from what the index holds without bringing
+        it up to date first. A picker asks that way while its refresh
+        runs behind the query field.
         """
         text, _typed = parse_query(query)
         if not text:
@@ -186,7 +191,8 @@ class Ish:
             self.filters_of(query, lang=lang, under=under, type=type),
             self._words,
         )
-        self._ensure_indexed()
+        if not stored:
+            self._ensure_indexed()
         return list(
             self._use_case.search(
                 text,
@@ -203,18 +209,21 @@ class Ish:
         lang: Sequence[str] = (),
         under: str = "",
         type: Sequence[str] = (),
+        stored: bool = False,
     ) -> list[Chunk]:
         """Return every indexed chunk the filters allow, unranked.
 
         Read filter words out of *query* the way `search()` does, so a
-        query line with no words left lists what it allows.
+        query line with no words left lists what it allows. With
+        *stored*, list what the index holds without refreshing it.
         """
         keep = bootstrap.build_result_filter(
             self.settings,
             self.filters_of(query, lang=lang, under=under, type=type),
             self._words,
         )
-        self._ensure_indexed()
+        if not stored:
+            self._ensure_indexed()
         return self._use_case.all_chunks(keep)
 
     def scan(

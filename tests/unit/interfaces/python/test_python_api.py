@@ -209,3 +209,39 @@ class TestCompleting:
 
     def test_one_answer_offers_no_candidates(self, project: Path) -> None:
         assert _ish(project).candidates("type:d") == []
+
+
+class TestReadingWhatIsStored:
+    """Verify a stored read never brings the index up to date.
+
+    A picker lists and searches what the index held before its refresh
+    runs, so the read must cost no scan and no embedding.
+    """
+
+    def test_a_stored_listing_of_a_new_tree_is_empty(self, project: Path) -> None:
+        ish = _ish(project)
+        try:
+            assert ish.chunks(stored=True) == []
+            assert ish._indexed is False
+        finally:
+            ish.close()
+
+    def test_a_stored_search_does_not_index(self, project: Path, offline) -> None:
+        ish = _ish(project)
+        try:
+            assert ish.search("parse", stored=True) == []
+            assert ish._indexed is False
+        finally:
+            ish.close()
+
+    def test_a_stored_read_sees_what_an_earlier_refresh_wrote(
+        self, project: Path, offline
+    ) -> None:
+        ish = _ish(project)
+        try:
+            ish.index()
+            held = ish.chunks(stored=True)
+            assert held == ish.chunks()
+            assert ish.search("parse", stored=True) == ish.search("parse")
+        finally:
+            ish.close()
