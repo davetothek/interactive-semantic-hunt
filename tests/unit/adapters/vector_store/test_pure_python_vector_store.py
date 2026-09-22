@@ -63,6 +63,11 @@ class TestIndexMaintenance:
         assert store.chunks() == []
         assert store.indexed_paths() == []
 
+    def test_the_chunking_stamp_round_trips(self, store: PurePythonVectorStore) -> None:
+        assert store.chunking() == ""
+        store.set_chunking("1:8000:1000")
+        assert store.chunking() == "1:8000:1000"
+
     def test_a_file_with_no_chunks_is_listed_as_read(
         self, store: PurePythonVectorStore
     ) -> None:

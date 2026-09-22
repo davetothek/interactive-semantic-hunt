@@ -276,6 +276,11 @@ ish "warm" project/firmware    # and another
 ish "how is exposure set" project    # searches both
 ```
 
+When a release changes how files divide into chunks, the next refresh
+reads every file again under the new division and embeds only text it has
+never seen. Parsing a 10,000-file tree costs seconds. Embedding it costs
+hours, and a vector is keyed by its text, so none of that is paid twice.
+
 Searching a parent never rewrites an index below it. Pass `--no-federate` to use
 only the index of the exact path.
 

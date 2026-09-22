@@ -199,6 +199,24 @@ class TestSearch:
         assert store.chunks()[0].symbol is None
 
 
+class TestChunkingStamp:
+    """Verify the stamp survives reopening and starts empty."""
+
+    def test_starts_empty(self, store: SqliteVectorStore) -> None:
+        assert store.chunking() == ""
+
+    def test_round_trips_and_survives_reopening(self, db_path: Path) -> None:
+        store = SqliteVectorStore(db_path, model_id="m")
+        store.set_chunking("1:8000:1000")
+        store.set_chunking("2:8000:1000")
+        store.close()
+        again = SqliteVectorStore(db_path, model_id="m")
+        try:
+            assert again.chunking() == "2:8000:1000"
+        finally:
+            again.close()
+
+
 class TestIndexedPaths:
     """Verify a file read and found empty is still reported as read."""
 
