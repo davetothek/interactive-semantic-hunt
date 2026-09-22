@@ -196,6 +196,16 @@ typing stays smooth however long a search takes.
 starts on the first search and is reused after that, which cuts a keystroke
 from about 500 ms to about 150 ms. Copy it beside the picker.
 
+## Use from VS Code
+
+`contrib/vscode/` is an extension that drives the same `ish-mcp` server
+from a QuickPick. Press `Ctrl+Alt+I` and type; the highlighted chunk shows
+in the editor beside the picker, Enter opens it with its lines selected, and
+Tab finishes a filter word. While the index refreshes, the status bar shows
+`ish ███░░░░░ 38%`. It needs `ish-mcp` on PATH, like the Neovim client, and
+its README says how to build, install, and release it. It ships on its own
+schedule, apart from the PyPI package.
+
 ## Use from Python
 
 ```python
