@@ -24,6 +24,7 @@ interface Settings {
   args: string[];
   limit: number;
   debounceMs: number;
+  preview: boolean;
 }
 
 function settings(): Settings {
@@ -33,6 +34,7 @@ function settings(): Settings {
     args: read.get<string[]>("args", []),
     limit: read.get<number>("limit", 40),
     debounceMs: read.get<number>("debounceMs", 120),
+    preview: read.get<boolean>("preview", true),
   };
 }
 
@@ -108,6 +110,63 @@ function toNotice(text: string): Item {
   return { label: `$(info) ${text}`, alwaysShow: true };
 }
 
+/**
+ * Show the highlighted chunk without leaving the picker.
+ *
+ * The index stores where a chunk is, never what it says, so the file
+ * is read fresh, as the TUI's preview pane reads it. A preview editor
+ * is reused by the next one, and the focus stays in the query field.
+ */
+async function preview(root: string, result: Result): Promise<void> {
+  const { uri, range } = locate(root, result);
+  const editor = await vscode.window.showTextDocument(uri, {
+    selection: range,
+    preview: true,
+    preserveFocus: true,
+    viewColumn: vscode.ViewColumn.Active,
+  });
+  editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+}
+
+/** Where the person was before the picker opened, to go back to. */
+interface Place {
+  document: vscode.TextDocument;
+  viewColumn: vscode.ViewColumn | undefined;
+  selection: vscode.Selection;
+}
+
+function placeOf(editor: vscode.TextEditor | undefined): Place | undefined {
+  if (editor === undefined) {
+    return undefined;
+  }
+  return {
+    document: editor.document,
+    viewColumn: editor.viewColumn,
+    selection: editor.selection,
+  };
+}
+
+/**
+ * Put the editor back the way the picker found it.
+ *
+ * A cancelled picker must not leave the last previewed file in view.
+ * When nothing was open before, close the preview it opened instead.
+ */
+async function restore(place: Place | undefined, shown: boolean): Promise<void> {
+  if (!shown) {
+    return;
+  }
+  if (place === undefined) {
+    await vscode.commands.executeCommand("workbench.action.closeActiveEditor");
+    return;
+  }
+  await vscode.window.showTextDocument(place.document, {
+    viewColumn: place.viewColumn,
+    selection: place.selection,
+    preserveFocus: false,
+  });
+}
+
 /** Open the chosen chunk for editing, with its lines selected. */
 async function open(root: string, result: Result): Promise<void> {
   const { uri, range } = locate(root, result);
@@ -122,6 +181,7 @@ async function open(root: string, result: Result): Promise<void> {
 function search(servers: Servers, root: string, seed = ""): void {
   const wanted = settings();
   const server = servers.for(root);
+  const before = placeOf(vscode.window.activeTextEditor);
   const pick = vscode.window.createQuickPick<Item>();
   pick.title = `ish: ${path.basename(root)}`;
   pick.placeholder = "Search by meaning, or narrow with lang:cpp type:doc under:/src/";
@@ -165,11 +225,33 @@ function search(servers: Servers, root: string, seed = ""): void {
     timer = setTimeout(() => void run(value), wanted.debounceMs);
   });
 
+  // Follow the highlight with a preview. Each move supersedes the one
+  // before, so a stale preview never lands on top of a newer one.
+  let previewed = 0;
+  let shown = false;
+  pick.onDidChangeActive((active) => {
+    const result = active[0]?.result;
+    if (!wanted.preview || result === undefined) {
+      return;
+    }
+    const mine = ++previewed;
+    void preview(root, result).then(
+      () => {
+        if (mine === previewed) {
+          shown = true;
+        }
+      },
+      () => undefined,
+    );
+  });
+
+  let accepted = false;
   pick.onDidAccept(() => {
     const chosen = pick.selectedItems[0];
     if (chosen?.result === undefined) {
       return;
     }
+    accepted = true;
     pick.hide();
     void open(root, chosen.result);
   });
@@ -177,7 +259,11 @@ function search(servers: Servers, root: string, seed = ""): void {
   pick.onDidHide(() => {
     clearTimeout(timer);
     generation++;
+    previewed++;
     pick.dispose();
+    if (!accepted) {
+      void restore(before, shown);
+    }
   });
 
   pick.show();
