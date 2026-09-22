@@ -10,6 +10,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Guard against a machine-generated file. A file that yields more than
+  `max_chunks` chunks, 1000 by default, is indexed as one chunk under its
+  own name, and the run says so once with the count. One 26.3 MB register
+  map produced 32,768 chunks, hours of embedding for text nobody searches
+  by meaning. Set `--max-chunks N` for a tree whose hand-written files are
+  larger.
 - Index one tree that git ignores while git still filters the rest, with
   `--unignore REGEX` or the `unignore` key. A pattern is anchored at the
   tree root, like `include`. `git = false` was all or nothing: reaching one

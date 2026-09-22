@@ -170,6 +170,15 @@ class Settings:
             metavar="REGEX",
         ),
     )
+    max_chunks: int = field(
+        default=1000,
+        metadata=_opt(
+            "Index a file that yields more chunks than this as one chunk. "
+            "A file that yields thousands is generated.",
+            type=int,
+            metavar="N",
+        ),
+    )
     languages: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

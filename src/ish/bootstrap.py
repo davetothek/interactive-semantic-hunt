@@ -95,11 +95,15 @@ def build_parsers(settings: Settings) -> list[Parser]:
             f"Unknown language(s): {', '.join(unknown)}. Valid languages: {valid}"
         )
 
-    from ish.adapters.parser._limits import SizeLimited
+    from ish.adapters.parser._limits import CountLimited, SizeLimited
 
     # Wrap here, so every language and every plugin keeps its chunks
-    # inside what the embedding model can read.
-    return [SizeLimited(available[name].build()) for name in wanted]
+    # inside what the embedding model can read, and a generated file
+    # that yields thousands of them costs one.
+    return [
+        CountLimited(SizeLimited(available[name].build()), limit=settings.max_chunks)
+        for name in wanted
+    ]
 
 
 def build_embedder(settings: Settings) -> Embedder:
