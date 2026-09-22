@@ -10,7 +10,7 @@ class StubBackend:
     """Stand in for a backend in the registry, without a model or a daemon."""
 
     @classmethod
-    def from_option(cls, model: str):
+    def from_option(cls, model: str, context_tokens=None):
         from unittest.mock import MagicMock
 
         return MagicMock(model_name=f"stub:{model}")

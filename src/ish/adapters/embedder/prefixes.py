@@ -55,10 +55,14 @@ class PrefixingEmbedder:
         self._query_cache: OrderedDict[str, Sequence[float]] = OrderedDict()
 
     @classmethod
-    def from_option(cls, model: str) -> "PrefixingEmbedder":
+    def from_option(
+        cls, model: str, context_tokens: int | None = None
+    ) -> "PrefixingEmbedder":
         """Build the backend the ``model`` option names. Empty means the default.
 
-        Each backend reads the option its own way, so each defines this.
+        *context_tokens* is the window the model reads of each text, or
+        None to leave the backend's own default. Each backend reads the
+        options its own way, so each defines this.
         """
         raise NotImplementedError
 

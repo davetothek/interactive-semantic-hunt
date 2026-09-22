@@ -6,11 +6,14 @@ missing module into a line that names the extra to install.
 """
 
 import contextlib
+import logging
 import os
 from collections.abc import Sequence
 
 from ish.adapters.embedder.hub import quiet_hub
 from ish.adapters.embedder.prefixes import PrefixingEmbedder
+
+log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "all-MiniLM-L6-v2"
 
@@ -34,8 +37,21 @@ class SentenceTransformerEmbedder(PrefixingEmbedder):
             self._model = SentenceTransformer(model_name)
 
     @classmethod
-    def from_option(cls, model: str) -> "SentenceTransformerEmbedder":
-        """Build the backend the ``model`` option names. Empty means the default."""
+    def from_option(
+        cls, model: str, context_tokens: int | None = None
+    ) -> "SentenceTransformerEmbedder":
+        """Build the backend the ``model`` option names. Empty means the default.
+
+        The window belongs to the model card here, so a window named in
+        the settings is reported and left. The chunk cap still follows
+        it, which is the half of the option this backend can honor.
+        """
+        if context_tokens is not None:
+            log.warning(
+                "The st backend reads the window from the model, so "
+                "context_tokens=%d sets only the chunk cap.",
+                context_tokens,
+            )
         return cls(model) if model else cls()
 
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:

@@ -22,10 +22,21 @@ from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
-# Roughly the text a 2048-token context holds, which is what Ollama
-# serves an embedding model by default. A chunk longer than this is
-# read only as far as the window reaches.
+# The window Ollama serves an embedding model by default, in tokens.
+DEFAULT_CONTEXT_TOKENS = 2_048
+
+# Roughly the text that window holds. A chunk longer than this is read
+# only as far as the window reaches.
 MAX_CHUNK_CHARS = 8_000
+
+
+def chars_for(context_tokens: int) -> int:
+    """Return the chunk cap for a model that reads *context_tokens*.
+
+    Scale the measured cap for the default window, so a model given
+    8192 tokens reads about four times the text of one given 2048.
+    """
+    return round(context_tokens * MAX_CHUNK_CHARS / DEFAULT_CONTEXT_TOKENS)
 
 
 class SizeLimited:

@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.parser._limits import MAX_CHUNK_CHARS, SizeLimited
+from ish.adapters.parser._limits import (
+    DEFAULT_CONTEXT_TOKENS,
+    MAX_CHUNK_CHARS,
+    SizeLimited,
+    chars_for,
+)
 from ish.domain.chunk import Chunk
 
 
@@ -106,3 +111,18 @@ class TestTheWindow:
     def test_nothing_survives_the_wrapper_oversized(self, size: int) -> None:
         pieces = parse([chunk("ab\n" * (size // 3))], limit=MAX_CHUNK_CHARS)
         assert all(len(p.text) <= MAX_CHUNK_CHARS for p in pieces)
+
+
+class TestTheWindowScalesTheCap:
+    """Verify a wider window reads more of each chunk."""
+
+    def test_the_default_window_is_the_measured_cap(self) -> None:
+        assert chars_for(DEFAULT_CONTEXT_TOKENS) == MAX_CHUNK_CHARS
+
+    def test_nomic_at_its_full_window_reads_four_times_as_much(self) -> None:
+        assert chars_for(8192) == 32_000
+
+    def test_the_settings_default_is_the_measured_window(self) -> None:
+        from ish.settings import Settings
+
+        assert Settings().context_tokens == DEFAULT_CONTEXT_TOKENS
