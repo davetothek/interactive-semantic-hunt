@@ -196,6 +196,10 @@ in, so nvim draws one over the last screen row — the statusline itself.
 The picker never blocks the editor: results are written as they arrive, so
 typing stays smooth however long a search takes.
 
+Saving a buffer tells the server to refresh, once a search has started it,
+so an edit is searchable moments after the save. The server would otherwise
+notice on its next poll, up to `refresh_seconds` later.
+
 `contrib/nvim/ish_server.lua` keeps one `ish-mcp` process per session. It
 starts on the first search and is reused after that, which cuts a keystroke
 from about 500 ms to about 150 ms. Copy it beside the picker.
@@ -243,6 +247,11 @@ It offers `search_code`, `list_chunks`, `index_status`, `refresh_index`, and
 `complete_filter`. The server stays resident, so a query costs about 58 ms
 rather than a process start, and a filter word completes from the registries
 the server already holds rather than through a fresh `ish-complete`.
+
+The server re-checks a tree every `refresh_seconds`, 30 by default. An
+editor knows the moment a file is saved, so the Neovim and VS Code clients
+call `refresh_index` then, and an edit is searchable moments later. A client
+of your own should do the same.
 
 A call may narrow one search with `lang`, `under`, `type`, and `limit`, or
 write the same filters into the query text. It cannot change

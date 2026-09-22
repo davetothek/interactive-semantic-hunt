@@ -20,3 +20,5 @@ from. The extension talks to whichever `ish-mcp` it finds on PATH.
   the list with Enter.
 - `ish: Search below this file's directory`, `ish: Refresh the index`,
   and `ish: Restart the server`.
+- Refresh the index when a file is saved in a folder this window has
+  searched, so an edit is searchable moments later.
