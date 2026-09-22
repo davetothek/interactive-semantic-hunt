@@ -1,0 +1,13 @@
+# What the .vsix leaves out. The package carries the compiled code, the
+# manifest, and the prose a reader of the listing needs, and nothing a
+# reader of the source needs.
+.gitignore
+.vscodeignore
+node_modules/**
+src/**
+test/**
+out/test/**
+out/**/*.map
+tsconfig.json
+package-lock.json
+*.vsix
