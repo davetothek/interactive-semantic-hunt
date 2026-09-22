@@ -10,6 +10,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Complete a filter word over MCP, with `complete_filter`. It answers with
+  the completed query and the candidates in one call, from the registries
+  the resident server already holds. `ish-complete` gave the same answer
+  through a fresh process, which cost about 107 ms a Tab, nearly all of it
+  interpreter start.
 - Name the config file to read, with `--config PATH`, `-c`, or `ISH_CONFIG`.
   The named file stands in place of the files ish looks for by walking up
   from the tree. The user file below it still applies, so a machine-wide
