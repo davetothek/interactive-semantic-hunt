@@ -74,8 +74,9 @@ type:test,doc retry backoff            the tests and what they document
 
 Press Tab to finish a filter word. `ty` becomes `type:`, `lang:cp` becomes
 `lang:cpp`, and `under:/s` becomes `under:/src/`; a word with several answers
-grows as far as they agree and names the rest. `ish-complete` does the work, so
-any picker can call it.
+grows as far as they agree and names the rest. `ish-complete` does the work
+from the command line, and `complete_filter` does it over MCP, so any picker
+can call whichever it has.
 
 `lang:`, `under:`, and `type:` work in the query line of every interface —
 the command line, the picker, Neovim, and MCP. The words are taken out
@@ -219,8 +220,10 @@ can query the index directly. Add it to a project with `.mcp.json`:
 }
 ```
 
-It offers `search_code`, `list_chunks`, `index_status`, and `refresh_index`. The server stays
-resident, so a query costs about 58 ms rather than a process start.
+It offers `search_code`, `list_chunks`, `index_status`, `refresh_index`, and
+`complete_filter`. The server stays resident, so a query costs about 58 ms
+rather than a process start, and a filter word completes from the registries
+the server already holds rather than through a fresh `ish-complete`.
 
 A call may narrow one search with `lang`, `under`, `type`, and `limit`, or
 write the same filters into the query text. It cannot change

@@ -5,6 +5,7 @@ backend and the persistent index are opened once and reused by every
 call, so a query costs a search rather than a startup.
 """
 
+import json
 import logging
 import sys
 import threading
@@ -15,6 +16,7 @@ from typing import Any
 from ish import bootstrap
 from ish.application.categories import TYPES
 from ish.application.progress import Progress
+from ish.interfaces.completion import candidates, complete
 from ish.interfaces.format import render
 from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
@@ -255,6 +257,25 @@ class IshTools:
             f"  file     : {bootstrap.catalog(self._settings).path_for(root)}"
         )
 
+    def complete_filter(self, arguments: Mapping[str, Any]) -> str:
+        """Finish the filter word a query ends in, for an editor's picker.
+
+        Return a JSON object. ``text`` is the query with its last word
+        grown as far as the choices agree, unchanged when nothing fits.
+        ``candidates`` names the choices when the word could still
+        become several things, and is empty otherwise. An editor reads
+        both in one call, so a Tab costs a round trip and no process
+        start.
+        """
+        query = str(arguments.get("query") or "")
+        root = self._resolve(arguments.get("path"))
+        return json.dumps(
+            {
+                "text": complete(query, self._settings, root),
+                "candidates": candidates(query, self._settings, root),
+            }
+        )
+
     def tools(self) -> list[Tool]:
         """Describe every tool this server offers."""
         return [
@@ -328,6 +349,29 @@ class IshTools:
                     "properties": {"path": _PATH_PROPERTY},
                 },
                 handler=self.refresh,
+            ),
+            Tool(
+                name="complete_filter",
+                description=(
+                    "Finish the filter word a query ends in, the way a shell "
+                    "finishes a path: ty becomes type:, lang:cp becomes "
+                    "lang:cpp, and under:/s becomes the subtree that starts "
+                    "with s. Returns JSON with the completed text and, when "
+                    "several answers fit, the candidates to choose between. "
+                    "For an editor's picker, which calls it on Tab."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The query as typed so far.",
+                        },
+                        "path": _PATH_PROPERTY,
+                    },
+                    "required": ["query"],
+                },
+                handler=self.complete_filter,
             ),
         ]
 
