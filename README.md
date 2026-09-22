@@ -134,7 +134,7 @@ nvim $(ish -i src/)
 | `--color {auto,always,never}` | Control log color |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
-| `--include REGEX ...` | Index only paths matching these patterns |
+| `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
 | `--exclude REGEX ...` | Never index paths matching these patterns |
 | `--git`, `--no-git` | Skip files git ignores (default: on) |
 | `--lang LANG ...` | Show results only from these languages |
@@ -288,8 +288,12 @@ ignore = [".git", ".venv", "build", "node_modules"]
 exclude = ["/vendor/", "_pb2\\.py$", "(_test|_spec)\\.py$"]
 ```
 
-`include` and `exclude` take regular expressions rather than globs, so `/vendor/`
-matches at any depth and alternation works. `exclude` wins over `include`.
+`include` and `exclude` take regular expressions rather than globs, so
+alternation works. `exclude` is searched against the whole path, so `/vendor/`
+matches at any depth. `include` is anchored at the root of the tree, so
+`30\.Firmware/` indexes that directory and not `99.Artifacts/30.Firmware/`.
+Write `(?:.*/)?30\.Firmware/` to take the name at any depth. `exclude` wins
+over `include`.
 
 `--git` is on by default, so anything a `.gitignore` covers stays out of the
 index. Pass `--no-git` to index it anyway.

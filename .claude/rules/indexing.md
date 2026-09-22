@@ -12,9 +12,11 @@ paths:
 
 - Every rule about what to index lives in `Scan.accepts()` and nowhere else.
   Discovery and pruning both ask that one predicate.
-- `include` and `exclude` are regular expressions searched against the POSIX
-  path. `exclude` beats `include`. A malformed pattern names its option and
-  stops the run.
+- `include` and `exclude` are regular expressions over the POSIX path.
+  `exclude` is searched against the whole path. `include` is matched from
+  the start of the path written from the tree root, so it names a place and
+  not a segment. `exclude` beats `include`. A malformed pattern names its
+  option and stops the run.
 - Ask git what it ignores through the `vcs` adapter. Do not reimplement
   ignore rules. Outside a repository, or without git, ignore nothing.
 - A query-scope filter (`lang`, `under`, `type`) never reaches

@@ -47,6 +47,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- An `include` pattern matched a path segment at any depth, so a whitelist
+  of one directory also admitted every copy of it under a worktree or an
+  artifact tree. On one firmware tree that was 168,763 files for a corpus
+  of a tenth that. An `include` pattern is now anchored at the root of the
+  tree it indexes. Write `(?:.*/)?name/` to take a name at any depth.
 - A call against an index that another process was writing waited without a
   limit. One index run held a status call for 1800 s, which returned no
   error and no progress. A store now waits two seconds for the lock and then

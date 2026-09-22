@@ -374,7 +374,7 @@ class TestPathFilters:
         return tmp_path
 
     def _names(self, tree: Path, **kwargs) -> list[str]:
-        scanner = Scan(parsers=[FakeParser()], **kwargs)
+        scanner = Scan(parsers=[FakeParser()], root=tree, **kwargs)
         return sorted(p.name for p in scanner.discover(tree))
 
     def test_no_filter_takes_everything(self, tree: Path) -> None:
@@ -399,15 +399,15 @@ class TestPathFilters:
         assert found == ["api_pb2.py", "app.py"]
 
     def test_include_restricts_to_matches(self, tree: Path) -> None:
-        assert self._names(tree, include=[r"/gen/"]) == ["api_pb2.py"]
+        assert self._names(tree, include=[r"gen/"]) == ["api_pb2.py"]
 
     def test_include_accepts_any_of_the_patterns(self, tree: Path) -> None:
-        found = self._names(tree, include=[r"/gen/", r"app\.py$"])
+        found = self._names(tree, include=[r"gen/", r"app\.py$"])
         assert found == ["api_pb2.py", "app.py"]
 
     def test_exclude_beats_include(self, tree: Path) -> None:
         """The safer rule wins, so a mistake keeps a file out."""
-        found = self._names(tree, include=[r"\.py$"], exclude=["/vendor/"])
+        found = self._names(tree, include=[r".*\.py$"], exclude=["/vendor/"])
         assert "third.py" not in found
 
     def test_regex_alternation(self, tree: Path) -> None:
@@ -421,7 +421,7 @@ class TestPathFilters:
 
     def test_accepts_agrees_with_discovery(self, tree: Path) -> None:
         """Pruning relies on this, so the two must never disagree."""
-        scanner = Scan(parsers=[FakeParser()], exclude=["/vendor/"])
+        scanner = Scan(parsers=[FakeParser()], exclude=["/vendor/"], root=tree)
         found = set(scanner.discover(tree))
         for path in tree.rglob("*.py"):
             assert scanner.accepts(path) == (path in found), path
@@ -433,6 +433,67 @@ class TestPathFilters:
     def test_invalid_include_regex(self) -> None:
         with pytest.raises(ValueError, match="'include'"):
             Scan(parsers=[FakeParser()], include=["*bad"])
+
+
+class TestIncludeIsAnchoredAtTheRoot:
+    """Verify an include pattern names a place in the tree, not a segment.
+
+    One firmware tree kept fourteen worktrees under `.claude/worktrees`,
+    each with its own `30.Firmware`, and `99.Artifacts/30.Firmware`
+    beside them. A pattern matched at any depth admitted 168,763 files,
+    about ten times the corpus it named.
+    """
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        for parent in ("", "99.Artifacts", ".claude/worktrees/wt-1"):
+            firmware = tmp_path / parent / "30.Firmware"
+            firmware.mkdir(parents=True)
+            (firmware / "main.py").write_text("pass\n")
+        return tmp_path
+
+    def _found(self, tree: Path, pattern: str) -> list[str]:
+        scanner = Scan(parsers=[FakeParser()], include=[pattern], root=tree)
+        return sorted(str(p.relative_to(tree)) for p in scanner.discover(tree))
+
+    def test_a_directory_name_matches_only_at_the_root(self, tree: Path) -> None:
+        assert self._found(tree, r"30\.Firmware(?:/|$)") == ["30.Firmware/main.py"]
+
+    def test_the_old_segment_pattern_also_matches_only_at_the_root(
+        self, tree: Path
+    ) -> None:
+        """`(?:^|/)` still matches, through the `^` branch, and only there."""
+        assert self._found(tree, r"(?:^|/)30\.Firmware(?:/|$)") == [
+            "30.Firmware/main.py"
+        ]
+
+    def test_any_depth_is_asked_for_explicitly(self, tree: Path) -> None:
+        found = self._found(tree, r"(?:.*/)?30\.Firmware/")
+        assert found == [
+            ".claude/worktrees/wt-1/30.Firmware/main.py",
+            "30.Firmware/main.py",
+            "99.Artifacts/30.Firmware/main.py",
+        ]
+
+    def test_pruning_asks_the_same_question(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], include=[r"30\.Firmware/"], root=tree)
+        assert scanner.accepts(tree / "30.Firmware" / "main.py") is True
+        assert (
+            scanner.accepts(tree / "99.Artifacts" / "30.Firmware" / "main.py") is False
+        )
+
+    def test_a_path_outside_the_root_is_matched_whole(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], include=[r".*/other/"], root=tree)
+        assert scanner.accepts(Path("/elsewhere/other/x.py")) is True
+
+    def test_a_file_root_is_matched_by_its_name(self, tree: Path) -> None:
+        one = tree / "30.Firmware" / "main.py"
+        scanner = Scan(parsers=[FakeParser()], include=[r"main\.py"], root=one)
+        assert scanner.discover(one) == [one]
+
+    def test_without_a_root_the_whole_path_is_matched(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], include=[r".*/30\.Firmware/"])
+        assert scanner.accepts(tree / "99.Artifacts" / "30.Firmware" / "main.py")
 
 
 class TestFilteredPruning:
