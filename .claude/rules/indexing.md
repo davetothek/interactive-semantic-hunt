@@ -22,6 +22,8 @@ paths:
   name, `exclude` by path. Both prune.
 - Ask git what it ignores through the `vcs` adapter. Do not reimplement
   ignore rules. Outside a repository, or without git, ignore nothing.
+  `unignore` lets a path git ignores in anyway, anchored like `include`.
+  `exclude` still beats it.
 - A query-scope filter (`lang`, `under`, `type`) never reaches
   `Scan.accepts()`. It would make the next run prune what it excluded.
 

@@ -547,6 +547,67 @@ class TestExcludePrunesTheWalk:
         assert [p.name for p in scanner.discover(tree)] == ["app.py"]
 
 
+class TestUnignoreKeepsOneIgnoredTree:
+    """Verify one ignored tree can join the index while git filters the rest.
+
+    A repository kept an SVN checkout at `vendor_spec`, hidden by its
+    `.gitignore`. Turning git off to reach it also reached a 386 MB
+    virtual environment, 903 MB of build output, and a 621 MB cache,
+    each found one crash at a time.
+    """
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        for name in ("vendor_spec", ".venv2", "build"):
+            (tmp_path / name).mkdir()
+            (tmp_path / name / "mod.py").write_text("pass\n")
+        (tmp_path / "app.py").write_text("pass\n")
+        return tmp_path
+
+    @staticmethod
+    def _git_ignores(path: Path) -> bool:
+        """Stand in for git: everything but the tracked file is ignored."""
+        return path.name != "app.py"
+
+    def _found(self, tree: Path, **kwargs) -> list[str]:
+        scanner = Scan(
+            parsers=[FakeParser()], root=tree, ignored_by=self._git_ignores, **kwargs
+        )
+        return sorted(str(p.relative_to(tree)) for p in scanner.discover(tree))
+
+    def test_git_alone_keeps_every_ignored_tree_out(self, tree: Path) -> None:
+        assert self._found(tree) == ["app.py"]
+
+    def test_the_named_tree_joins_and_the_rest_stay_out(self, tree: Path) -> None:
+        found = self._found(tree, unignore=[r"vendor_spec/"])
+        assert found == ["vendor_spec/mod.py", "app.py"]
+
+    def test_the_pattern_is_anchored_at_the_root(self, tree: Path) -> None:
+        nested = tree / "build" / "vendor_spec"
+        nested.mkdir()
+        (nested / "copy.py").write_text("pass\n")
+        found = self._found(tree, unignore=[r"vendor_spec/"])
+        assert "build/vendor_spec/copy.py" not in found
+
+    def test_exclude_still_beats_it(self, tree: Path) -> None:
+        found = self._found(tree, unignore=[r"vendor_spec/"], exclude=[r"mod\.py$"])
+        assert found == ["app.py"]
+
+    def test_pruning_asks_the_same_question(self, tree: Path) -> None:
+        scanner = Scan(
+            parsers=[FakeParser()],
+            root=tree,
+            ignored_by=self._git_ignores,
+            unignore=[r"vendor_spec/"],
+        )
+        assert scanner.accepts(tree / "vendor_spec" / "mod.py") is True
+        assert scanner.accepts(tree / "build" / "mod.py") is False
+
+    def test_a_malformed_pattern_names_the_option(self) -> None:
+        with pytest.raises(ValueError, match="'unignore'"):
+            Scan(parsers=[FakeParser()], unignore=["(open"])
+
+
 class TestFilteredPruning:
     """Verify that a newly excluded file leaves the index."""
 
