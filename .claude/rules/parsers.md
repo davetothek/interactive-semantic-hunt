@@ -27,7 +27,10 @@ The `add-language` skill walks through it.
   `build_parsers()`, so a plugin gets the cap without asking. `CountLimited`
   wraps outside it and reads a file of more than `max_chunks` chunks as one.
 - `MAX_CHUNK_CHARS` is a constant, not a setting. It describes what the
-  embedding model can read.
+  embedding model reads at the default window. `chars_for()` scales it to
+  the `context_tokens` setting, and `build_parsers()` hands the result to
+  the wrappers. A parser that divides by size itself exposes `limit`, which
+  `build_parsers()` sets the same way.
 - Import a grammar or a library inside the method that needs it. Listing the
   registry must cost nothing.
 - Raise `ParseError` when nothing parses. A parser that recognizes part of a

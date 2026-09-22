@@ -170,6 +170,15 @@ class Settings:
             metavar="REGEX",
         ),
     )
+    context_tokens: int = field(
+        default=2048,
+        metadata=_opt(
+            "How many tokens the embedding model reads of each chunk. The chunk "
+            "cap follows from it. Changing it embeds every chunk again.",
+            type=int,
+            metavar="N",
+        ),
+    )
     max_chunks: int = field(
         default=1000,
         metadata=_opt(

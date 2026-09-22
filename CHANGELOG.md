@@ -10,6 +10,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Read more of each chunk, with `--context-tokens N` or the `context_tokens`
+  key. The chunk cap of 8,000 characters follows from the 2048-token window
+  Ollama serves by default, and `nomic-embed-text` accepts 8192. The cap
+  scales with the window, the window reaches Ollama and llama.cpp, and a
+  vector made under a wider window is kept apart from one made under the
+  default, so the change embeds every chunk again and the old vectors stay
+  for a return. The default is unchanged until the retrieval gain is
+  measured.
 - Guard against a machine-generated file. A file that yields more than
   `max_chunks` chunks, 1000 by default, is indexed as one chunk under its
   own name, and the run says so once with the count. One 26.3 MB register

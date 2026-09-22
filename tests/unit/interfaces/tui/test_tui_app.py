@@ -1418,11 +1418,14 @@ class TestPaintBeforeTheScan:
             # The stored read waits for this, so a test can type first.
             self.gate = threading.Event()
             self.gate.set()
+            # The refresh waits for this, or for `delay`, so a test can
+            # hold it open until it has seen what it needs.
+            self.release = threading.Event()
 
         def index(self, on_progress=None):
             if on_progress is not None:
                 on_progress(Progress(EMBED, done=1, total=2))
-            time.sleep(self.delay)
+            self.release.wait(timeout=self.delay)
             self.refreshed.set()
             return len(self._fresh)
 
@@ -1529,21 +1532,32 @@ class TestPaintBeforeTheScan:
         assert run(body()) == ["alpha", "beta", "gamma"]
 
     def test_the_refresh_answers_the_query_again(self) -> None:
-        session = self.Stored(delay=1.0)
-        app = IshApp(session, Path("."), limit=5, debounce_ms=400)
+        """Hold the refresh until the stored answer has landed, then let go."""
+        session = self.Stored(delay=10.0)
+        app = IshApp(session, Path("."), limit=5, debounce_ms=300)
 
         async def body():
             async with app.run_test() as pilot:
                 await pilot.pause()
                 await pilot.press(*"alpha")
-                await _ready(app, pilot)
-                for _ in range(100):
+                for _ in range(250):
                     await asyncio.sleep(0.02)
-                    if len(session.queries) >= 2:
+                    if ("alpha", True) in session.queries:
+                        break
+                session.release.set()
+                await _ready(app, pilot)
+                for _ in range(250):
+                    await asyncio.sleep(0.02)
+                    if ("alpha", False) in session.queries:
                         break
                 return list(session.queries)
 
-        assert run(body()) == [("alpha", True), ("alpha", False)]
+        # A slow machine may search a prefix or two on the way. The
+        # whole word is asked of the stored index, then of the fresh one.
+        queries = run(body())
+        assert ("alpha", True) in queries
+        assert queries[-1] == ("alpha", False)
+        assert queries.index(("alpha", True)) < queries.index(("alpha", False))
 
 
 class TestWarmUp:

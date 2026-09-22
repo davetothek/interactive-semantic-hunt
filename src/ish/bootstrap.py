@@ -14,7 +14,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.parser import (
@@ -101,15 +101,38 @@ def build_parsers(settings: Settings) -> list[Parser]:
             f"Unknown language(s): {', '.join(unknown)}. Valid languages: {valid}"
         )
 
-    from ish.adapters.parser._limits import CountLimited, SizeLimited
+    from ish.adapters.parser._limits import CountLimited, SizeLimited, chars_for
 
     # Wrap here, so every language and every plugin keeps its chunks
     # inside what the embedding model can read, and a generated file
     # that yields thousands of them costs one.
-    return [
-        CountLimited(SizeLimited(available[name].build()), limit=settings.max_chunks)
-        for name in wanted
-    ]
+    cap = chars_for(settings.context_tokens)
+    parsers: list[Parser] = []
+    for name in wanted:
+        built = available[name].build()
+        # A parser that divides by size itself reads the same cap. The
+        # port does not name the attribute, so the write is a cast.
+        if hasattr(built, "limit"):
+            cast(Any, built).limit = cap
+        parsers.append(
+            CountLimited(
+                SizeLimited(built, limit=cap), limit=settings.max_chunks, head=cap
+            )
+        )
+    return parsers
+
+
+def context_window(settings: Settings) -> int | None:
+    """Return the window to ask the backend for, or None at the default.
+
+    The default is what the backend already does, so asking for it
+    changes nothing and is not asked. A wider window is passed through.
+    """
+    from ish.adapters.parser._limits import DEFAULT_CONTEXT_TOKENS
+
+    if settings.context_tokens == DEFAULT_CONTEXT_TOKENS:
+        return None
+    return settings.context_tokens
 
 
 def chunking_stamp(settings: Settings) -> str:
@@ -119,9 +142,10 @@ def chunking_stamp(settings: Settings) -> str:
     cap, and the count cap. An index read under another stamp is read
     again in full on its next refresh.
     """
-    from ish.adapters.parser._limits import MAX_CHUNK_CHARS
+    from ish.adapters.parser._limits import chars_for
 
-    return f"{CHUNKING_VERSION}:{MAX_CHUNK_CHARS}:{settings.max_chunks}"
+    cap = chars_for(settings.context_tokens)
+    return f"{CHUNKING_VERSION}:{cap}:{settings.max_chunks}"
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -134,17 +158,21 @@ def build_embedder(settings: Settings) -> Embedder:
             f"Unknown embedder {settings.embedder!r}. Valid backends: {valid}"
         ) from None
 
-    return backend.from_option(settings.model)
+    return backend.from_option(settings.model, context_tokens=context_window(settings))
 
 
 def model_id(settings: Settings, embedder: Embedder) -> str:
     """Identify the model that produced a vector.
 
     Read the identity the adapter reports, so changing a backend default
-    invalidates the vectors it produced.
+    invalidates the vectors it produced. Name the window when it is not
+    the default, because a model given more of a text produces another
+    vector for it, and the two must never mix.
     """
     name = embedder.model_name or "default"
-    return f"{settings.embedder}:{name}"
+    window = context_window(settings)
+    suffix = "" if window is None else f"@{window}"
+    return f"{settings.embedder}:{name}{suffix}"
 
 
 def index_dir(settings: Settings) -> Path:

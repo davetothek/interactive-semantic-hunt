@@ -37,6 +37,9 @@ class StructuredParser:
     def __init__(self, language: str, suffixes: frozenset[str]) -> None:
         self.language = language
         self.suffixes = suffixes
+        # How much text the embedding model reads. The composition root
+        # sets it from the window the settings name.
+        self.limit = MAX_CHUNK_CHARS
 
     @classmethod
     def yaml(cls) -> "StructuredParser":
@@ -67,7 +70,7 @@ class StructuredParser:
         # safe_load already parsed this text, so compose cannot fail.
         root = yaml.compose(source)
 
-        if not _has_entries(root) and len(source) <= MAX_CHUNK_CHARS:
+        if not _has_entries(root) and len(source) <= self.limit:
             return [whole]
 
         chunks: list[Chunk] = []
@@ -124,9 +127,9 @@ class StructuredParser:
         symbol = " > ".join(trail)
 
         children = list(_children(node))
-        divisible = (may_split_list and _has_entries(node)) or size > MAX_CHUNK_CHARS
+        divisible = (may_split_list and _has_entries(node)) or size > self.limit
         if not children or not divisible:
-            if size > MAX_CHUNK_CHARS:
+            if size > self.limit:
                 oversized.append((symbol, size))
             kind = "document" if len(trail) == 1 else "section"
             chunks.append(self._chunk(path, lines, start, end, symbol, kind))

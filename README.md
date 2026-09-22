@@ -145,6 +145,7 @@ nvim $(ish -i src/)
 | `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |
 | `--type-patterns TYPE:REGEX ...` | Say what a path holds, overriding the built-in reading |
 | `--max-chunks N` | Index a file that yields more chunks than this as one chunk (default 1000) |
+| `--context-tokens N` | How many tokens the model reads of each chunk (default 2048) |
 | `--model NAME` | Override the backend model |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
@@ -413,6 +414,26 @@ and still inherit the `type_patterns` the repository above it set.
 
 Set any option from the environment with the `ISH_` prefix, for example
 `ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.
+
+### Read more of each chunk
+
+A chunk is capped at 8,000 characters because Ollama serves an embedding
+model a window of 2048 tokens, and a model drops what lies past its window
+with no signal. `nomic-embed-text` accepts 8192. Ask for it, and the cap
+follows to 32,000 characters, so a chunk carries about four times the
+meaning:
+
+```toml
+context_tokens = 8192
+```
+
+A model given more of a text produces another vector for it, so the change
+embeds every chunk again under the new window, and the vectors made under
+the old one stay for a return to it. Measure before paying that:
+`/benchmark` in this repository reports top-1 and MRR for a query set, and
+a wider window is worth its re-index only when the table moves. The
+`llama.cpp` backend takes the window the same way. The `st` backend reads
+it from the model card, so there only the cap follows.
 
 ### Name one config file
 

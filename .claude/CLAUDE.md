@@ -123,7 +123,9 @@ something broke. This is that record, so a rule is never argued from taste.
 - `MAX_CHUNK_CHARS` is 8,000 because Ollama launches an embedding model with
   `-c 2048`. A model reads a fixed number of tokens and drops the rest with
   no signal: a 120 KB document and the same document with a distinct tail
-  embedded to cosine 1.000000.
+  embedded to cosine 1.000000. `context_tokens` scales the cap and reaches
+  the backend. nomic-embed-text accepts 8192. The retrieval gain of the
+  wider window is not yet measured, so the default stays at 2048.
 - A header is mostly declarations. Emitting a chunk for a function
   declaration took `widget.h` from 1 chunk to 5.
 - One generated JSON register map of 26.3 MB produced 32,768 chunks in 76 s.
