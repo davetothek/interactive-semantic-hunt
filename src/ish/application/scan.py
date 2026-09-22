@@ -45,6 +45,7 @@ class Scan:
         include: Sequence[str] = (),
         exclude: Sequence[str] = (),
         ignored_by: Callable[[Path], bool] | None = None,
+        unignore: Sequence[str] = (),
         root: Path | None = None,
     ) -> None:
         # The tree an include pattern is anchored at. Without one, a
@@ -53,6 +54,11 @@ class Scan:
         self._ignored_dirs = frozenset(ignored_dirs) or DEFAULT_IGNORED_DIRS
         self._include = _compile(include, "include")
         self._exclude = _compile(exclude, "exclude")
+        # Paths that join the index although the version control system
+        # ignores them. One ignored tree, such as a checkout of another
+        # system, is the usual case, and turning the whole predicate
+        # off for it exposed 1.9 GB of build output and caches.
+        self._unignore = _compile(unignore, "unignore")
         # A predicate supplied by the caller, so the application never
         # learns how a version control system is asked.
         self._ignored_by = ignored_by
@@ -134,7 +140,10 @@ class Scan:
         text = path.as_posix()
         if any(p.search(text) for p in self._exclude):
             return False
-        return not (self._ignored_by is not None and self._ignored_by(path))
+        if self._ignored_by is None or not self._ignored_by(path):
+            return True
+        inside = self._relative(path)
+        return any(p.match(inside) for p in self._unignore)
 
     def _relative(self, path: Path) -> str:
         """Return *path* written from the root of the tree, POSIX style.

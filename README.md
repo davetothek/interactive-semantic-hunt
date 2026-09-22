@@ -137,6 +137,7 @@ nvim $(ish -i src/)
 | `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
 | `--exclude REGEX ...` | Never index paths matching these patterns |
 | `--git`, `--no-git` | Skip files git ignores (default: on) |
+| `--unignore REGEX ...` | Index these paths although git ignores them, anchored at the tree root |
 | `--lang LANG ...` | Show results only from these languages |
 | `--under REGEX` | Show results only from matching paths |
 | `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |
@@ -296,7 +297,13 @@ Write `(?:.*/)?30\.Firmware/` to take the name at any depth. `exclude` wins
 over `include`.
 
 `--git` is on by default, so anything a `.gitignore` covers stays out of the
-index. Pass `--no-git` to index it anyway.
+index. Pass `--no-git` to index it all anyway, or name the one ignored tree
+that belongs in the index with `unignore`, anchored at the root like
+`include`, and let git keep filtering the rest:
+
+```toml
+unignore = ["11\\.SystemSpec/"]   # a checkout of another system, hidden from git
+```
 
 ### Keep generated code out
 

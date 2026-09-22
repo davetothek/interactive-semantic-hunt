@@ -242,6 +242,7 @@ def build_scan(settings: Settings, root: Path) -> Scan:
         include=settings.include,
         exclude=settings.exclude,
         ignored_by=build_ignored_by(settings, root),
+        unignore=settings.unignore,
         root=root,
     )
 

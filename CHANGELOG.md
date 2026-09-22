@@ -10,6 +10,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Index one tree that git ignores while git still filters the rest, with
+  `--unignore REGEX` or the `unignore` key. A pattern is anchored at the
+  tree root, like `include`. `git = false` was all or nothing: reaching one
+  ignored checkout also reached a 386 MB virtual environment, 903 MB of
+  build output, and a 621 MB cache, each found one crash at a time.
 - Search from VS Code. `contrib/vscode/` is an extension that drives the
   resident `ish-mcp` server from a QuickPick, the same shape as the Neovim
   client: live results as you type, a preview of the highlighted chunk, the

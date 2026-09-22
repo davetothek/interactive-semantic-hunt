@@ -161,6 +161,15 @@ class Settings:
             action="boolean_optional",
         ),
     )
+    unignore: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Index paths matching these expressions although git ignores them. "
+            "Anchored at the tree root, like include.",
+            nargs="+",
+            metavar="REGEX",
+        ),
+    )
     languages: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
