@@ -496,6 +496,57 @@ class TestIncludeIsAnchoredAtTheRoot:
         assert scanner.accepts(tree / "99.Artifacts" / "30.Firmware" / "main.py")
 
 
+class TestExcludePrunesTheWalk:
+    """Verify an excluded directory is never entered.
+
+    `ignore` pruned the walk and `exclude` did not, so every heavy
+    directory named in `exclude` was still visited to learn that its
+    files were unwanted. One query at the root of a 589,968-file tree
+    cost 10 s that way and 1.8 s with the same names in `ignore`.
+    """
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        (tmp_path / "app.py").write_text("pass\n")
+        deep = tmp_path / "build" / "out" / "deep"
+        deep.mkdir(parents=True)
+        (deep / "gen.py").write_text("pass\n")
+        return tmp_path
+
+    def _visited(self, tree: Path, monkeypatch, **kwargs) -> list[str]:
+        """Return the directories the walk read, in order."""
+        read: list[str] = []
+        original = Path.iterdir
+
+        def watched(self_path: Path):
+            read.append(str(self_path.relative_to(tree)) if self_path != tree else ".")
+            return original(self_path)
+
+        monkeypatch.setattr(Path, "iterdir", watched)
+        Scan(parsers=[FakeParser()], root=tree, **kwargs).discover(tree)
+        return read
+
+    def test_an_excluded_directory_is_not_entered(self, tree: Path, monkeypatch):
+        assert self._visited(tree, monkeypatch, exclude=["/build/"]) == ["."]
+
+    def test_without_the_pattern_the_walk_goes_all_the_way(
+        self, tree: Path, monkeypatch
+    ) -> None:
+        visited = self._visited(tree, monkeypatch)
+        assert visited == [".", "build", "build/out", "build/out/deep"]
+
+    def test_a_pattern_on_the_file_alone_prunes_nothing(
+        self, tree: Path, monkeypatch
+    ) -> None:
+        r"""`gen\.py$` names files, so the directories are still read."""
+        visited = self._visited(tree, monkeypatch, exclude=[r"gen\.py$"])
+        assert "build/out/deep" in visited
+
+    def test_the_files_beneath_are_gone_either_way(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], root=tree, exclude=["/build/"])
+        assert [p.name for p in scanner.discover(tree)] == ["app.py"]
+
+
 class TestFilteredPruning:
     """Verify that a newly excluded file leaves the index."""
 

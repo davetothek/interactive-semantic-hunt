@@ -47,6 +47,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- An `exclude` pattern rejected each file after the walk had reached it,
+  while `ignore` kept the walk out of a directory altogether. One query at
+  the root of a 589,968-file tree took 10 s with its heavy directories in
+  `exclude` and 1.8 s with the same names in `ignore`. An `exclude` pattern
+  that matches a directory now keeps the walk out of it too.
 - An `include` pattern matched a path segment at any depth, so a whitelist
   of one directory also admitted every copy of it under a worktree or an
   artifact tree. On one firmware tree that was 168,763 files for a corpus

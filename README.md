@@ -328,6 +328,10 @@ Two things to know:
   that.
 - A pattern is a regular expression searched against the whole path, so
   `/generated/` matches at any depth and needs no wildcards.
+- A pattern that matches a directory, written with its trailing slash, keeps
+  the walk out of it. `/build/` never enters `build`, so a tree of 272,364
+  generated files costs nothing at all. A pattern that names files, such as
+  `_pb2\.py$`, still reads every directory to find them.
 
 Check a pattern before you pay to index it. An empty query lists what the
 filter allows, and `--no-cache` keeps the trial out of the stored index:
