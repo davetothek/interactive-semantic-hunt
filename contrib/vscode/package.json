@@ -1,0 +1,52 @@
+{
+  "name": "ish",
+  "displayName": "ish: search code by meaning",
+  "description": "Semantic code search for a workspace, through the resident ish-mcp server.",
+  "version": "0.1.0",
+  "publisher": "davetothek",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davetothek/interactive-semantic-hunt",
+    "directory": "contrib/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/davetothek/interactive-semantic-hunt/issues"
+  },
+  "homepage": "https://github.com/davetothek/interactive-semantic-hunt/tree/main/contrib/vscode#readme",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "search",
+    "semantic",
+    "embeddings",
+    "code",
+    "mcp"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "ish.search",
+        "title": "Search by meaning",
+        "category": "ish"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node --test \"out/test/**/*.test.js\"",
+    "check": "npm run build && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.0"
+  }
+}

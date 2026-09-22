@@ -35,6 +35,25 @@ jobs:
       - run: uv run --python ${{ matrix.python }} poe test
       - run: uv run --python ${{ matrix.python }} poe hooks
 
+  vscode:
+    # The VS Code client under contrib/vscode is TypeScript, so it has
+    # its own compiler and its own tests. A client that does not build
+    # fails the check like any other code.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contrib/vscode
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: contrib/vscode/package-lock.json
+
+      - run: npm ci
+      - run: npm run check
+
   build:
     runs-on: ubuntu-latest
     steps:
