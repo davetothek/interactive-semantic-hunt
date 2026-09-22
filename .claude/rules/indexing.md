@@ -17,6 +17,9 @@ paths:
   the start of the path written from the tree root, so it names a place and
   not a segment. `exclude` beats `include`. A malformed pattern names its
   option and stops the run.
+- The walk tests `exclude` against each directory it meets, written with a
+  trailing slash, and never enters one that matches. `ignore` prunes by
+  name, `exclude` by path. Both prune.
 - Ask git what it ignores through the `vcs` adapter. Do not reimplement
   ignore rules. Outside a repository, or without git, ignore nothing.
 - A query-scope filter (`lang`, `under`, `type`) never reaches
