@@ -26,11 +26,13 @@ from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
-# Store vectors this many at a time, matching one request to the backend
-# so every round trip is persisted. A first index of a large tree runs
-# for many minutes, and a coarser batch loses more when it is stopped:
-# indexing a real project at one document per second wrote nothing at
-# all before the first batch of 256 completed.
+# Store vectors this many at a time, and write the rows of every file
+# whose vectors are all stored right after. A first index of a large
+# tree runs for hours, and a coarser batch loses more when it is
+# stopped: indexing a real project at one document per second wrote
+# nothing at all before the first batch of 256 completed. Rows that
+# landed only at the end left a reader seeing 0 files for a 2 h 43 m
+# run.
 EMBED_BATCH = 64
 
 
@@ -215,36 +217,66 @@ class Index:
                 entries.append((chunk, digest))
             parsed[path] = entries
 
-        embedded = self._embed_missing(texts)
-
-        for path, entries in parsed.items():
-            self._store.set_file(path, found[path], entries)
-
+        embedded = self._embed_and_write(parsed, texts, found)
         return parsed, embedded
 
-    def _embed_missing(self, texts: dict[str, str]) -> int:
-        """Embed only the texts the store has never seen. Return the count.
+    def _embed_and_write(
+        self,
+        parsed: Mapping[Path, list[tuple[Chunk, str]]],
+        texts: Mapping[str, str],
+        found: Mapping[Path, FileStamp],
+    ) -> int:
+        """Embed the texts the store has never seen, and write as it goes.
 
-        Store each batch as it completes. A first index of a large tree
-        takes minutes, and one failed request should not discard every
-        vector earned before it.
+        Store each batch of vectors as it completes, and write the rows
+        of every file whose vectors are all stored right after. A first
+        index of a large tree runs for hours. Rows that landed only at
+        the end left a reader seeing 0 files and 0 chunks for the whole
+        of a 2 h 43 m run, and one failed request discarded every row
+        the run had earned. Return how many vectors were embedded.
         """
-        missing = self._store.missing_vectors(texts.keys())
-        if not missing:
-            return 0
-
-        ordered = sorted(missing)
-        reused = len(texts) - len(ordered)
-        log.info("Embedding %d new chunks (%d reused)", len(ordered), reused)
-        self._report(Progress(EMBED, total=len(ordered), reused=reused))
+        waiting = self._store.missing_vectors(texts.keys())
+        total = len(waiting)
+        reused = len(texts) - total
+        if waiting:
+            log.info("Embedding %d new chunks (%d reused)", total, reused)
+            self._report(Progress(EMBED, total=total, reused=reused))
 
         done = 0
-        for start in range(0, len(ordered), EMBED_BATCH):
-            batch = ordered[start : start + EMBED_BATCH]
-            vectors = self._embedder.embed_documents([texts[d] for d in batch])
-            self._store.add_vectors(dict(zip(batch, vectors, strict=True)))
-            done += len(batch)
-            if len(ordered) > EMBED_BATCH:
-                log.info("  embedded %d of %d", done, len(ordered))
-            self._report(Progress(EMBED, done=done, total=len(ordered), reused=reused))
+        batch: list[str] = []
+        unwritten: list[Path] = []
+        queued: set[str] = set()
+
+        def embed(digests: list[str]) -> None:
+            nonlocal done
+            vectors = self._embedder.embed_documents([texts[d] for d in digests])
+            self._store.add_vectors(dict(zip(digests, vectors, strict=True)))
+            waiting.difference_update(digests)
+            done += len(digests)
+            if total > EMBED_BATCH:
+                log.info("  embedded %d of %d", done, total)
+            self._report(Progress(EMBED, done=done, total=total, reused=reused))
+
+        def write_ready() -> None:
+            still: list[Path] = []
+            for path in unwritten:
+                if any(digest in waiting for _chunk, digest in parsed[path]):
+                    still.append(path)
+                else:
+                    self._store.set_file(path, found[path], parsed[path])
+            unwritten[:] = still
+
+        for path, entries in parsed.items():
+            for _chunk, digest in entries:
+                if digest in waiting and digest not in queued:
+                    queued.add(digest)
+                    batch.append(digest)
+            unwritten.append(path)
+            while len(batch) >= EMBED_BATCH:
+                embed(batch[:EMBED_BATCH])
+                del batch[:EMBED_BATCH]
+                write_ready()
+        if batch:
+            embed(batch)
+        write_ready()
         return done
