@@ -214,6 +214,31 @@ class _StubEmbedder:
         return [1.0]
 
 
+class TestChunkingStamp:
+    """Verify the stamp carries every input to how a file divides."""
+
+    def test_the_stamp_names_the_version_and_the_caps(self) -> None:
+        from ish.adapters.parser import CHUNKING_VERSION
+        from ish.adapters.parser._limits import MAX_CHUNK_CHARS
+
+        assert bootstrap.chunking_stamp(Settings()) == (
+            f"{CHUNKING_VERSION}:{MAX_CHUNK_CHARS}:1000"
+        )
+
+    def test_a_different_count_cap_is_a_different_stamp(self) -> None:
+        assert bootstrap.chunking_stamp(
+            replace(Settings(), max_chunks=5)
+        ) != bootstrap.chunking_stamp(Settings())
+
+    def test_the_index_is_built_with_the_stamp(self, tmp_path) -> None:
+        settings = replace(Settings(), no_cache=True)
+        search = bootstrap.build_search(settings, tmp_path)
+        try:
+            assert search._index._chunking == bootstrap.chunking_stamp(settings)
+        finally:
+            search.close()
+
+
 class TestGitAwareness:
     """Verify how the git filter is wired."""
 

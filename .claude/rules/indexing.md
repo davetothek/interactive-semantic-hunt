@@ -45,6 +45,11 @@ paths:
   `parse_file()` returns an empty sequence for the first and `None` for the
   second.
 - Vectors are keyed by `(content_hash, model_id)`, not by path.
+- The store records the chunking stamp its files were read under.
+  `bootstrap.chunking_stamp()` composes it from `CHUNKING_VERSION` and the
+  caps. A refresh that finds another stamp clears the files, keeps the
+  vectors, and reads every file again. Raise `CHUNKING_VERSION` when a
+  parser changes where a file divides.
 
 ## The SQLite store
 

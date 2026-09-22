@@ -128,3 +128,16 @@ class VectorStore(VectorReader, Protocol):
     def clear(self) -> None:
         """Discard every indexed file, so the next refresh rebuilds."""
         ...
+
+    def chunking(self) -> str:
+        """Return the chunking stamp the files were read under, or empty.
+
+        The stamp names how files were divided into chunks. A refresh
+        that finds a different one reads every file again and reuses
+        every vector, because a vector is keyed by content.
+        """
+        ...
+
+    def set_chunking(self, stamp: str) -> None:
+        """Record the chunking stamp the files are read under from now on."""
+        ...

@@ -51,6 +51,7 @@ class PurePythonVectorStore:
         self._stamps: dict[Path, FileStamp] = {}
         self._chunks: dict[Path, list[tuple[Chunk, str]]] = {}
         self._vectors: dict[str, Sequence[float]] = {}
+        self._chunking = ""
 
     # ------------------------------------------------------------------
     # Index maintenance
@@ -85,6 +86,14 @@ class PurePythonVectorStore:
         """Discard every indexed file. Keep the vectors, which are reusable."""
         self._stamps.clear()
         self._chunks.clear()
+
+    def chunking(self) -> str:
+        """Return the chunking stamp the files were read under, or empty."""
+        return self._chunking
+
+    def set_chunking(self, stamp: str) -> None:
+        """Record the chunking stamp the files are read under from now on."""
+        self._chunking = stamp
 
     def close(self) -> None:
         """Release nothing. The store lives only in memory."""

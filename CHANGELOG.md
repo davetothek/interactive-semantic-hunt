@@ -58,6 +58,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A change to how files divide into chunks reaches an existing index on
+  its next refresh. Staleness is per file, so the size cap added in 0.1.0
+  applied only to files that changed, and applying it to an existing index
+  meant `--reindex`, 5,632 new chunks on one tree. The index now records
+  the chunking it was read under. A refresh that finds another reads every
+  file again and embeds only text it has never seen. This release re-reads
+  every file once, and re-embeds nothing.
 - The picker and the resident server load the model as soon as their
   refresh is done, while nothing waits on them. A daemon unloads an idle
   model and loads it again on the next request, which costs seconds, and

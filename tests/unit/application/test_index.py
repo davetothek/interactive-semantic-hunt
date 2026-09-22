@@ -689,3 +689,73 @@ class TestRowsLandAsTheRunGoes:
 
         # The third request already sees the four rows the first two earned.
         assert seen == [0, 2, 4]
+
+
+class TestChunkingStamp:
+    """Verify a change in how files divide re-reads them without re-embedding.
+
+    Staleness is per file, so a cap added in 0.1.0 applied only to files
+    that changed, and applying it to an existing index meant `--reindex`:
+    5,632 new chunks on one tree. Parsing is seconds. Embedding is hours.
+    """
+
+    def _index(self, embedder, store, stamp: str) -> Index:
+        return Index(
+            scan=Scan(parsers=[LineParser()]),
+            embedder=embedder,
+            vector_store=store,
+            chunking=stamp,
+        )
+
+    def test_the_first_refresh_records_the_stamp(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.py").write_text("alpha\n")
+        self._index(embedder, store, "1:8000:1000").refresh(tmp_path)
+        assert store.chunking() == "1:8000:1000"
+
+    def test_the_same_stamp_reads_nothing_again(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.py").write_text("alpha\n")
+        self._index(embedder, store, "1:8000:1000").refresh(tmp_path)
+        stats = self._index(embedder, store, "1:8000:1000").refresh(tmp_path)
+        assert stats.files_parsed == 0
+
+    def test_a_new_stamp_reads_every_file_and_embeds_nothing(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.py").write_text("alpha\n")
+        (tmp_path / "b.py").write_text("beta\n")
+        self._index(embedder, store, "1:8000:1000").refresh(tmp_path)
+        seen = len(embedder.seen)
+
+        stats = self._index(embedder, store, "2:8000:1000").refresh(tmp_path)
+
+        assert stats.files_parsed == 2
+        assert stats.vectors_embedded == 0
+        assert len(embedder.seen) == seen
+        assert store.chunking() == "2:8000:1000"
+        assert len(store.chunks()) == 2
+
+    def test_a_new_stamp_lets_a_new_division_land(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        """The point of the pass: chunks that the old division never made."""
+        (tmp_path / "a.py").write_text("alpha\nbeta\n")
+        index = self._index(embedder, store, "1")
+        index.refresh(tmp_path)
+        # Stand in for a parser that now divides differently.
+        store.set_file(tmp_path / "a.py", store.file_stamps()[tmp_path / "a.py"], [])
+        assert store.chunks() == []
+
+        self._index(embedder, store, "2").refresh(tmp_path)
+        assert [c.symbol for c in store.chunks()] == ["alpha", "beta"]
+
+    def test_an_untracked_stamp_leaves_the_store_alone(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        (tmp_path / "a.py").write_text("alpha\n")
+        store.set_chunking("kept")
+        build(embedder, store).refresh(tmp_path)
+        assert store.chunking() == "kept"

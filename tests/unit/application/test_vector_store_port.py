@@ -44,6 +44,12 @@ class FakeVectorStore:
     def clear(self) -> None:
         return None
 
+    def chunking(self) -> str:
+        return ""
+
+    def set_chunking(self, stamp: str) -> None:
+        return None
+
     def close(self) -> None:
         return None
 

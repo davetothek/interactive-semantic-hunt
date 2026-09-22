@@ -91,6 +91,7 @@ class Index:
         embedder: Embedder,
         vector_store: VectorStore,
         rebuild: bool = False,
+        chunking: str = "",
     ) -> None:
         self._scanner = scan
         self._embedder = embedder
@@ -99,6 +100,10 @@ class Index:
         # file is parsed again. Vectors stay, keyed by content, so a
         # rebuild costs parsing rather than embedding.
         self._rebuild = rebuild
+        # How the parsers divide a file today. A store read under another
+        # stamp is read again in full, the same way. Empty means the
+        # caller does not track it.
+        self._chunking = chunking
         self._report: ProgressCallback = lambda _step: None
 
     def refresh(
@@ -115,6 +120,7 @@ class Index:
             log.info("Discarding the stored index for %s", root)
             self._store.clear()
             self._rebuild = False
+        self._rechunk_if_needed(root)
         self._report(Progress(DISCOVER))
         found = self._stamp_all(self._scanner.discover(root))
         stored = self._store.file_stamps()
@@ -144,6 +150,32 @@ class Index:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _rechunk_if_needed(self, root: Path) -> None:
+        """Read every file again when the chunking has changed.
+
+        A cap or a parser that divides files differently leaves the
+        stored chunks describing the old division, and staleness is per
+        file, so an unchanged file would keep them for ever. Applying the
+        size cap of 0.1.0 to an existing index meant `--reindex`, 5,632
+        new chunks on one tree. Clearing the files keeps every vector,
+        so the pass costs parsing, which is seconds, and not embedding.
+        """
+        if not self._chunking:
+            return
+        stored = self._store.chunking()
+        if stored == self._chunking:
+            return
+        if stored:
+            log.info(
+                "The chunking changed from %s to %s. Reading every file under %s "
+                "again. Vectors are reused.",
+                stored,
+                self._chunking,
+                root,
+            )
+            self._store.clear()
+        self._store.set_chunking(self._chunking)
 
     def _stamp_all(self, paths: Sequence[Path]) -> dict[Path, FileStamp]:
         """Stat every discovered file. Skip any that vanished mid-scan."""

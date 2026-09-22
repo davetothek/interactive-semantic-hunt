@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from ish.adapters.embedder import EMBEDDERS
-from ish.adapters.parser import Language, available_parsers, categories, spellings
+from ish.adapters.parser import (
+    CHUNKING_VERSION,
+    Language,
+    available_parsers,
+    categories,
+    spellings,
+)
 from ish.adapters.vector_store.catalog import IndexCatalog
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
@@ -104,6 +110,18 @@ def build_parsers(settings: Settings) -> list[Parser]:
         CountLimited(SizeLimited(available[name].build()), limit=settings.max_chunks)
         for name in wanted
     ]
+
+
+def chunking_stamp(settings: Settings) -> str:
+    """Name how the settings divide a file into chunks.
+
+    Carry every input to the division: the parsers' version, the size
+    cap, and the count cap. An index read under another stamp is read
+    again in full on its next refresh.
+    """
+    from ish.adapters.parser._limits import MAX_CHUNK_CHARS
+
+    return f"{CHUNKING_VERSION}:{MAX_CHUNK_CHARS}:{settings.max_chunks}"
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -270,6 +288,7 @@ def build_search(settings: Settings, root: Path) -> Search:
             embedder=embedder,
             vector_store=primary,
             rebuild=settings.reindex,
+            chunking=chunking_stamp(settings),
         )
     return Search(
         embedder=embedder,
