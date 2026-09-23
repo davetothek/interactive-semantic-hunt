@@ -300,6 +300,46 @@ class TestFailures:
         assert "ollama serve" in message
         assert "--embedder llama.cpp" in message
 
+    def test_daemon_not_running_names_this_machine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OLLAMA_HOST", raising=False)
+        self._fail_with(
+            monkeypatch, urllib.error.URLError(ConnectionRefusedError("refused"))
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            OllamaEmbedder().embed_documents(["a"])
+
+        assert "OLLAMA_HOST" not in str(exc_info.value)
+
+    def test_a_remote_daemon_does_not_advise_a_local_start(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._fail_with(
+            monkeypatch, urllib.error.URLError(ConnectionRefusedError("refused"))
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            OllamaEmbedder(host="gpu-box:11434").embed_documents(["a"])
+
+        message = str(exc_info.value)
+        assert "ollama serve" not in message
+        assert "OLLAMA_HOST" in message
+        assert "gpu-box" in message
+
+    @pytest.mark.parametrize(
+        ("host", "local"),
+        [
+            ("http://localhost:11434", True),
+            ("http://127.0.0.1:11434", True),
+            ("http://[::1]:11434", True),
+            ("http://gpu-box:11434", False),
+            ("http://10.0.0.5:9999", False),
+            ("http://:11434", False),
+        ],
+    )
+    def test_a_host_is_read_as_local_or_remote(self, host: str, local: bool) -> None:
+        assert ollama._is_loopback(host) is local
+
     def test_model_missing_says_to_pull_it(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
