@@ -121,6 +121,15 @@ That patch holds the fix and nothing else. There is no standing branch
 to keep in step for it, because the branch only has to exist for as long
 as the fix does.
 
+## The VS Code extension
+
+`contrib/vscode/` ships on its own schedule. Its version is the one in
+its `package.json`, and it says nothing about the version of the PyPI
+package: the extension talks to whichever `ish-mcp` is on PATH. Cut
+one from `main` when the extension changed, by the steps in
+`contrib/vscode/README.md`, and leave the PyPI version alone. A tool
+the extension calls that changed shape is the one case that needs both.
+
 ## What ships
 
 The wheel carries the package and three commands: `ish`, `ish-mcp`, and

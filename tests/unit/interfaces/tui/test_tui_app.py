@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from pygments.styles import get_style_by_name
+from textual.binding import Binding
 from textual.filter import Monochrome, NoColor
 from textual.widgets import Input, OptionList, Static
 
@@ -20,7 +21,9 @@ from ish.application.filters import Filters, build_result_filter, parse_query
 from ish.application.progress import EMBED, Progress
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
+from ish.interfaces import completion
 from ish.interfaces.tui.app import DARK_SYNTAX, LIGHT_SYNTAX, IshApp
+from ish.settings import Settings
 
 # What the registered languages hold, the way the real session reads it
 # off the registry and hands it to the filter.
@@ -85,9 +88,22 @@ class FakeSession:
         ]
         return [Match(c, 0.91) for c in chosen[:limit]]
 
-    def chunks(self, query: str = "") -> list[Chunk]:
+    def chunks(self, query: str = "", stored: bool = False) -> list[Chunk]:
+        # Nothing was stored before this run. The tests that need a
+        # stored index bring a session of their own.
+        if stored:
+            return []
         keep = build_result_filter(self.filters_of(query), HOLDS)
         return [c for c in self._chunks if keep is None or keep(c)]
+
+    def complete(self, text: str) -> str:
+        return completion.complete(text, Settings(), Path("."))
+
+    def candidates(self, text: str) -> list[str]:
+        return completion.candidates(text, Settings(), Path("."))
+
+    def warm(self) -> None:
+        return None
 
     def close(self) -> None:
         return None
@@ -834,13 +850,16 @@ class TestStaleWorkIsDropped:
         def filters_of(self, query=""):
             return Filters()
 
-        def chunks(self, query=""):
-            return self._chunks
+        def chunks(self, query="", stored=False):
+            return [] if stored else self._chunks
 
-        def search(self, query, limit=5):
+        def search(self, query, limit=5, stored=False):
             self.begun.append(query)
             time.sleep(self.delay)
             return [Match(c, 0.5) for c in self._chunks[:limit]]
+
+        def warm(self) -> None:
+            return None
 
         def close(self) -> None:
             return None
@@ -920,13 +939,16 @@ class TestQuittingIsImmediate:
         def filters_of(self, query=""):
             return Filters()
 
-        def chunks(self, query=""):
+        def chunks(self, query="", stored=False):
             return []
 
-        def search(self, query, limit=5):
+        def search(self, query, limit=5, stored=False):
             self.entered.set()
             time.sleep(30)
             return []
+
+        def warm(self) -> None:
+            return None
 
         def close(self) -> None:
             return None
@@ -974,7 +996,10 @@ class TestQuittingIsImmediate:
         assert not app._still_here()
 
     def test_quit_is_bound_to_the_usual_keys(self) -> None:
-        keys = {binding[0] for binding in IshApp.BINDINGS}
+        keys = {
+            binding.key if isinstance(binding, Binding) else binding[0]
+            for binding in IshApp.BINDINGS
+        }
         assert {"escape", "ctrl+c", "ctrl+q"} <= keys
 
 
@@ -1002,12 +1027,15 @@ class TestTypingBeforeTheIndexOpens:
         def filters_of(self, query=""):
             return Filters()
 
-        def chunks(self, query=""):
-            return self._chunks
+        def chunks(self, query="", stored=False):
+            return [] if stored else self._chunks
 
         def search(self, query, limit=5):
             self.queries.append(query)
             return [Match(c, 0.9) for c in self._chunks if query in (c.symbol or "")]
+
+        def warm(self) -> None:
+            return None
 
         def close(self) -> None:
             return None
@@ -1325,3 +1353,236 @@ class TestNoColor:
                 assert preview_style(app) is get_style_by_name(LIGHT_SYNTAX)
 
         run(body())
+
+
+class TestTabCompletes:
+    """Verify Tab finishes a filter word without leaving the query field.
+
+    The screen binds Tab to moving focus, and a picker whose query
+    field lost focus on Tab would stop taking keystrokes. The word is
+    finished the way a shell finishes a path, and the choices are named
+    when it cannot be finished.
+    """
+
+    def _press(self, keys: str):
+        app = IshApp(FakeSession(), Path("."))
+        said: list[str] = []
+        app.notify = lambda message, **_more: said.append(message)  # type: ignore[method-assign]
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                for key in keys.split():
+                    await pilot.press(key)
+                await pilot.pause()
+                field = app.query_one(Input)
+                return field.value, field.cursor_position, field.has_focus, said
+
+        return run(body())
+
+    def test_a_key_is_finished_and_the_cursor_follows(self) -> None:
+        value, cursor, focused, _said = self._press("t y tab")
+        assert value == "type:"
+        assert cursor == len("type:")
+        assert focused is True, "the query field must keep focus"
+
+    def test_an_ambiguous_word_grows_and_names_the_choices(self) -> None:
+        value, _cursor, _focused, said = self._press("t y p e colon c tab")
+        assert value == "type:co"
+        assert said == ["code  config"]
+
+    def test_a_word_that_fits_nothing_is_left_alone(self) -> None:
+        value, _cursor, _focused, said = self._press("a l p h a tab")
+        assert value == "alpha"
+        assert said == []
+
+
+class TestPaintBeforeTheScan:
+    """Verify a stored index is on screen before the refresh runs.
+
+    Startup was 0.77 s, most of it the staleness scan across every
+    index under the path. The stored answers are good for almost every
+    query while that runs, so they are listed first and searched first,
+    and the refresh replaces them when it lands.
+    """
+
+    class Stored:
+        """A session whose index already holds chunks, and refreshes slowly."""
+
+        def __init__(self, delay: float = 1.5) -> None:
+            self.delay = delay
+            self.queries: list[tuple[str, bool]] = []
+            self._held = [chunk("alpha"), chunk("beta", line=5)]
+            self._fresh = [*self._held, chunk("gamma", line=9)]
+            self.refreshed = threading.Event()
+            # The stored read waits for this, so a test can type first.
+            self.gate = threading.Event()
+            self.gate.set()
+            # The refresh waits for this, or for `delay`, so a test can
+            # hold it open until it has seen what it needs.
+            self.release = threading.Event()
+
+        def index(self, on_progress=None):
+            if on_progress is not None:
+                on_progress(Progress(EMBED, done=1, total=2))
+            self.release.wait(timeout=self.delay)
+            self.refreshed.set()
+            return len(self._fresh)
+
+        def filters_of(self, query=""):
+            return Filters()
+
+        def chunks(self, query="", stored=False):
+            if stored:
+                self.gate.wait(timeout=5)
+                return self._held
+            return self._fresh
+
+        def search(self, query, limit=5, stored=False):
+            self.queries.append((query, stored))
+            source = self._held if stored else self._fresh
+            return [Match(c, 0.9) for c in source if query in (c.symbol or "")]
+
+        def warm(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    def test_the_stored_listing_shows_before_the_refresh_ends(self) -> None:
+        session = self.Stored()
+        app = IshApp(session, Path("."), limit=5)
+
+        async def body():
+            async with app.run_test():
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    if app._current_results:
+                        break
+                assert app._index_ready is False
+                assert not session.refreshed.is_set()
+                return [c.symbol for c, _ in app._current_results]
+
+        assert run(body()) == ["alpha", "beta"]
+
+    def test_a_query_is_answered_from_the_stored_index(self) -> None:
+        session = self.Stored()
+        app = IshApp(session, Path("."), limit=5, debounce_ms=400)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                for _ in range(150):
+                    await asyncio.sleep(0.02)
+                    if session.queries:
+                        break
+                assert app._index_ready is False
+                return list(session.queries)
+
+        assert run(body()) == [("alpha", True)]
+
+    def test_a_query_typed_before_the_stored_index_lands_is_answered(self) -> None:
+        """The stored read may lose the race with the first keystroke."""
+        session = self.Stored()
+        session.gate.clear()
+        app = IshApp(session, Path("."), limit=5, debounce_ms=50)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                await asyncio.sleep(0.2)
+                assert session.queries == []
+                session.gate.set()
+                for _ in range(150):
+                    await asyncio.sleep(0.02)
+                    if session.queries:
+                        break
+                return list(session.queries)
+
+        assert run(body()) == [("alpha", True)]
+
+    def test_progress_goes_to_the_header_over_a_listing(self) -> None:
+        """The pane shows a chunk now, so the message must not cover it."""
+        app = IshApp(self.Stored(), Path("."), limit=5)
+
+        async def body():
+            async with app.run_test():
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    if app._current_results and "Embedded" in str(app.sub_title):
+                        break
+                return str(app.sub_title), preview_text(app)
+
+        header, pane = run(body())
+        assert "Embedded 1 of 2 chunks" in header
+        assert "Embedded" not in pane
+
+    def test_the_refresh_replaces_the_stored_listing(self) -> None:
+        session = self.Stored(delay=0.3)
+        app = IshApp(session, Path("."), limit=5)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                await asyncio.sleep(0.1)
+                return [c.symbol for c, _ in app._current_results]
+
+        assert run(body()) == ["alpha", "beta", "gamma"]
+
+    def test_the_refresh_answers_the_query_again(self) -> None:
+        """Hold the refresh until the stored answer has landed, then let go."""
+        session = self.Stored(delay=10.0)
+        app = IshApp(session, Path("."), limit=5, debounce_ms=300)
+
+        async def body():
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press(*"alpha")
+                for _ in range(250):
+                    await asyncio.sleep(0.02)
+                    if ("alpha", True) in session.queries:
+                        break
+                session.release.set()
+                await _ready(app, pilot)
+                for _ in range(250):
+                    await asyncio.sleep(0.02)
+                    if ("alpha", False) in session.queries:
+                        break
+                return list(session.queries)
+
+        # A slow machine may search a prefix or two on the way. The
+        # whole word is asked of the stored index, then of the fresh one.
+        queries = run(body())
+        assert ("alpha", True) in queries
+        assert queries[-1] == ("alpha", False)
+        assert queries.index(("alpha", True)) < queries.index(("alpha", False))
+
+
+class TestWarmUp:
+    """Verify the model is loaded once the index is open and nobody waits."""
+
+    def test_warm_follows_the_index(self) -> None:
+        order: list[str] = []
+
+        class Recording(FakeSession):
+            def index(self, on_progress=None) -> int:
+                order.append("index")
+                return super().index(on_progress)
+
+            def warm(self) -> None:
+                order.append("warm")
+
+        app = IshApp(Recording(), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                for _ in range(100):
+                    await asyncio.sleep(0.02)
+                    if "warm" in order:
+                        break
+
+        run(body())
+        assert order == ["index", "warm"]

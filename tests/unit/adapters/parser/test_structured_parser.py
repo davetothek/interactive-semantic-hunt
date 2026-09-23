@@ -321,3 +321,20 @@ class TestUnnamedParts:
         entries = "".join(f"  - value: {'v' * 900}\n" for _ in range(40))
         chunks = yaml_parser.parse(YML, f"name: Plain\nitems:\n{entries}")
         assert any("[1]" in c.symbol for c in chunks)
+
+
+class TestTheCapIsAnAttribute:
+    """Verify the composition root can hand the parser a wider window."""
+
+    def test_the_default_is_the_measured_cap(self, yaml_parser) -> None:
+        from ish.adapters.parser._limits import MAX_CHUNK_CHARS
+
+        assert yaml_parser.limit == MAX_CHUNK_CHARS
+
+    def test_a_smaller_cap_divides_a_document_size_alone_left_whole(
+        self, yaml_parser
+    ) -> None:
+        source = "name: small\nvalue: 1\nother: 2\n"
+        assert len(yaml_parser.parse(YML, source)) == 1
+        yaml_parser.limit = 12
+        assert len(yaml_parser.parse(YML, source)) > 1

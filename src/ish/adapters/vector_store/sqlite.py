@@ -275,6 +275,22 @@ class SqliteVectorStore:
             self._writes += 1
             self._db.execute("DELETE FROM files")
 
+    def chunking(self) -> str:
+        """Return the chunking stamp the files were read under, or empty."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT value FROM meta WHERE key = 'chunking'"
+            ).fetchone()
+        return "" if row is None else str(row[0])
+
+    def set_chunking(self, stamp: str) -> None:
+        """Record the chunking stamp the files are read under from now on."""
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('chunking', ?)",
+                (stamp,),
+            )
+
     def close(self) -> None:
         """Close the database connection."""
         with self._lock:
@@ -415,6 +431,12 @@ class SqliteVectorStore:
         with self._lock:
             row = self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()
         return int(row[0])
+
+    def indexed_paths(self) -> Sequence[Path]:
+        """Return every file the store has read, chunks or none."""
+        with self._lock:
+            rows = self._db.execute("SELECT path FROM files ORDER BY path").fetchall()
+        return [Path(str(row[0])) for row in rows]
 
     @staticmethod
     def _to_chunk(row: Sequence[Any]) -> Chunk:

@@ -214,6 +214,87 @@ class _StubEmbedder:
         return [1.0]
 
 
+class TestContextWindow:
+    """Verify the window reaches the cap, the model id, and the backend.
+
+    A model given more of a text produces another vector for it, so the
+    two must never mix, and the chunk cap must follow the window or the
+    model reads the same 8,000 characters as before.
+    """
+
+    def test_the_default_asks_the_backend_for_nothing(self) -> None:
+        assert bootstrap.context_window(Settings()) is None
+
+    def test_a_wider_window_is_passed_through(self) -> None:
+        assert bootstrap.context_window(replace(Settings(), context_tokens=8192)) == (
+            8192
+        )
+
+    def test_the_model_id_names_a_window_that_is_not_the_default(self) -> None:
+        wide = replace(Settings(), context_tokens=8192)
+        assert bootstrap.model_id(wide, _StubEmbedder("g")) == "ollama:g@8192"
+        assert bootstrap.model_id(Settings(), _StubEmbedder("g")) == "ollama:g"
+
+    def test_the_cap_follows_the_window(self) -> None:
+        from ish.adapters.parser.structured import StructuredParser
+
+        built = bootstrap.build_parsers(replace(Settings(), context_tokens=8192))
+        sizes = {p._inner._limit for p in built}
+        assert sizes == {32_000}
+        structured = [
+            p._inner._inner
+            for p in built
+            if isinstance(p._inner._inner, StructuredParser)
+        ]
+        assert structured and all(p.limit == 32_000 for p in structured)
+
+    def test_the_stamp_follows_the_window(self) -> None:
+        assert bootstrap.chunking_stamp(
+            replace(Settings(), context_tokens=8192)
+        ) != bootstrap.chunking_stamp(Settings())
+
+    def test_the_backend_is_built_with_the_window(self, monkeypatch) -> None:
+        asked: list[tuple[str, int | None]] = []
+
+        class Recording:
+            model_name = "r"
+
+            @classmethod
+            def from_option(cls, model, context_tokens=None):
+                asked.append((model, context_tokens))
+                return cls()
+
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", Recording)
+        bootstrap.build_embedder(replace(Settings(), model="m", context_tokens=8192))
+        bootstrap.build_embedder(replace(Settings(), model="m"))
+        assert asked == [("m", 8192), ("m", None)]
+
+
+class TestChunkingStamp:
+    """Verify the stamp carries every input to how a file divides."""
+
+    def test_the_stamp_names_the_version_and_the_caps(self) -> None:
+        from ish.adapters.parser import CHUNKING_VERSION
+        from ish.adapters.parser._limits import MAX_CHUNK_CHARS
+
+        assert bootstrap.chunking_stamp(Settings()) == (
+            f"{CHUNKING_VERSION}:{MAX_CHUNK_CHARS}:1000"
+        )
+
+    def test_a_different_count_cap_is_a_different_stamp(self) -> None:
+        assert bootstrap.chunking_stamp(
+            replace(Settings(), max_chunks=5)
+        ) != bootstrap.chunking_stamp(Settings())
+
+    def test_the_index_is_built_with_the_stamp(self, tmp_path) -> None:
+        settings = replace(Settings(), no_cache=True)
+        search = bootstrap.build_search(settings, tmp_path)
+        try:
+            assert search._index._chunking == bootstrap.chunking_stamp(settings)
+        finally:
+            search.close()
+
+
 class TestGitAwareness:
     """Verify how the git filter is wired."""
 

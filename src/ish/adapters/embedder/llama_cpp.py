@@ -21,7 +21,10 @@ class LlamaCppEmbedder(PrefixingEmbedder):
     """
 
     def __init__(
-        self, repo_id: str = DEFAULT_REPO, filename: str = DEFAULT_FILE
+        self,
+        repo_id: str = DEFAULT_REPO,
+        filename: str = DEFAULT_FILE,
+        context_tokens: int | None = None,
     ) -> None:
         super().__init__(f"{repo_id}/{filename}")
         quiet_hub()
@@ -30,11 +33,18 @@ class LlamaCppEmbedder(PrefixingEmbedder):
         from llama_cpp import Llama
 
         model_path = hf_hub_download(repo_id=repo_id, filename=filename)
+        # The window is set when the model loads, so it is taken here.
+        # None leaves the engine's own default.
+        window = {} if context_tokens is None else {"n_ctx": context_tokens}
         # verbose=False keeps the engine's start-up log off the terminal.
-        self._model = Llama(model_path=model_path, embedding=True, verbose=False)
+        self._model = Llama(
+            model_path=model_path, embedding=True, verbose=False, **window
+        )
 
     @classmethod
-    def from_option(cls, model: str) -> "LlamaCppEmbedder":
+    def from_option(
+        cls, model: str, context_tokens: int | None = None
+    ) -> "LlamaCppEmbedder":
         """Build the backend the ``model`` option names.
 
         Read the option as ``repo/id/filename.gguf``: everything up to
@@ -42,9 +52,9 @@ class LlamaCppEmbedder(PrefixingEmbedder):
         file in it. Empty means the default model.
         """
         if not model:
-            return cls()
+            return cls(context_tokens=context_tokens)
         repo_id, _, filename = model.rpartition("/")
-        return cls(repo_id=repo_id, filename=filename)
+        return cls(repo_id=repo_id, filename=filename, context_tokens=context_tokens)
 
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode texts into vectors."""

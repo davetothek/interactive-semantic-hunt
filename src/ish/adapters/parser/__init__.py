@@ -52,6 +52,14 @@ DOC = "doc"
 CONFIG = "config"
 """What a language holds. A chunk under a test path is a test whatever it holds."""
 
+CHUNKING_VERSION = "1"
+"""How the parsers divide a file into chunks, as a version.
+
+Raise it when a parser, or a cap that wraps one, changes where a file
+divides. The next refresh reads every file again under the new
+division and embeds only the text it has never seen.
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class Language:

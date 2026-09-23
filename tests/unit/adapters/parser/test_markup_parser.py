@@ -113,7 +113,9 @@ class TestAsciiDoc:
         assert {c.language for c in asciidoc.parse(ADOC, self.SOURCE)} == {"asciidoc"}
 
     def test_markdown_headings_are_not_asciidoc(self, asciidoc: MarkupParser) -> None:
-        assert asciidoc.parse(ADOC, "# Not a heading here\n") == []
+        """The line is prose to this flavor, so the file is one document."""
+        chunks = asciidoc.parse(ADOC, "# Not a heading here\n")
+        assert [(c.kind, c.symbol) for c in chunks] == [("document", "doc")]
 
 
 class TestFencedBlocks:
@@ -144,17 +146,16 @@ class TestFencedBlocks:
 class TestEdgeCases:
     """Verify documents that carry no usable structure."""
 
-    def test_no_headings(self, markdown: MarkupParser) -> None:
-        assert markdown.parse(MD, "Just prose.\nMore prose.\n") == []
-
     def test_empty_document(self, markdown: MarkupParser) -> None:
         assert markdown.parse(MD, "") == []
 
     def test_heading_needs_a_space(self, markdown: MarkupParser) -> None:
-        """A bare #hashtag is not a heading."""
-        assert markdown.parse(MD, "#hashtag\n") == []
+        """A bare #hashtag is not a heading. It is a line of text."""
+        chunks = markdown.parse(MD, "#hashtag\n")
+        assert [(c.kind, c.symbol) for c in chunks] == [("document", "doc")]
 
     def test_heading_needs_a_title(self, markdown: MarkupParser) -> None:
+        """A marker with no title is neither a heading nor prose."""
         assert markdown.parse(MD, "##   \n") == []
 
     def test_document_starting_at_a_deep_level(self, markdown: MarkupParser) -> None:
@@ -165,3 +166,65 @@ class TestEdgeCases:
 
     def test_path_is_stamped(self, markdown: MarkupParser) -> None:
         assert markdown.parse(Path("x/y.md"), "# T\n")[0].path == Path("x/y.md")
+
+
+class TestHeadinglessDocuments:
+    """Verify a file with no heading yields one chunk when it holds prose.
+
+    ish chunks by section, so a file with no heading made no chunks and
+    still entered the files table, where it looked indexed. On one tree
+    2,844 files held no chunks. A sample of 400 was all attribute
+    definitions, include shells, and register table rows, for which
+    nothing is right. A paragraph of prose would have disappeared with
+    no signal.
+    """
+
+    def test_prose_is_one_document_named_after_the_file(
+        self, asciidoc: MarkupParser
+    ) -> None:
+        source = "The bus arbiter grants the first request.\nIt holds it.\n"
+        chunks = asciidoc.parse(Path("spec/arbiter.adoc"), source)
+        assert len(chunks) == 1
+        assert chunks[0].kind == "document"
+        assert chunks[0].symbol == "arbiter"
+        assert chunks[0].text == source
+        assert (chunks[0].start_line, chunks[0].end_line) == (1, 2)
+        assert chunks[0].language == "asciidoc"
+
+    def test_markdown_prose_too(self, markdown: MarkupParser) -> None:
+        chunks = markdown.parse(MD, "Just prose.\nMore prose.\n")
+        assert [c.symbol for c in chunks] == ["doc"]
+
+    def test_attribute_definitions_are_nothing(self, asciidoc: MarkupParser) -> None:
+        source = ":project: Widget\n:revnumber!:\n:toc-title: Contents\n"
+        assert asciidoc.parse(ADOC, source) == []
+
+    def test_an_include_shell_is_nothing(self, asciidoc: MarkupParser) -> None:
+        source = "include::a.adoc[]\n\ninclude::b.adoc[leveloffset=+1]\n"
+        assert asciidoc.parse(ADOC, source) == []
+
+    def test_table_rows_are_nothing(self, asciidoc: MarkupParser) -> None:
+        source = "[cols=2*]\n|===\n| REG_A | 0x00\n| REG_B | 0x04\n|===\n"
+        assert asciidoc.parse(ADOC, source) == []
+
+    def test_conditionals_and_comments_are_nothing(
+        self, asciidoc: MarkupParser
+    ) -> None:
+        source = "ifdef::internal[]\n// a note to the writer\nendif::[]\n"
+        assert asciidoc.parse(ADOC, source) == []
+
+    def test_an_html_comment_is_nothing(self, markdown: MarkupParser) -> None:
+        assert markdown.parse(MD, "<!-- generated -->\n") == []
+
+    def test_fenced_code_alone_is_nothing(self, markdown: MarkupParser) -> None:
+        assert markdown.parse(MD, "```\nx = 1\n```\n") == []
+
+    def test_one_line_of_prose_among_machinery_is_enough(
+        self, asciidoc: MarkupParser
+    ) -> None:
+        source = ":project: Widget\ninclude::a.adoc[]\n\nRead this first.\n"
+        assert len(asciidoc.parse(ADOC, source)) == 1
+
+    def test_a_heading_still_wins(self, asciidoc: MarkupParser) -> None:
+        chunks = asciidoc.parse(ADOC, "= Title\n\nProse.\n")
+        assert [c.symbol for c in chunks] == ["Title"]

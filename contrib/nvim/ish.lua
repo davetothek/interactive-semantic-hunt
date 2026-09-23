@@ -304,6 +304,36 @@ function M.search_here(opts)
   return M.search(opts)
 end
 
+-- Tell the server about a save, rather than have it find out on its
+-- next poll, up to `refresh_seconds` later. The editor is the one place
+-- that knows. Only a tree somebody has searched has a server, so a save
+-- before the first search starts nothing. Wait a moment for the next
+-- save, because a formatter writes a file twice within one.
+local SAVE_DEBOUNCE_MS = 1000
+local save_timer = nil
+
+vim.api.nvim_create_autocmd('BufWritePost', {
+  group = vim.api.nvim_create_augroup('IshRefreshOnSave', { clear = true }),
+  callback = function()
+    local server = require('utils.ish_server')
+    if not server.running() then
+      return
+    end
+    if save_timer then
+      save_timer:stop()
+      save_timer:close()
+    end
+    save_timer = vim.uv.new_timer()
+    save_timer:start(SAVE_DEBOUNCE_MS, 0, vim.schedule_wrap(function()
+      save_timer:close()
+      save_timer = nil
+      local cwd = root()
+      server.refresh(cwd)
+      watch(server, cwd)
+    end))
+  end,
+})
+
 _internal.query_text = query_text
 _internal.command = command
 _internal.render = render

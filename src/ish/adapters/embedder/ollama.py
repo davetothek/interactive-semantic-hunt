@@ -72,16 +72,23 @@ class OllamaEmbedder(PrefixingEmbedder):
         *,
         host: str | None = None,
         batch_size: int = DEFAULT_BATCH_SIZE,
+        context_tokens: int | None = None,
     ) -> None:
         super().__init__(model_name)
         chosen = host or os.environ.get("OLLAMA_HOST") or DEFAULT_HOST
         self.host = _normalize_host(chosen)
         self._batch_size = max(1, batch_size)
+        # The window the daemon reads of each text, or None for its own
+        # default. The daemon launches an embedding model with 2048 and
+        # drops what lies past the window with no signal.
+        self.context_tokens = context_tokens
 
     @classmethod
-    def from_option(cls, model: str) -> "OllamaEmbedder":
+    def from_option(
+        cls, model: str, context_tokens: int | None = None
+    ) -> "OllamaEmbedder":
         """Build the backend the ``model`` option names. Empty means the default."""
-        return cls(model) if model else cls()
+        return cls(model or DEFAULT_MODEL, context_tokens=context_tokens)
 
     def _embed(
         self,
@@ -141,7 +148,10 @@ class OllamaEmbedder(PrefixingEmbedder):
         import urllib.error
         import urllib.request
 
-        payload = json.dumps({"model": self.model_name, "input": batch}).encode("utf-8")
+        body: dict[str, object] = {"model": self.model_name, "input": batch}
+        if self.context_tokens is not None:
+            body["options"] = {"num_ctx": self.context_tokens}
+        payload = json.dumps(body).encode("utf-8")
         request = urllib.request.Request(
             f"{self.host}/api/embed",
             data=payload,

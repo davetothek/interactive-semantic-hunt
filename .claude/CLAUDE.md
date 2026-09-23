@@ -66,7 +66,7 @@ one module that joins them.
 | Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
 | Adapter | `src/ish/adapters/parser/tree_sitter.py` | Tree-sitter parser, C and C++ flavor |
 | Adapter | `src/ish/adapters/parser/structured.py` | YAML and JSON documents |
-| Adapter | `src/ish/adapters/parser/_limits.py` | `SizeLimited`, the chunk size cap |
+| Adapter | `src/ish/adapters/parser/_limits.py` | `SizeLimited` and `CountLimited`, the chunk size and count caps |
 | Adapter | `src/ish/adapters/parser/_plugins.py` | Parsers a user wrote |
 | Adapter | `src/ish/adapters/embedder/__init__.py` | `EMBEDDERS` — every backend, and the recipe for adding one |
 | Adapter | `src/ish/adapters/embedder/prefixes.py` | `PrefixingEmbedder`, task prefixes, query cache |
@@ -123,7 +123,9 @@ something broke. This is that record, so a rule is never argued from taste.
 - `MAX_CHUNK_CHARS` is 8,000 because Ollama launches an embedding model with
   `-c 2048`. A model reads a fixed number of tokens and drops the rest with
   no signal: a 120 KB document and the same document with a distinct tail
-  embedded to cosine 1.000000.
+  embedded to cosine 1.000000. `context_tokens` scales the cap and reaches
+  the backend. nomic-embed-text accepts 8192. The retrieval gain of the
+  wider window is not yet measured, so the default stays at 2048.
 - A header is mostly declarations. Emitting a chunk for a function
   declaration took `widget.h` from 1 chunk to 5.
 - One generated JSON register map of 26.3 MB produced 32,768 chunks in 76 s.

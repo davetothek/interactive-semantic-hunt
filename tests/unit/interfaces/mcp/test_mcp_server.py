@@ -45,7 +45,7 @@ class StubEmbedder:
     model_name = "stub"
 
     @classmethod
-    def from_option(cls, model: str) -> "StubEmbedder":
+    def from_option(cls, model: str, context_tokens=None) -> "StubEmbedder":
         return cls()
 
     def embed_documents(self, texts):
@@ -132,8 +132,17 @@ class TestIndexStatus:
 
         out = tools.index_status({"path": str(project)})
         assert "chunks   : 3" in out
+        assert "files    : 1 with chunks, 0 with none" in out
         assert "3 python" in out
         assert "ollama" in out
+
+    def test_a_file_that_yielded_nothing_is_counted(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        (project / "notes.md").write_text("<!-- nothing to read -->\n")
+        tools._session_for(project.resolve()).index()
+        out = tools.index_status({"path": str(project)})
+        assert "files    : 1 with chunks, 1 with none" in out
 
     def test_the_status_reads_and_does_not_build(
         self, tools: IshTools, stub_backend, project: Path
@@ -192,6 +201,7 @@ class TestToolDefinitions:
             "list_chunks",
             "index_status",
             "refresh_index",
+            "complete_filter",
         ]
 
     def test_search_requires_a_query(self, tools: IshTools) -> None:
@@ -202,6 +212,63 @@ class TestToolDefinitions:
         for tool in tools.tools():
             assert len(tool.description) > 40, tool.name
             assert tool.schema["type"] == "object"
+
+
+class TestCompleteFilter:
+    """Verify a filter word is finished without a process start.
+
+    `ish-complete` costs about 107 ms a Tab, nearly all of it
+    interpreter start. The server already holds the registries, so it
+    answers the same question from memory.
+    """
+
+    def _ask(self, tools: IshTools, query: str, **more) -> dict:
+        import json
+
+        return json.loads(tools.complete_filter({"query": query, **more}))
+
+    def test_a_key_is_finished(self, tools: IshTools) -> None:
+        assert self._ask(tools, "state machine ty")["text"] == "state machine type:"
+
+    def test_a_value_is_finished_and_spaced(self, tools: IshTools) -> None:
+        assert self._ask(tools, "type:d")["text"] == "type:doc "
+
+    def test_a_language_is_finished(self, tools: IshTools) -> None:
+        assert self._ask(tools, "lang:j")["text"] == "lang:json "
+
+    def test_an_alias_grows_beside_its_language(self, tools: IshTools) -> None:
+        """`py` and `python` share an opening, so the word grows to it."""
+        answer = self._ask(tools, "lang:p")
+        assert answer["text"] == "lang:py"
+        assert answer["candidates"] == ["py", "python", "python3"]
+
+    def test_a_word_that_fits_nothing_is_left_alone(self, tools: IshTools) -> None:
+        answer = self._ask(tools, "exposure")
+        assert answer == {"text": "exposure", "candidates": []}
+
+    def test_the_choices_are_named_when_several_fit(self, tools: IshTools) -> None:
+        answer = self._ask(tools, "type:c")
+        assert answer["text"] == "type:co"
+        assert answer["candidates"] == ["code", "config"]
+
+    def test_a_subtree_is_offered_under_the_path_asked(
+        self, tools: IshTools, project: Path
+    ) -> None:
+        (project / "src").mkdir()
+        (project / "docs").mkdir()
+        answer = self._ask(tools, "under:/", path=str(project))
+        assert answer["candidates"] == ["/docs/", "/src/"]
+
+    def test_the_server_root_is_the_default(
+        self, tools: IshTools, project: Path
+    ) -> None:
+        (project / "only").mkdir()
+        assert self._ask(tools, "under:/")["text"] == "under:/only/ "
+
+    def test_the_query_is_offered_and_required(self, tools: IshTools) -> None:
+        tool = next(t for t in tools.tools() if t.name == "complete_filter")
+        assert tool.schema["required"] == ["query"]
+        assert set(tool.schema["properties"]) == {"query", "path"}
 
 
 class TestEntryPoint:
@@ -613,6 +680,25 @@ class TestAnEditBecomesSearchable:
                 t for t in threading.enumerate() if t.name.startswith("ish-refresh")
             ]
             assert watchers and all(t.daemon for t in watchers)
+        finally:
+            quick.close()
+
+    def test_a_refresh_warms_the_session_it_serves(
+        self, quick: IshTools, project: Path, monkeypatch
+    ) -> None:
+        """The watch thread has nothing waiting on it, so it loads the model."""
+        from ish.interfaces.python.api import Ish
+
+        warmed: list[Path] = []
+        monkeypatch.setattr(Ish, "warm", lambda self: warmed.append(self.path))
+        quick.search({"query": "config", "path": str(project)})
+        quick.refresh({"path": str(project)})
+        try:
+            for _ in range(100):
+                if warmed:
+                    break
+                time.sleep(0.05)
+            assert warmed and warmed[0] == project.resolve()
         finally:
             quick.close()
 

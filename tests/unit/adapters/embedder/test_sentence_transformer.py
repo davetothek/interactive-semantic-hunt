@@ -85,3 +85,23 @@ class TestSentenceTransformerEmbedder:
 
         # Verify the output was cleanly converted to lists of floats
         assert result == [[0.1, 0.2], [0.3, 0.4]]
+
+
+class TestContextWindow:
+    """Verify a window is reported and left, because the model card owns it."""
+
+    def test_a_window_is_reported(self, mock_st: MagicMock, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="ish"):
+            SentenceTransformerEmbedder.from_option("", context_tokens=8192)
+        said = [r.getMessage() for r in caplog.records]
+        assert any("context_tokens=8192 sets only the chunk cap" in s for s in said)
+        mock_st.assert_called_once_with("all-MiniLM-L6-v2")
+
+    def test_the_default_says_nothing(self, mock_st: MagicMock, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="ish"):
+            SentenceTransformerEmbedder.from_option("m")
+        assert caplog.records == []

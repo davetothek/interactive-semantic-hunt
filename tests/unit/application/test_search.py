@@ -10,7 +10,7 @@ from ish.adapters.vector_store.pure_python import PurePythonVectorStore
 from ish.application.filters import Filters, build_result_filter
 from ish.application.index import Index
 from ish.application.scan import Scan
-from ish.application.search import Search
+from ish.application.search import WARM_QUERY, Search
 from ish.domain.chunk import Chunk
 
 
@@ -292,3 +292,27 @@ class TestReadOnlyFederation:
     ) -> None:
         search = Search(embedder=embedder, reader=FederatedReader([]))
         assert search.build_index(project) == 0
+
+
+class TestWarmUp:
+    """Verify the backend is asked once, off the keystroke path.
+
+    A daemon unloads an idle model and loads it again on the next
+    request, which costs seconds. The first keystroke paid that.
+    """
+
+    def test_warm_embeds_one_query(self, embedder: CountingEmbedder) -> None:
+        build(embedder).warm()
+        assert embedder.batches == [[WARM_QUERY]]
+
+    def test_a_backend_that_fails_is_reported_and_left(self, caplog) -> None:
+        import logging
+
+        class Down(CountingEmbedder):
+            def embed_query(self, text):
+                raise ConnectionError("no daemon")
+
+        with caplog.at_level(logging.INFO, logger="ish"):
+            build(Down()).warm()
+        said = [r.getMessage() for r in caplog.records]
+        assert any("Cannot warm the backend: no daemon" in line for line in said)

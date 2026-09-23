@@ -45,10 +45,20 @@ class Scan:
         include: Sequence[str] = (),
         exclude: Sequence[str] = (),
         ignored_by: Callable[[Path], bool] | None = None,
+        unignore: Sequence[str] = (),
+        root: Path | None = None,
     ) -> None:
+        # The tree an include pattern is anchored at. Without one, a
+        # pattern is matched against the whole path.
+        self._root = root
         self._ignored_dirs = frozenset(ignored_dirs) or DEFAULT_IGNORED_DIRS
         self._include = _compile(include, "include")
         self._exclude = _compile(exclude, "exclude")
+        # Paths that join the index although the version control system
+        # ignores them. One ignored tree, such as a checkout of another
+        # system, is the usual case, and turning the whole predicate
+        # off for it exposed 1.9 GB of build output and caches.
+        self._unignore = _compile(unignore, "unignore")
         # A predicate supplied by the caller, so the application never
         # learns how a version control system is asked.
         self._ignored_by = ignored_by
@@ -118,13 +128,37 @@ class Scan:
         if any(part in self._ignored_dirs for part in path.parts):
             return False
 
+        # An include pattern is anchored at the root of the tree. One
+        # firmware tree kept fourteen worktrees, each holding a copy of
+        # the directory the pattern named, and a pattern that matched at
+        # any depth admitted 168,763 files for a corpus of a tenth that.
+        if self._include:
+            inside = self._relative(path)
+            if not any(p.match(inside) for p in self._include):
+                return False
         # Search the whole path, so "vendor/" matches at any depth.
         text = path.as_posix()
-        if self._include and not any(p.search(text) for p in self._include):
-            return False
         if any(p.search(text) for p in self._exclude):
             return False
-        return not (self._ignored_by is not None and self._ignored_by(path))
+        if self._ignored_by is None or not self._ignored_by(path):
+            return True
+        inside = self._relative(path)
+        return any(p.match(inside) for p in self._unignore)
+
+    def _relative(self, path: Path) -> str:
+        """Return *path* written from the root of the tree, POSIX style.
+
+        Return the whole path when no root is known or the path lies
+        outside it. The root itself, scanned as a single file, is named
+        by its own name.
+        """
+        if self._root is None:
+            return path.as_posix()
+        try:
+            inside = path.relative_to(self._root)
+        except ValueError:
+            return path.as_posix()
+        return path.name if inside == Path() else inside.as_posix()
 
     def parse_file(self, path: Path) -> Sequence[Chunk] | None:
         """Read and parse one discovered file.
@@ -165,7 +199,7 @@ class Scan:
         return result
 
     def _walk(self, directory: Path, result: list[Path]) -> None:
-        """Depth-first walk, pruning ignored directory names.
+        """Depth-first walk, pruning ignored and excluded directories.
 
         Skip directory symlinks to prevent cycles and duplicate files.
         """
@@ -177,7 +211,23 @@ class Scan:
             if entry.is_dir():
                 if entry.is_symlink():
                     log.debug("Skip directory symlink %s", entry)
-                elif entry.name not in self._ignored_dirs:
+                elif entry.name in self._ignored_dirs or self._excludes_dir(entry):
+                    continue
+                else:
                     self._walk(entry, result)
             elif entry.is_file() and self.accepts(entry):
                 result.append(entry)
+
+    def _excludes_dir(self, directory: Path) -> bool:
+        """Return True when an exclude pattern rejects the whole directory.
+
+        Test the path with a trailing slash, the way it opens every path
+        beneath it. A walk that visited what it was going to throw away
+        cost 5.5 times the query: 589,968 files, 272,364 of them under
+        one excluded directory.
+        """
+        text = directory.as_posix() + "/"
+        if any(p.search(text) for p in self._exclude):
+            log.debug("Skip excluded directory %s", directory)
+            return True
+        return False

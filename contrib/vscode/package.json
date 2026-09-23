@@ -1,0 +1,137 @@
+{
+  "name": "ish",
+  "displayName": "ish: search code by meaning",
+  "description": "Semantic code search for a workspace, through the resident ish-mcp server.",
+  "version": "0.1.0",
+  "publisher": "davetothek",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/davetothek/interactive-semantic-hunt",
+    "directory": "contrib/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/davetothek/interactive-semantic-hunt/issues"
+  },
+  "homepage": "https://github.com/davetothek/interactive-semantic-hunt/tree/main/contrib/vscode#readme",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "search",
+    "semantic",
+    "embeddings",
+    "code",
+    "mcp"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "ish.search",
+        "title": "Search by meaning",
+        "category": "ish"
+      },
+      {
+        "command": "ish.searchHere",
+        "title": "Search below this file's directory",
+        "category": "ish"
+      },
+      {
+        "command": "ish.refresh",
+        "title": "Refresh the index",
+        "category": "ish"
+      },
+      {
+        "command": "ish.complete",
+        "title": "Finish the filter word",
+        "category": "ish"
+      },
+      {
+        "command": "ish.restart",
+        "title": "Restart the server",
+        "category": "ish"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ish.search",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i"
+      },
+      {
+        "command": "ish.complete",
+        "key": "tab",
+        "when": "inQuickOpen && ish.pickerOpen"
+      }
+    ],
+    "configuration": {
+      "title": "ish",
+      "properties": {
+        "ish.command": {
+          "type": "string",
+          "default": "ish-mcp",
+          "description": "The command that starts the server. It must be on PATH, or name the full path."
+        },
+        "ish.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Arguments passed to the server command."
+        },
+        "ish.limit": {
+          "type": "integer",
+          "default": 40,
+          "minimum": 1,
+          "description": "How many results one search returns."
+        },
+        "ish.debounceMs": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 0,
+          "description": "How long typing must pause before a search is sent."
+        },
+        "ish.preview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the highlighted chunk in the editor while the picker is open."
+        },
+        "ish.refreshOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask the server to refresh the index when a file in a searched workspace folder is saved."
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "ish.complete",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node --test \"out/test/**/*.test.js\"",
+    "check": "npm run build && npm test",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.6.0"
+  },
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  }
+}

@@ -110,3 +110,31 @@ class TestLlamaCppEmbedder:
             ["search_document: hello", "search_document: world"]
         )
         assert result == [[0.1, 0.2], [0.8, 0.9]]
+
+
+class TestContextWindow:
+    """Verify the window is set when the model loads, and only when asked."""
+
+    def test_a_window_becomes_n_ctx(
+        self, mock_llama_cpp: tuple[MagicMock, MagicMock]
+    ) -> None:
+        import llama_cpp
+
+        LlamaCppEmbedder.from_option("org/repo/w.gguf", context_tokens=8192)
+        llama_cpp.Llama.assert_called_once_with(
+            model_path="/fake/path/model.gguf",
+            embedding=True,
+            verbose=False,
+            n_ctx=8192,
+        )
+
+    def test_the_default_leaves_the_engine_to_its_own(
+        self, mock_llama_cpp: tuple[MagicMock, MagicMock]
+    ) -> None:
+        import llama_cpp
+
+        LlamaCppEmbedder.from_option("", context_tokens=8192)
+        assert llama_cpp.Llama.call_args.kwargs["n_ctx"] == 8192
+        llama_cpp.Llama.reset_mock()
+        LlamaCppEmbedder.from_option("")
+        assert "n_ctx" not in llama_cpp.Llama.call_args.kwargs
