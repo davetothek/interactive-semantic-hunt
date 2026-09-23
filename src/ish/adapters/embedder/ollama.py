@@ -59,6 +59,21 @@ def _normalize_host(host: str) -> str:
     return host
 
 
+def _is_loopback(host: str) -> bool:
+    """Return True when the host names this machine."""
+    # Only the error path calls this, so pay the imports here.
+    import ipaddress
+    import urllib.parse
+
+    name = urllib.parse.urlsplit(host).hostname or ""
+    if name == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
 class OllamaEmbedder(PrefixingEmbedder):
     """Generate embeddings through a running Ollama daemon.
 
@@ -140,6 +155,20 @@ class OllamaEmbedder(PrefixingEmbedder):
                 wait *= 2
         return self._embed_batch(batch, timeout)
 
+    def _unreachable_hint(self) -> str:
+        """Say how to reach the daemon, for a local host or a remote one."""
+        if not _is_loopback(self.host):
+            return (
+                "OLLAMA_HOST names that machine. Make sure the daemon runs "
+                "there and accepts a remote connection. To embed on this "
+                "machine instead, unset OLLAMA_HOST."
+            )
+        return (
+            "Start it with 'ollama serve', or install another backend and "
+            "select it, as in 'pip install interactive-semantic-hunt[llama]' "
+            "then '--embedder llama.cpp'."
+        )
+
     def _embed_batch(self, batch: list[str], timeout: float) -> list[Sequence[float]]:
         """Send one batch and return its vectors."""
         # The HTTP client costs 20 ms to import, which a process that
@@ -182,10 +211,7 @@ class OllamaEmbedder(PrefixingEmbedder):
         except urllib.error.URLError as exc:
             raise _Transient(
                 f"Cannot reach Ollama at {self.host}: {exc.reason}. "
-                f"Start it with 'ollama serve', or install another backend "
-                f"and select it, as in "
-                f"'pip install interactive-semantic-hunt[llama]' "
-                f"then '--embedder llama.cpp'."
+                f"{self._unreachable_hint()}"
             ) from exc
         except json.JSONDecodeError as exc:
             raise RuntimeError(
