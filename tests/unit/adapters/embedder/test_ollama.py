@@ -399,3 +399,32 @@ class TestTaskPrefixes:
 
     def test_query_returns_one_vector(self, recorder: Recorder) -> None:
         assert OllamaEmbedder("all-minilm").embed_query("ab") == [2.0]
+
+
+class TestContextWindow:
+    """Verify the window reaches the daemon, and only when asked for.
+
+    The daemon launches an embedding model with 2048 tokens and drops
+    what lies past the window with no signal. nomic-embed-text accepts
+    8192, which is about four times the text of each chunk.
+    """
+
+    def test_nothing_is_sent_at_the_default(self, recorder: Recorder) -> None:
+        OllamaEmbedder().embed_documents(["a"])
+        assert "options" not in recorder.requests[0]
+
+    def test_a_window_is_sent_as_num_ctx(self, recorder: Recorder) -> None:
+        OllamaEmbedder(context_tokens=8192).embed_documents(["a"])
+        assert recorder.requests[0]["options"] == {"num_ctx": 8192}
+
+    def test_a_query_carries_the_window_too(self, recorder: Recorder) -> None:
+        OllamaEmbedder(context_tokens=8192).embed_query("q")
+        assert recorder.requests[0]["options"] == {"num_ctx": 8192}
+
+    def test_the_option_passes_through(self) -> None:
+        made = OllamaEmbedder.from_option("mxbai-embed-large", context_tokens=8192)
+        assert made.model_name == "mxbai-embed-large"
+        assert made.context_tokens == 8192
+
+    def test_the_default_leaves_the_daemon_to_its_own(self) -> None:
+        assert OllamaEmbedder.from_option("").context_tokens is None

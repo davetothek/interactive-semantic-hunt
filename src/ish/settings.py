@@ -161,6 +161,33 @@ class Settings:
             action="boolean_optional",
         ),
     )
+    unignore: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Index paths matching these expressions although git ignores them. "
+            "Anchored at the tree root, like include.",
+            nargs="+",
+            metavar="REGEX",
+        ),
+    )
+    context_tokens: int = field(
+        default=2048,
+        metadata=_opt(
+            "How many tokens the embedding model reads of each chunk. The chunk "
+            "cap follows from it. Changing it embeds every chunk again.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    max_chunks: int = field(
+        default=1000,
+        metadata=_opt(
+            "Index a file that yields more chunks than this as one chunk. "
+            "A file that yields thousands is generated.",
+            type=int,
+            metavar="N",
+        ),
+    )
     languages: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

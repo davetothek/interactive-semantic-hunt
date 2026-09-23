@@ -10,6 +10,41 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Read more of each chunk, with `--context-tokens N` or the `context_tokens`
+  key. The chunk cap of 8,000 characters follows from the 2048-token window
+  Ollama serves by default, and `nomic-embed-text` accepts 8192. The cap
+  scales with the window, the window reaches Ollama and llama.cpp, and a
+  vector made under a wider window is kept apart from one made under the
+  default, so the change embeds every chunk again and the old vectors stay
+  for a return. The default is unchanged until the retrieval gain is
+  measured.
+- Guard against a machine-generated file. A file that yields more than
+  `max_chunks` chunks, 1000 by default, is indexed as one chunk under its
+  own name, and the run says so once with the count. One 26.3 MB register
+  map produced 32,768 chunks, hours of embedding for text nobody searches
+  by meaning. Set `--max-chunks N` for a tree whose hand-written files are
+  larger.
+- Index one tree that git ignores while git still filters the rest, with
+  `--unignore REGEX` or the `unignore` key. A pattern is anchored at the
+  tree root, like `include`. `git = false` was all or nothing: reaching one
+  ignored checkout also reached a 386 MB virtual environment, 903 MB of
+  build output, and a 621 MB cache, each found one crash at a time.
+- Search from VS Code. `contrib/vscode/` is an extension that drives the
+  resident `ish-mcp` server from a QuickPick, the same shape as the Neovim
+  client: live results as you type, a preview of the highlighted chunk, the
+  index refreshed when the picker opens with its progress in the status
+  bar, and Tab to finish a filter word. It ships on its own schedule.
+- Complete a filter word over MCP, with `complete_filter`. It answers with
+  the completed query and the candidates in one call, from the registries
+  the resident server already holds. `ish-complete` gave the same answer
+  through a fresh process, which cost about 107 ms a Tab, nearly all of it
+  interpreter start.
+- Finish a filter word with Tab in the picker. `ty` becomes `type:` and
+  `lang:cp` becomes `lang:cpp`, as in Neovim, and a word with several
+  answers names them. The query field keeps focus.
+- Finish a filter word in the shell. `contrib/shell/ish.bash` and
+  `contrib/shell/_ish` bind `ish-complete` for bash and zsh, so
+  `ish lang:cp<Tab>` becomes `ish lang:cpp` on the command line.
 - Name the config file to read, with `--config PATH`, `-c`, or `ISH_CONFIG`.
   The named file stands in place of the files ish looks for by walking up
   from the tree. The user file below it still applies, so a machine-wide
@@ -29,8 +64,55 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   the command palette, which the picker turns off to keep `ctrl+p` for the
   previous result.
 
+### Changed
+
+- A change to how files divide into chunks reaches an existing index on
+  its next refresh. Staleness is per file, so the size cap added in 0.1.0
+  applied only to files that changed, and applying it to an existing index
+  meant `--reindex`, 5,632 new chunks on one tree. The index now records
+  the chunking it was read under. A refresh that finds another reads every
+  file again and embeds only text it has never seen. This release re-reads
+  every file once, and re-embeds nothing.
+- The picker and the resident server load the model as soon as their
+  refresh is done, while nothing waits on them. A daemon unloads an idle
+  model and loads it again on the next request, which costs seconds, and
+  the first keystroke paid that.
+- The Neovim and VS Code clients ask the server to refresh when a file is
+  saved, once a search has started the server. An edit was searchable only
+  on the server's next poll, up to `refresh_seconds` later, which is 30 s
+  by default. The editor is the one place that knows a file was saved.
+- The picker paints before it scans. It lists what the index held last time
+  at once, answers a query from that while the staleness scan and the
+  refresh run behind the query field, and lists again when they land. The
+  refresh progress moves to the header, so it never covers a preview. On
+  23,215 chunks the scan was most of a 0.77 s startup, spent before anything
+  was on screen.
+
 ### Fixed
 
+- A Markdown or AsciiDoc file with no heading made no chunks and said
+  nothing, while it entered the index as a file and looked indexed. On one
+  tree 2,844 files held no chunks. Such a file is now one chunk named after
+  the file when it holds a line of prose, and stays out when it holds only
+  attribute definitions, includes, conditionals, comments, and table rows.
+  `index_status` and `Ish.status()` report how many files were read and
+  yielded nothing.
+- An index run wrote every chunk row after the last vector of the run, so
+  a reader saw 0 files and 0 chunks for the whole of one 2 h 43 m run under
+  `--reindex`, and a run that stopped kept its vectors and none of its
+  rows. The rows of a file now land as soon as its vectors are stored,
+  every 64 chunks, so a second process sees the run as it goes and a
+  stopped run keeps what it earned.
+- An `exclude` pattern rejected each file after the walk had reached it,
+  while `ignore` kept the walk out of a directory altogether. One query at
+  the root of a 589,968-file tree took 10 s with its heavy directories in
+  `exclude` and 1.8 s with the same names in `ignore`. An `exclude` pattern
+  that matches a directory now keeps the walk out of it too.
+- An `include` pattern matched a path segment at any depth, so a whitelist
+  of one directory also admitted every copy of it under a worktree or an
+  artifact tree. On one firmware tree that was 168,763 files for a corpus
+  of a tenth that. An `include` pattern is now anchored at the root of the
+  tree it indexes. Write `(?:.*/)?name/` to take a name at any depth.
 - A call against an index that another process was writing waited without a
   limit. One index run held a status call for 1800 s, which returned no
   error and no progress. A store now waits two seconds for the lock and then

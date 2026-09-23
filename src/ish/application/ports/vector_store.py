@@ -54,6 +54,14 @@ class VectorReader(Protocol):
         """Return how many chunks the store holds, without building them."""
         ...
 
+    def indexed_paths(self) -> Sequence[Path]:
+        """Return every file the store has read, whether or not it yielded chunks.
+
+        A file that yielded nothing is stamped so it is read once, and a
+        status that counted only chunks could not say it was there.
+        """
+        ...
+
     def search(
         self,
         query_vector: Sequence[float],
@@ -119,4 +127,17 @@ class VectorStore(VectorReader, Protocol):
 
     def clear(self) -> None:
         """Discard every indexed file, so the next refresh rebuilds."""
+        ...
+
+    def chunking(self) -> str:
+        """Return the chunking stamp the files were read under, or empty.
+
+        The stamp names how files were divided into chunks. A refresh
+        that finds a different one reads every file again and reuses
+        every vector, because a vector is keyed by content.
+        """
+        ...
+
+    def set_chunking(self, stamp: str) -> None:
+        """Record the chunking stamp the files are read under from now on."""
         ...

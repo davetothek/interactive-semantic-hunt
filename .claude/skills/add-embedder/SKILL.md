@@ -42,9 +42,15 @@ class <Name>Embedder(PrefixingEmbedder):
         self._client = <library>...
 
     @classmethod
-    def from_option(cls, model: str) -> "<Name>Embedder":
-        """Build the backend the ``model`` option names. Empty means the default."""
-        return cls(model) if model else cls()
+    def from_option(
+        cls, model: str, context_tokens: int | None = None
+    ) -> "<Name>Embedder":
+        """Build the backend the ``model`` option names. Empty means the default.
+
+        *context_tokens* is the window to read of each text, or None for
+        the backend's own. Pass it to the library when it takes one.
+        """
+        return cls(model or DEFAULT_MODEL, context_tokens=context_tokens)
 
     def _embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Return one vector per text, in order."""

@@ -61,8 +61,10 @@ ish "parse a python file" src/
 
 Run the interactive picker and open the selection in your editor. Type to
 search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `ctrl+t`
-to change the theme, `escape` to quit. Narrow without leaving the query
-line:
+to change the theme, `escape` to quit. The picker lists what the index held
+last time before it looks for changes, and answers from that while the
+refresh runs, with the progress in the header. Narrow without leaving the
+query line:
 
 ```text
 state machine transitions              every language
@@ -72,10 +74,16 @@ type:doc how do I configure this       the prose, not the code
 type:test,doc retry backoff            the tests and what they document
 ```
 
-Press Tab to finish a filter word. `ty` becomes `type:`, `lang:cp` becomes
-`lang:cpp`, and `under:/s` becomes `under:/src/`; a word with several answers
-grows as far as they agree and names the rest. `ish-complete` does the work, so
-any picker can call it.
+Press Tab to finish a filter word, in the picker and in Neovim alike. `ty`
+becomes `type:`, `lang:cp` becomes `lang:cpp`, and `under:/s` becomes
+`under:/src/`; a word with several answers grows as far as they agree and
+names the rest. `ish-complete` does the work from the command line, and
+`complete_filter` does it over MCP, so any picker can call whichever it has.
+
+The shell finishes the same words on the command line. Source
+`contrib/shell/ish.bash` from `~/.bashrc`, or copy `contrib/shell/_ish` to a
+directory on zsh's `$fpath`, and `ish lang:cp<Tab>` becomes `ish lang:cpp`.
+Both call `ish-complete`, so the shell learns nothing about the languages.
 
 `lang:`, `under:`, and `type:` work in the query line of every interface —
 the command line, the picker, Neovim, and MCP. The words are taken out
@@ -128,13 +136,16 @@ nvim $(ish -i src/)
 | `--color {auto,always,never}` | Control log color |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
-| `--include REGEX ...` | Index only paths matching these patterns |
+| `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
 | `--exclude REGEX ...` | Never index paths matching these patterns |
 | `--git`, `--no-git` | Skip files git ignores (default: on) |
+| `--unignore REGEX ...` | Index these paths although git ignores them, anchored at the tree root |
 | `--lang LANG ...` | Show results only from these languages |
 | `--under REGEX` | Show results only from matching paths |
 | `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |
 | `--type-patterns TYPE:REGEX ...` | Say what a path holds, overriding the built-in reading |
+| `--max-chunks N` | Index a file that yields more chunks than this as one chunk (default 1000) |
+| `--context-tokens N` | How many tokens the model reads of each chunk (default 2048) |
 | `--model NAME` | Override the backend model |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
@@ -186,9 +197,23 @@ in, so nvim draws one over the last screen row — the statusline itself.
 The picker never blocks the editor: results are written as they arrive, so
 typing stays smooth however long a search takes.
 
+Saving a buffer tells the server to refresh, once a search has started it,
+so an edit is searchable moments after the save. The server would otherwise
+notice on its next poll, up to `refresh_seconds` later.
+
 `contrib/nvim/ish_server.lua` keeps one `ish-mcp` process per session. It
 starts on the first search and is reused after that, which cuts a keystroke
 from about 500 ms to about 150 ms. Copy it beside the picker.
+
+## Use from VS Code
+
+`contrib/vscode/` is an extension that drives the same `ish-mcp` server
+from a QuickPick. Press `Ctrl+Alt+I` and type. The highlighted chunk shows
+in the editor beside the picker, Enter opens it with its lines selected, and
+Tab finishes a filter word. While the index refreshes, the status bar shows
+`ish ███░░░░░ 38%`. It needs `ish-mcp` on PATH, like the Neovim client, and
+its README says how to build, install, and release it. It ships on its own
+schedule, apart from the PyPI package.
 
 ## Use from Python
 
@@ -219,8 +244,15 @@ can query the index directly. Add it to a project with `.mcp.json`:
 }
 ```
 
-It offers `search_code`, `list_chunks`, `index_status`, and `refresh_index`. The server stays
-resident, so a query costs about 58 ms rather than a process start.
+It offers `search_code`, `list_chunks`, `index_status`, `refresh_index`, and
+`complete_filter`. The server stays resident, so a query costs about 58 ms
+rather than a process start, and a filter word completes from the registries
+the server already holds rather than through a fresh `ish-complete`.
+
+The server re-checks a tree every `refresh_seconds`, 30 by default. An
+editor knows the moment a file is saved, so the Neovim and VS Code clients
+call `refresh_index` then, and an edit is searchable moments later. A client
+of your own should do the same.
 
 A call may narrow one search with `lang`, `under`, `type`, and `limit`, or
 write the same filters into the query text. It cannot change
@@ -245,8 +277,19 @@ ish "warm" project/firmware    # and another
 ish "how is exposure set" project    # searches both
 ```
 
+When a release changes how files divide into chunks, the next refresh
+reads every file again under the new division and embeds only text it has
+never seen. Parsing a 10,000-file tree costs seconds. Embedding it costs
+hours, and a vector is keyed by its text, so none of that is paid twice.
+
 Searching a parent never rewrites an index below it. Pass `--no-federate` to use
 only the index of the exact path.
+
+A Markdown or AsciiDoc file with no heading is one chunk, named after the
+file, when it holds a line of prose. A file of attribute definitions,
+includes, and table rows holds nothing a query asks for and stays out.
+`index_status` and `Ish.status()` count the files that were read and
+yielded nothing, so a tree of such files is not mistaken for an index.
 
 The index records where each chunk is — its path, line range, kind, and name —
 together with the embedding vector. It does not store the source, so it is not a
@@ -270,11 +313,21 @@ ignore = [".git", ".venv", "build", "node_modules"]
 exclude = ["/vendor/", "_pb2\\.py$", "(_test|_spec)\\.py$"]
 ```
 
-`include` and `exclude` take regular expressions rather than globs, so `/vendor/`
-matches at any depth and alternation works. `exclude` wins over `include`.
+`include` and `exclude` take regular expressions rather than globs, so
+alternation works. `exclude` is searched against the whole path, so `/vendor/`
+matches at any depth. `include` is anchored at the root of the tree, so
+`30\.Firmware/` indexes that directory and not `99.Artifacts/30.Firmware/`.
+Write `(?:.*/)?30\.Firmware/` to take the name at any depth. `exclude` wins
+over `include`.
 
 `--git` is on by default, so anything a `.gitignore` covers stays out of the
-index. Pass `--no-git` to index it anyway.
+index. Pass `--no-git` to index it all anyway, or name the one ignored tree
+that belongs in the index with `unignore`, anchored at the root like
+`include`, and let git keep filtering the rest:
+
+```toml
+unignore = ["11\\.SystemSpec/"]   # a checkout of another system, hidden from git
+```
 
 ### Keep generated code out
 
@@ -306,6 +359,10 @@ Two things to know:
   that.
 - A pattern is a regular expression searched against the whole path, so
   `/generated/` matches at any depth and needs no wildcards.
+- A pattern that matches a directory, written with its trailing slash, keeps
+  the walk out of it. `/build/` never enters `build`, so a tree of 272,364
+  generated files costs nothing at all. A pattern that names files, such as
+  `_pb2\.py$`, still reads every directory to find them.
 
 Check a pattern before you pay to index it. An empty query lists what the
 filter allows, and `--no-cache` keeps the trial out of the stored index:
@@ -317,6 +374,12 @@ ish "" . --no-cache --exclude '/generated/' | wc -l  # what the pattern leaves
 
 If most of a tree is generated, it is usually less work to exclude the
 directory than to name each suffix.
+
+A file that slips past every pattern is caught by its size in chunks. A file
+that yields more than `max_chunks` of them, 1000 by default, is indexed as
+one chunk under its own name, and the run says so once. A file that large is
+generated: the largest hand-written file measured split into 374 pieces, the
+register map into 32,768. Raise the limit for a tree that is different.
 
 `--lang` and `--under` narrow what a search *returns*. They never change what is
 indexed, so a narrowed query cannot shrink the index:
@@ -351,6 +414,26 @@ and still inherit the `type_patterns` the repository above it set.
 
 Set any option from the environment with the `ISH_` prefix, for example
 `ISH_LIMIT=20` or `ISH_IGNORE=build,dist`.
+
+### Read more of each chunk
+
+A chunk is capped at 8,000 characters because Ollama serves an embedding
+model a window of 2048 tokens, and a model drops what lies past its window
+with no signal. `nomic-embed-text` accepts 8192. Ask for it, and the cap
+follows to 32,000 characters, so a chunk carries about four times the
+meaning:
+
+```toml
+context_tokens = 8192
+```
+
+A model given more of a text produces another vector for it, so the change
+embeds every chunk again under the new window, and the vectors made under
+the old one stay for a return to it. Measure before paying that:
+`/benchmark` in this repository reports top-1 and MRR for a query set, and
+a wider window is worth its re-index only when the table moves. The
+`llama.cpp` backend takes the window the same way. The `st` backend reads
+it from the model card, so there only the cap follows.
 
 ### Name one config file
 

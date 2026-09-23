@@ -24,9 +24,13 @@ The `add-language` skill walks through it.
 - Two parsers claiming one suffix is a hard error. Resolve it with the
   `languages` option, not by editing the other parser.
 - Do not cap chunk size inside a parser. `SizeLimited` wraps every parser in
-  `build_parsers()`, so a plugin gets the cap without asking.
+  `build_parsers()`, so a plugin gets the cap without asking. `CountLimited`
+  wraps outside it and reads a file of more than `max_chunks` chunks as one.
 - `MAX_CHUNK_CHARS` is a constant, not a setting. It describes what the
-  embedding model can read.
+  embedding model reads at the default window. `chars_for()` scales it to
+  the `context_tokens` setting, and `build_parsers()` hands the result to
+  the wrappers. A parser that divides by size itself exposes `limit`, which
+  `build_parsers()` sets the same way.
 - Import a grammar or a library inside the method that needs it. Listing the
   registry must cost nothing.
 - Raise `ParseError` when nothing parses. A parser that recognizes part of a
@@ -43,7 +47,8 @@ The `add-language` skill walks through it.
   things it holds. Do not split an entry's own fields.
 - `markup.py` reads Markdown and AsciiDoc as one parser built twice. A
   section runs to the next heading. The symbol is the heading path. Skip
-  fenced blocks.
+  fenced blocks. A file with no heading is one chunk named after the file
+  when it holds a line of prose, and nothing when it holds only machinery.
 - `tree_sitter.py` reads C and C++ as one parser, `cpp`, which owns `.h`. A
   type is a definition only when it has a body. A declaration is a chunk only
   when it declares a function, and is dropped when the same file defines it.

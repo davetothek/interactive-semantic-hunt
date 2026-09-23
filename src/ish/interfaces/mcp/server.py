@@ -5,6 +5,7 @@ backend and the persistent index are opened once and reused by every
 call, so a query costs a search rather than a startup.
 """
 
+import json
 import logging
 import sys
 import threading
@@ -176,6 +177,11 @@ class IshTools:
 
         try:
             bootstrap.refresh_indexes(self._settings, root, on_progress=note)
+            # The watch thread has nothing waiting on it, so pay the
+            # model load here rather than on the next query.
+            session = self._by_root.get(root)
+            if session is not None:
+                session.warm()
         except Exception as exc:  # noqa: BLE001 - a watch must not die
             log.warning("Cannot refresh %s: %s", root, exc)
         finally:
@@ -250,9 +256,27 @@ class IshTools:
             f"Index for {root}\n"
             f"  refreshing: {doing or 'no'}\n"
             f"  chunks   : {status['chunks']}\n"
+            f"  files    : {status['files']} with chunks, "
+            f"{status['empty_files']} with none\n"
             f"  languages: {breakdown or 'none'}\n"
             f"  embedder : {self._settings.embedder}\n"
             f"  file     : {bootstrap.catalog(self._settings).path_for(root)}"
+        )
+
+    def complete_filter(self, arguments: Mapping[str, Any]) -> str:
+        """Finish the filter word a query ends in, for an editor's picker.
+
+        Return a JSON object. ``text`` is the query with its last word
+        grown as far as the choices agree, unchanged when nothing fits.
+        ``candidates`` names the choices when the word could still
+        become several things, and is empty otherwise. An editor reads
+        both in one call, so a Tab costs a round trip and no process
+        start.
+        """
+        query = str(arguments.get("query") or "")
+        session = self._session_for(self._resolve(arguments.get("path")))
+        return json.dumps(
+            {"text": session.complete(query), "candidates": session.candidates(query)}
         )
 
     def tools(self) -> list[Tool]:
@@ -328,6 +352,29 @@ class IshTools:
                     "properties": {"path": _PATH_PROPERTY},
                 },
                 handler=self.refresh,
+            ),
+            Tool(
+                name="complete_filter",
+                description=(
+                    "Finish the filter word a query ends in, the way a shell "
+                    "finishes a path: ty becomes type:, lang:cp becomes "
+                    "lang:cpp, and under:/s becomes the subtree that starts "
+                    "with s. Returns JSON with the completed text and, when "
+                    "several answers fit, the candidates to choose between. "
+                    "For an editor's picker, which calls it on Tab."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The query as typed so far.",
+                        },
+                        "path": _PATH_PROPERTY,
+                    },
+                    "required": ["query"],
+                },
+                handler=self.complete_filter,
             ),
         ]
 

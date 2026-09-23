@@ -374,7 +374,7 @@ class TestPathFilters:
         return tmp_path
 
     def _names(self, tree: Path, **kwargs) -> list[str]:
-        scanner = Scan(parsers=[FakeParser()], **kwargs)
+        scanner = Scan(parsers=[FakeParser()], root=tree, **kwargs)
         return sorted(p.name for p in scanner.discover(tree))
 
     def test_no_filter_takes_everything(self, tree: Path) -> None:
@@ -399,15 +399,15 @@ class TestPathFilters:
         assert found == ["api_pb2.py", "app.py"]
 
     def test_include_restricts_to_matches(self, tree: Path) -> None:
-        assert self._names(tree, include=[r"/gen/"]) == ["api_pb2.py"]
+        assert self._names(tree, include=[r"gen/"]) == ["api_pb2.py"]
 
     def test_include_accepts_any_of_the_patterns(self, tree: Path) -> None:
-        found = self._names(tree, include=[r"/gen/", r"app\.py$"])
+        found = self._names(tree, include=[r"gen/", r"app\.py$"])
         assert found == ["api_pb2.py", "app.py"]
 
     def test_exclude_beats_include(self, tree: Path) -> None:
         """The safer rule wins, so a mistake keeps a file out."""
-        found = self._names(tree, include=[r"\.py$"], exclude=["/vendor/"])
+        found = self._names(tree, include=[r".*\.py$"], exclude=["/vendor/"])
         assert "third.py" not in found
 
     def test_regex_alternation(self, tree: Path) -> None:
@@ -421,7 +421,7 @@ class TestPathFilters:
 
     def test_accepts_agrees_with_discovery(self, tree: Path) -> None:
         """Pruning relies on this, so the two must never disagree."""
-        scanner = Scan(parsers=[FakeParser()], exclude=["/vendor/"])
+        scanner = Scan(parsers=[FakeParser()], exclude=["/vendor/"], root=tree)
         found = set(scanner.discover(tree))
         for path in tree.rglob("*.py"):
             assert scanner.accepts(path) == (path in found), path
@@ -433,6 +433,179 @@ class TestPathFilters:
     def test_invalid_include_regex(self) -> None:
         with pytest.raises(ValueError, match="'include'"):
             Scan(parsers=[FakeParser()], include=["*bad"])
+
+
+class TestIncludeIsAnchoredAtTheRoot:
+    """Verify an include pattern names a place in the tree, not a segment.
+
+    One firmware tree kept fourteen worktrees under `.claude/worktrees`,
+    each with its own `30.Firmware`, and `99.Artifacts/30.Firmware`
+    beside them. A pattern matched at any depth admitted 168,763 files,
+    about ten times the corpus it named.
+    """
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        for parent in ("", "99.Artifacts", ".claude/worktrees/wt-1"):
+            firmware = tmp_path / parent / "30.Firmware"
+            firmware.mkdir(parents=True)
+            (firmware / "main.py").write_text("pass\n")
+        return tmp_path
+
+    def _found(self, tree: Path, pattern: str) -> list[str]:
+        scanner = Scan(parsers=[FakeParser()], include=[pattern], root=tree)
+        return sorted(str(p.relative_to(tree)) for p in scanner.discover(tree))
+
+    def test_a_directory_name_matches_only_at_the_root(self, tree: Path) -> None:
+        assert self._found(tree, r"30\.Firmware(?:/|$)") == ["30.Firmware/main.py"]
+
+    def test_the_old_segment_pattern_also_matches_only_at_the_root(
+        self, tree: Path
+    ) -> None:
+        """`(?:^|/)` still matches, through the `^` branch, and only there."""
+        assert self._found(tree, r"(?:^|/)30\.Firmware(?:/|$)") == [
+            "30.Firmware/main.py"
+        ]
+
+    def test_any_depth_is_asked_for_explicitly(self, tree: Path) -> None:
+        found = self._found(tree, r"(?:.*/)?30\.Firmware/")
+        assert found == [
+            ".claude/worktrees/wt-1/30.Firmware/main.py",
+            "30.Firmware/main.py",
+            "99.Artifacts/30.Firmware/main.py",
+        ]
+
+    def test_pruning_asks_the_same_question(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], include=[r"30\.Firmware/"], root=tree)
+        assert scanner.accepts(tree / "30.Firmware" / "main.py") is True
+        assert (
+            scanner.accepts(tree / "99.Artifacts" / "30.Firmware" / "main.py") is False
+        )
+
+    def test_a_path_outside_the_root_is_matched_whole(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], include=[r".*/other/"], root=tree)
+        assert scanner.accepts(Path("/elsewhere/other/x.py")) is True
+
+    def test_a_file_root_is_matched_by_its_name(self, tree: Path) -> None:
+        one = tree / "30.Firmware" / "main.py"
+        scanner = Scan(parsers=[FakeParser()], include=[r"main\.py"], root=one)
+        assert scanner.discover(one) == [one]
+
+    def test_without_a_root_the_whole_path_is_matched(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], include=[r".*/30\.Firmware/"])
+        assert scanner.accepts(tree / "99.Artifacts" / "30.Firmware" / "main.py")
+
+
+class TestExcludePrunesTheWalk:
+    """Verify an excluded directory is never entered.
+
+    `ignore` pruned the walk and `exclude` did not, so every heavy
+    directory named in `exclude` was still visited to learn that its
+    files were unwanted. One query at the root of a 589,968-file tree
+    cost 10 s that way and 1.8 s with the same names in `ignore`.
+    """
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        (tmp_path / "app.py").write_text("pass\n")
+        deep = tmp_path / "build" / "out" / "deep"
+        deep.mkdir(parents=True)
+        (deep / "gen.py").write_text("pass\n")
+        return tmp_path
+
+    def _visited(self, tree: Path, monkeypatch, **kwargs) -> list[str]:
+        """Return the directories the walk read, in order."""
+        read: list[str] = []
+        original = Path.iterdir
+
+        def watched(self_path: Path):
+            read.append(str(self_path.relative_to(tree)) if self_path != tree else ".")
+            return original(self_path)
+
+        monkeypatch.setattr(Path, "iterdir", watched)
+        Scan(parsers=[FakeParser()], root=tree, **kwargs).discover(tree)
+        return read
+
+    def test_an_excluded_directory_is_not_entered(self, tree: Path, monkeypatch):
+        assert self._visited(tree, monkeypatch, exclude=["/build/"]) == ["."]
+
+    def test_without_the_pattern_the_walk_goes_all_the_way(
+        self, tree: Path, monkeypatch
+    ) -> None:
+        visited = self._visited(tree, monkeypatch)
+        assert visited == [".", "build", "build/out", "build/out/deep"]
+
+    def test_a_pattern_on_the_file_alone_prunes_nothing(
+        self, tree: Path, monkeypatch
+    ) -> None:
+        r"""`gen\.py$` names files, so the directories are still read."""
+        visited = self._visited(tree, monkeypatch, exclude=[r"gen\.py$"])
+        assert "build/out/deep" in visited
+
+    def test_the_files_beneath_are_gone_either_way(self, tree: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], root=tree, exclude=["/build/"])
+        assert [p.name for p in scanner.discover(tree)] == ["app.py"]
+
+
+class TestUnignoreKeepsOneIgnoredTree:
+    """Verify one ignored tree can join the index while git filters the rest.
+
+    A repository kept an SVN checkout at `11.SystemSpec`, hidden by its
+    `.gitignore`. Turning git off to reach it also reached a 386 MB
+    virtual environment, 903 MB of build output, and a 621 MB cache,
+    each found one crash at a time.
+    """
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        for name in ("11.SystemSpec", ".venv2", "build"):
+            (tmp_path / name).mkdir()
+            (tmp_path / name / "mod.py").write_text("pass\n")
+        (tmp_path / "app.py").write_text("pass\n")
+        return tmp_path
+
+    @staticmethod
+    def _git_ignores(path: Path) -> bool:
+        """Stand in for git: everything but the tracked file is ignored."""
+        return path.name != "app.py"
+
+    def _found(self, tree: Path, **kwargs) -> list[str]:
+        scanner = Scan(
+            parsers=[FakeParser()], root=tree, ignored_by=self._git_ignores, **kwargs
+        )
+        return sorted(str(p.relative_to(tree)) for p in scanner.discover(tree))
+
+    def test_git_alone_keeps_every_ignored_tree_out(self, tree: Path) -> None:
+        assert self._found(tree) == ["app.py"]
+
+    def test_the_named_tree_joins_and_the_rest_stay_out(self, tree: Path) -> None:
+        found = self._found(tree, unignore=[r"11\.SystemSpec/"])
+        assert found == ["11.SystemSpec/mod.py", "app.py"]
+
+    def test_the_pattern_is_anchored_at_the_root(self, tree: Path) -> None:
+        nested = tree / "build" / "11.SystemSpec"
+        nested.mkdir()
+        (nested / "copy.py").write_text("pass\n")
+        found = self._found(tree, unignore=[r"11\.SystemSpec/"])
+        assert "build/11.SystemSpec/copy.py" not in found
+
+    def test_exclude_still_beats_it(self, tree: Path) -> None:
+        found = self._found(tree, unignore=[r"11\.SystemSpec/"], exclude=[r"mod\.py$"])
+        assert found == ["app.py"]
+
+    def test_pruning_asks_the_same_question(self, tree: Path) -> None:
+        scanner = Scan(
+            parsers=[FakeParser()],
+            root=tree,
+            ignored_by=self._git_ignores,
+            unignore=[r"11\.SystemSpec/"],
+        )
+        assert scanner.accepts(tree / "11.SystemSpec" / "mod.py") is True
+        assert scanner.accepts(tree / "build" / "mod.py") is False
+
+    def test_a_malformed_pattern_names_the_option(self) -> None:
+        with pytest.raises(ValueError, match="'unignore'"):
+            Scan(parsers=[FakeParser()], unignore=["(open"])
 
 
 class TestFilteredPruning:

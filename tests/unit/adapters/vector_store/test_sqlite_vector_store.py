@@ -199,6 +199,38 @@ class TestSearch:
         assert store.chunks()[0].symbol is None
 
 
+class TestChunkingStamp:
+    """Verify the stamp survives reopening and starts empty."""
+
+    def test_starts_empty(self, store: SqliteVectorStore) -> None:
+        assert store.chunking() == ""
+
+    def test_round_trips_and_survives_reopening(self, db_path: Path) -> None:
+        store = SqliteVectorStore(db_path, model_id="m")
+        store.set_chunking("1:8000:1000")
+        store.set_chunking("2:8000:1000")
+        store.close()
+        again = SqliteVectorStore(db_path, model_id="m")
+        try:
+            assert again.chunking() == "2:8000:1000"
+        finally:
+            again.close()
+
+
+class TestIndexedPaths:
+    """Verify a file read and found empty is still reported as read."""
+
+    def test_a_file_with_no_chunks_is_listed(self, store: SqliteVectorStore) -> None:
+        store.add_vectors({"h": [1.0, 0.0]})
+        store.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h")])
+        store.set_file(Path("empty.adoc"), STAMP, [])
+        assert store.indexed_paths() == [Path("a.py"), Path("empty.adoc")]
+        assert {c.path for c in store.chunks()} == {Path("a.py")}
+
+    def test_an_empty_store_lists_nothing(self, store: SqliteVectorStore) -> None:
+        assert store.indexed_paths() == []
+
+
 class TestMaintenance:
     """Verify replacement, removal, and vector pruning."""
 

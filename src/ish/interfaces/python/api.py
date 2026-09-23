@@ -31,6 +31,7 @@ from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
+from ish.interfaces import completion
 from ish.settings import Settings, load_settings
 
 log = logging.getLogger(__name__)
@@ -124,6 +125,15 @@ class Ish:
         self._indexed = True
         return held
 
+    def warm(self) -> None:
+        """Load the model before the first query waits on it.
+
+        Call it once the index is open and nothing is waiting, so a
+        model the daemon had unloaded costs the wait here and not on
+        the first keystroke.
+        """
+        self._use_case.warm()
+
     def _ensure_indexed(self) -> None:
         """Bring the index up to date once, before the first question."""
         if not self._indexed:
@@ -169,6 +179,7 @@ class Ish:
         under: str = "",
         type: Sequence[str] = (),
         hybrid: bool | None = None,
+        stored: bool = False,
     ) -> list[Match]:
         """Return the best matching chunks, most similar first.
 
@@ -176,6 +187,10 @@ class Ish:
         from the arguments, so a line typed by a person works unchanged.
         Raise ``ValueError`` when nothing is left to search for once the
         filter words are taken out, or when a filter is malformed.
+
+        With *stored*, answer from what the index holds without bringing
+        it up to date first. A picker asks that way while its refresh
+        runs behind the query field.
         """
         text, _typed = parse_query(query)
         if not text:
@@ -185,7 +200,8 @@ class Ish:
             self.filters_of(query, lang=lang, under=under, type=type),
             self._words,
         )
-        self._ensure_indexed()
+        if not stored:
+            self._ensure_indexed()
         return list(
             self._use_case.search(
                 text,
@@ -202,18 +218,21 @@ class Ish:
         lang: Sequence[str] = (),
         under: str = "",
         type: Sequence[str] = (),
+        stored: bool = False,
     ) -> list[Chunk]:
         """Return every indexed chunk the filters allow, unranked.
 
         Read filter words out of *query* the way `search()` does, so a
-        query line with no words left lists what it allows.
+        query line with no words left lists what it allows. With
+        *stored*, list what the index holds without refreshing it.
         """
         keep = bootstrap.build_result_filter(
             self.settings,
             self.filters_of(query, lang=lang, under=under, type=type),
             self._words,
         )
-        self._ensure_indexed()
+        if not stored:
+            self._ensure_indexed()
         return self._use_case.all_chunks(keep)
 
     def scan(
@@ -236,6 +255,27 @@ class Ish:
         found = bootstrap.build_scan(self.settings, self.path).run(self.path)
         return [chunk for chunk in found if keep is None or keep(chunk)]
 
+    # ------------------------------------------------------------------
+    # Completing
+    # ------------------------------------------------------------------
+
+    def complete(self, text: str) -> str:
+        """Return *text* with its last filter word finished, or unchanged.
+
+        Grow the word the way a shell does: one answer finishes it and
+        adds a space, several grow it as far as they agree. A word that
+        fits nothing is left alone, so the key is never destructive.
+        """
+        return completion.complete(text, self.settings, self.path)
+
+    def candidates(self, text: str) -> list[str]:
+        """Return what the last word of *text* could still become.
+
+        Empty when one answer fits or none does. A picker shows these
+        beside the query when a completion could not choose.
+        """
+        return completion.candidates(text, self.settings, self.path)
+
     def status(self) -> dict[str, object]:
         """Report what is indexed for this tree.
 
@@ -255,10 +295,15 @@ class Ish:
             languages[chunk.language] = languages.get(chunk.language, 0) + 1
             kind = sort_into(chunk)
             kinds[kind] = kinds.get(kind, 0) + 1
+        with_chunks = {chunk.path for chunk in chunks}
+        # A file read and found to hold nothing looks indexed and is
+        # not searchable. Count it, so the gap has a name.
+        read = set(self._use_case.indexed_paths())
         return {
             "path": self.path,
             "chunks": len(chunks),
-            "files": len({chunk.path for chunk in chunks}),
+            "files": len(with_chunks),
+            "empty_files": len(read - with_chunks),
             "indexes": sorted(bootstrap.catalog(self.settings).below(self.path)),
             "languages": dict(sorted(languages.items())),
             "types": dict(sorted(kinds.items())),

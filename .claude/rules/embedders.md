@@ -9,8 +9,10 @@ paths:
 
 1. Write a subclass of `PrefixingEmbedder` in a new module in this package.
    Implement `_embed(texts)`, one vector per text in order, and
-   `from_option(model)`, which reads the `model` option the way this backend
-   needs. Empty means the default.
+   `from_option(model, context_tokens=None)`, which reads the `model` option
+   the way this backend needs. Empty means the default. `context_tokens` is
+   the window to ask the backend for, or None for the backend's own. A
+   backend that cannot set it says so at WARNING and leaves it.
 2. Add one `EMBEDDERS` entry in `__init__.py`, keyed by the `--embedder`
    name.
 

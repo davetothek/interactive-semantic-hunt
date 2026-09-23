@@ -12,11 +12,18 @@ paths:
 
 - Every rule about what to index lives in `Scan.accepts()` and nowhere else.
   Discovery and pruning both ask that one predicate.
-- `include` and `exclude` are regular expressions searched against the POSIX
-  path. `exclude` beats `include`. A malformed pattern names its option and
-  stops the run.
+- `include` and `exclude` are regular expressions over the POSIX path.
+  `exclude` is searched against the whole path. `include` is matched from
+  the start of the path written from the tree root, so it names a place and
+  not a segment. `exclude` beats `include`. A malformed pattern names its
+  option and stops the run.
+- The walk tests `exclude` against each directory it meets, written with a
+  trailing slash, and never enters one that matches. `ignore` prunes by
+  name, `exclude` by path. Both prune.
 - Ask git what it ignores through the `vcs` adapter. Do not reimplement
   ignore rules. Outside a repository, or without git, ignore nothing.
+  `unignore` lets a path git ignores in anyway, anchored like `include`.
+  `exclude` still beats it.
 - A query-scope filter (`lang`, `under`, `type`) never reaches
   `Scan.accepts()`. It would make the next run prune what it excluded.
 
@@ -38,12 +45,18 @@ paths:
   `parse_file()` returns an empty sequence for the first and `None` for the
   second.
 - Vectors are keyed by `(content_hash, model_id)`, not by path.
+- The store records the chunking stamp its files were read under.
+  `bootstrap.chunking_stamp()` composes it from `CHUNKING_VERSION` and the
+  caps. A refresh that finds another stamp clears the files, keeps the
+  vectors, and reads every file again. Raise `CHUNKING_VERSION` when a
+  parser changes where a file divides.
 
 ## The SQLite store
 
 - Opening an index writes nothing to it. Read the stored root first and write
   only a different one.
-- Persist vectors every 64 chunks. Chunk rows land at the end of a file.
+- Persist vectors every 64 chunks, and write the rows of every file whose
+  vectors are all stored right after. A reader sees the run as it goes.
 - A schema change bumps `SCHEMA_VERSION` and vacuums. Dropping a table
   without a vacuum leaves its pages readable on disk.
 - The index stores where a chunk is, never what it says: vectors, paths,

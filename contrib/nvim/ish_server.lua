@@ -79,6 +79,12 @@ local function send(method, params, callback)
   end
 end
 
+--- Report whether the server is up, without starting it.
+--- @return boolean running
+function M.running()
+  return state.job ~= nil and vim.fn.jobwait({ state.job }, 0)[1] == -1
+end
+
 --- Start the server if it is not already running. Safe to call repeatedly.
 --- @return boolean running
 function M.ensure()
