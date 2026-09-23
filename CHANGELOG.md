@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.5.0 - 2026-09-23
+
 ### Added
 
 - Read more of each chunk, with `--context-tokens N` or the `context_tokens`
