@@ -8,6 +8,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixed
+
+- Say what to do when a remote Ollama daemon does not answer. The message
+  told every user to start a daemon with `ollama serve`, which cannot help
+  when `OLLAMA_HOST` names another machine. The message now names that
+  machine and says how to embed on this one instead. A local host keeps the
+  advice it had.
+
 ## 0.5.0 - 2026-09-23
 
 ### Added
