@@ -267,6 +267,11 @@ choosing one of them to write to would be wrong — so it warns and offers
 `--refresh`, which visits each tree in turn. A repeated query reuses it, so only changed files are parsed and only new
 text is embedded. A renamed file re-embeds nothing.
 
+Beside each index file, a `-matrix` file holds the vectors of the model in
+use. A search maps that file into memory instead of reading every vector out
+of SQLite, which is what a fresh process used to pay first. A file older than
+the index is read past and written again, so it can be deleted at any time.
+
 Each index records the tree it was built from, so searching a directory also
 searches every index below it. Index the parts of a large project separately and
 search the whole from its root:
