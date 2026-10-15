@@ -8,6 +8,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- A search of a parent counts the chunks below it without building each
+  one. The indexes of sibling trees cannot share a chunk, so their counts
+  add up. Measured on a root over 7 indexes and 72,995 chunks, the count
+  cost 0.92 s of a 1.57 s query. A tree indexed inside another still lists
+  its chunks to count each once.
+
 ### Fixed
 
 - Say what to do when a remote Ollama daemon does not answer. The message

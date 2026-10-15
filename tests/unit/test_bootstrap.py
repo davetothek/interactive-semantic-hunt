@@ -452,6 +452,62 @@ class TestFederatedWiring:
         finally:
             reader.close()
 
+    def _listings(self, monkeypatch) -> list[int]:
+        """Count how often a store lists its chunks."""
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        listed: list[int] = []
+        original = SqliteVectorStore.chunks
+
+        def watched(store):
+            listed.append(1)
+            return original(store)
+
+        monkeypatch.setattr(SqliteVectorStore, "chunks", watched)
+        return listed
+
+    def test_sibling_indexes_count_without_listing(self, tmp_path, monkeypatch) -> None:
+        """A parent of siblings sums the counts, because siblings share no chunk."""
+        from dataclasses import replace
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        project = tmp_path / "proj"
+        for name in ("one", "two"):
+            (project / name).mkdir(parents=True)
+            self._index_for(indexes, name, project / name)
+        listed = self._listings(monkeypatch)
+
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
+        try:
+            assert reader.count() == 0
+            assert listed == []
+        finally:
+            reader.close()
+
+    def test_nested_indexes_still_count_each_chunk_once(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A tree indexed inside another may repeat a chunk, so list to count."""
+        from dataclasses import replace
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        project = tmp_path / "proj"
+        (project / "one").mkdir(parents=True)
+        self._index_for(indexes, "one", project / "one")
+        self._index_for(indexes, "root", project)
+        listed = self._listings(monkeypatch)
+
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
+        try:
+            assert reader.count() == 0
+            assert listed == [1, 1]
+        finally:
+            reader.close()
+
 
 class TestBusyIndexes:
     """Verify that an index under a writer does not stop a search above it.

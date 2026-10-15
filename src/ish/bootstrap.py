@@ -11,7 +11,7 @@ the recipe for adding one. This module only selects from them.
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -268,10 +268,23 @@ def build_stores(
             resolved,
         )
     readers: list[VectorReader] = [*others]
+    trees = [tree for tree in existing if tree != resolved]
     if primary is not None:
         readers.insert(0, primary)
+        trees.insert(0, resolved)
     log.info("Searching %d indexes under %s", len(readers), resolved)
-    return primary, FederatedReader(readers)
+    return primary, FederatedReader(readers, disjoint=not _nests(trees))
+
+
+def _nests(trees: Sequence[Path]) -> bool:
+    """Return True when one of *trees* sits inside another.
+
+    Only then can two indexes hold the same chunk, which is what makes
+    a count of the lot cost a listing of the lot.
+    """
+    return any(
+        inner != outer and outer in inner.parents for inner in trees for outer in trees
+    )
 
 
 def build_ignored_by(settings: Settings, root: Path):

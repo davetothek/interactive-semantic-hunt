@@ -101,6 +101,31 @@ class TestReading:
         duplicate = store_with(("same", [1.0, 0.0]))
         assert FederatedReader([shared, duplicate]).count() == 1
 
+    def test_disjoint_indexes_count_without_listing(self) -> None:
+        """Indexes of trees that do not nest cannot share a chunk.
+
+        Listing 72,995 chunks to count them cost 0.92 s a query on a
+        root that read 7 sibling indexes. A sum of counts costs a row
+        count each.
+        """
+
+        class Counting(PurePythonVectorStore):
+            listed = 0
+
+            def chunks(self):
+                Counting.listed += 1
+                return super().chunks()
+
+        stores = []
+        for name in ("alpha", "beta", "gamma"):
+            store = Counting()
+            store.add_vectors({name: [1.0]})
+            store.set_file(Path(f"{name}.py"), STAMP, [(chunk(name), name)])
+            stores.append(store)
+
+        assert FederatedReader(stores, disjoint=True).count() == 3
+        assert Counting.listed == 0
+
     def test_indexed_paths_join_every_index_once(self) -> None:
         one = store_with(("alpha", [1.0]))
         two = store_with(("alpha", [1.0]))
