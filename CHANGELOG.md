@@ -15,6 +15,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   add up. Measured on a root over 7 indexes and 72,995 chunks, the count
   cost 0.92 s of a 1.57 s query. A tree indexed inside another still lists
   its chunks to count each once.
+- The vectors a search scores are kept in a file beside each index, named
+  `-matrix`, and mapped into memory. Every process read every vector out of
+  SQLite and joined the blobs into one matrix, which cost 310 to 460 ms for
+  224 MB of vectors. Mapping the same bytes costs 18 ms. The file carries a
+  stamp of the index state it was built from, so a stale one is read past
+  and written again. SQLite stays the source of truth, and the file holds
+  ids and vectors only.
 
 ### Fixed
 
