@@ -328,6 +328,23 @@ hours, and a vector is keyed by its text, so none of that is paid twice.
 Searching a parent never rewrites an index below it. Pass `--no-federate` to use
 only the index of the exact path.
 
+### Worktrees and other checkouts
+
+The vectors of a repository live in one shared store beside the indexes,
+named after the repository the way git names it, so every checkout of the
+repository reaches the same file. A vector is keyed by the text it stands
+for, so a second checkout, such as a git worktree, finds the vectors of the
+first and embeds only what differs. Measured on a firmware tree of 6260
+chunks, a worktree shared 100 % of its chunk hashes with the main checkout
+and embedded nothing. Parsing it took 0.9 s. Chunk rows and file stamps stay
+in the index of each tree, because a result names a file to open.
+
+A search reads only the indexes of the checkout it starts in, so a worktree
+kept under `.claude/worktrees/` does not join a search of the main tree, and
+a search from a directory above several checkouts shows each chunk once. An
+index whose tree is gone is left out of every search and said so once.
+`ish --forget PATH` removes it and sweeps the vectors only it used.
+
 A Markdown or AsciiDoc file with no heading is one chunk, named after the
 file, when it holds a line of prose. A file of attribute definitions,
 includes, and table rows holds nothing a query asks for and stays out.

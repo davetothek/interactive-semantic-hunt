@@ -184,6 +184,22 @@ something broke. This is that record, so a rule is never argued from taste.
   swapping the vectors behind two chunks leaves every count the same, and
   SQLite's own change counter does not move in WAL mode. Hence the
   `generation` row in `meta`, bumped by every write transaction.
+- On /Project, the firmware tree of two worktrees, 6260 and 6266 chunks,
+  shares 100 % of its chunk hashes with the main index: 0 to embed, 0.9 s
+  to parse. A vector was shared only inside one index file, so each would
+  have embedded for hours. Hence one vectors store per repository, keyed by
+  the common directory every worktree reports alike. Moving 81,958 vectors
+  of the 7 main indexes into it took one query of 2.4 s, and the
+  50.Testing index went from 163 MB to 19 MB.
+- A scan rooted under `.claude/worktrees/` found 0 of 6260 chunks while
+  `ignore` and `exclude` judged the whole path. Judged from the scan root
+  instead, the main firmware tree grew from 6266 to 8152 chunks, because
+  patterns that name the tree, such as `30\.Firmware/include/HW`, stopped
+  matching when that tree was the one scanned. Hence the top of the
+  checkout as the anchor, which gives 6260 and 6266.
+- A worktree index under /Project joined every root search and nested
+  under the main tree, which put the count of a root query back on the
+  listing path. Hence a search reads the indexes of its own checkout.
 
 ### Embedding
 
