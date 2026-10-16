@@ -57,7 +57,11 @@ def test_query_output(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "[0.95] foo.py:1-2  function  foo" in out
-    mock_search_instance.build_index.assert_called_once_with(project.resolve(), None)
+    # The run reports its progress, so the callback is the busy line.
+    mock_search_instance.build_index.assert_called_once()
+    root, on_progress = mock_search_instance.build_index.call_args.args
+    assert root == project.resolve()
+    assert callable(on_progress)
     mock_search_instance.search.assert_called_once_with(
         "my search", 5, keep=None, hybrid=None
     )
@@ -97,7 +101,10 @@ def test_query_output_ollama(
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "[0.95] foo.py:1-2  function  foo" in out
-    mock_search_instance.build_index.assert_called_once_with(project.resolve(), None)
+    mock_search_instance.build_index.assert_called_once()
+    root, on_progress = mock_search_instance.build_index.call_args.args
+    assert root == project.resolve()
+    assert callable(on_progress)
     mock_search_instance.search.assert_called_once_with(
         "my search", 5, keep=None, hybrid=None
     )

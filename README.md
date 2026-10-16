@@ -261,42 +261,46 @@ write the same filters into the query text. It cannot change
 what is indexed — those settings come from the config file only, so no single
 call can shrink an index that another call depends on.
 
-## Keep one server running
+## Keep the index current
 
-`ish-serve` keeps one server resident for a tree. It listens on a Unix
-socket under `$XDG_RUNTIME_DIR/ish/`, named after the tree the way its index
-file is, serves every client of the tree through the tools `ish-mcp` offers,
-and outlives any of them:
+`ish-serve` keeps the indexes of a tree current, for every client that
+reads them. It refreshes the tree as soon as it starts, then every
+`refresh_seconds`, 30 by default, or when a client asks, and it answers no
+query:
 
 ```sh
 ish-serve /path/to/tree
 ```
 
-A running server refreshes its tree as soon as it starts, and then every
-`refresh_seconds`, so the index is current before anyone asks. Clients find
-it by walking up from the path they ask about, so a question about a
-subdirectory reaches the server of the tree that holds it:
+The server writes a status file under `$XDG_RUNTIME_DIR/ish/`, named after
+the tree the way its index file is, every few seconds while it runs. Every
+client reads the index itself. It walks up from the path it asks about, and
+when it finds the status of a live server whose refresh reaches that path,
+it leaves the refreshing to the server and reads what is stored:
 
-- `ish "query" path` answers from the index the server holds and asks it to
-  refresh behind the answer, so an edit is searchable on the next query
-  rather than embedded in front of this one. Measured on a root over 7
-  indexes and 72,995 chunks, a query cost 237 ms on its own and 131 ms
-  through the server, most of it the interpreter start of `ish` itself.
-- `ish-mcp` joins the server when it finds the socket and carries the lines
-  of its host to it, so every editor and every agent that spawns `ish-mcp`
-  shares the one server with no change on their side. A call that names no
-  path still means the directory the host started `ish-mcp` in.
+- `ish "query" path` walks nothing and embeds nothing before it answers.
+  Measured on a firmware tree of 6,266 chunks, a cold query took 691 ms on
+  its own and 274 ms beside a server, the difference being the walk of the
+  tree. While the server is mid-refresh, the run says so on stderr, with
+  the step the server is at, how fast it embeds, and about how long is
+  left, because the answer may not hold the latest edit yet.
+- `ish-mcp` starts no refresh thread for a tree the server keeps, and
+  `refresh_index` asks the server for a refresh now. `index_status` reports
+  what the server is doing.
+- Nothing in the editor clients changes.
 
-Without a server everything works as before: `ish` opens the index itself,
-and `ish-mcp` serves from its own process. A run that refreshes, reindexes,
-names a config file, or sets an option that decides what is indexed does its
-own work, because the server cannot take those per call.
+Without a server everything works as before: `ish` brings the index up to
+date in front of the answer, behind a line that shows what it is doing, and
+`ish-mcp` refreshes on a thread of its own. A server that was killed leaves
+a status file nobody writes, and after 30 seconds the clients read past it
+and refresh themselves again. A second `ish-serve` for the same tree exits
+at once, so a shell hook may start one without checking first, and one that
+finds the status of a dead server takes its place.
 
-`--socket PATH` names the socket. `--idle-seconds N` stops a server that has
-had no client for N seconds, and 0, the default, keeps it running. A second
-`ish-serve` for the same tree exits at once, so a shell hook may start one
-without checking first, and one that finds the socket of a server that was
-killed takes it over.
+`--once` refreshes once and exits, for a cron job or a hook. A server
+refreshes what `ish --refresh` would from the same path: every index at or
+below its tree, except the indexes of another checkout of the same
+repository, so a worktree wants a server of its own.
 
 ## Index
 

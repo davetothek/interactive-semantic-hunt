@@ -28,7 +28,9 @@ finishes a filter word. Nothing else is added.
 
 - Output one line per chunk: `path:start-end  kind  symbol`.
 - Write the refresh line to stderr, rewritten in place and cleared at the
-  end. stdout holds only results.
+  end. stdout holds only results. The line lives in `interfaces/busy.py`,
+  the one place a step is rendered with a rate and a time left, and
+  `ish-serve` writes the same text into its status.
 - Count skipped files in one line at WARNING. Name them at `-v`.
 
 ## TUI
@@ -56,16 +58,17 @@ finishes a filter word. Nothing else is added.
 - An index another process holds is left out of a search above it, with a
   warning that names it. A search of the held tree itself raises `StoreBusy`.
 - Report a tool failure through `isError`, not a JSON-RPC error.
-- `ish-serve` owns the socket and the lifecycle: it binds, watches its own
-  tree from the start, stops when idle if asked, and steps aside when one
-  already listens. It serves the same `Server` and one `IshTools`, so a
-  tree gets one session and one watch however many clients ask.
-- `ish-mcp` serves stdio and nothing else. It joins the server of its tree
-  when one listens, carrying lines both ways and filling the directory of
-  its host into a call that names no path. The CLI connects directly for a
-  plain query, and never for a run that refreshes, reindexes, names a
-  config file, or sets an index-scope option. Editor clients know nothing
-  of sockets.
+- `ish-serve` fills the index and answers nothing. It refreshes its tree
+  from the start, then on the interval or when nudged, writes its status
+  under the runtime directory every few seconds, and steps aside when a
+  live server already keeps the tree. Nothing connects a client to it.
+- A client reads the status through `Ish.kept_by()`. With a live server
+  whose refresh reaches the path, `Ish.index()` reads what is stored,
+  `IshTools` starts no watch thread, and `refresh_index` touches the nudge
+  file. A status nobody has written for `STALE_SECONDS` is a dead server,
+  and the client refreshes itself again. Editor clients know nothing of
+  the status file.
+- `ish-mcp` serves stdio and nothing else.
 
 ## Neovim
 
