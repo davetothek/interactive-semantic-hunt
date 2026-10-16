@@ -46,6 +46,10 @@ from ish.settings import Settings
 
 log = logging.getLogger(__name__)
 
+# The repository a tree belongs to and the checkout it is in, as git
+# names them, or None for each when it is in none or git cannot run.
+Identity = tuple[Path | None, Path | None]
+
 
 def all_parsers(settings: Settings) -> dict[str, Language]:
     """Return every language the settings allow: built in, and the user's own."""
@@ -197,7 +201,7 @@ def build_stores(
     settings: Settings,
     root: Path,
     embedder: Embedder,
-    checkout: Path | None = None,
+    identity: Identity | None = None,
 ) -> tuple[VectorStore | None, VectorReader]:
     """Build what a search of *root* reads, and what a refresh of it writes.
 
@@ -207,8 +211,8 @@ def build_stores(
     reader releases everything.
 
     Persist to disk unless the caller asked for a run that leaves none.
-    *checkout* is the top of the checkout *root* belongs to, when the
-    caller knows it. It is asked of git otherwise.
+    *identity* is the repository and the checkout *root* belongs to,
+    when the caller knows them. They are asked of git otherwise.
     """
     if settings.no_cache:
         from ish.adapters.vector_store.pure_python import PurePythonVectorStore
@@ -219,12 +223,13 @@ def build_stores(
     from ish.adapters.vector_store.federated import FederatedReader
     from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
-    identity = model_id(settings, embedder)
+    model = model_id(settings, embedder)
     resolved = root.resolve()
     indexes = catalog(settings)
     known = indexes.entries()
+    checkout = None if identity is None else identity[1]
     entries = (
-        indexes_for(indexes, resolved, known, checkout=checkout)
+        indexes_for(indexes, resolved, known, identity=identity)
         if settings.federate
         else []
     )
@@ -254,7 +259,7 @@ def build_stores(
             ]
         return SqliteVectorStore(
             path,
-            model_id=identity,
+            model_id=model,
             root=tree,
             repository=repository,
             checkout=checkout,
@@ -324,19 +329,21 @@ def indexes_for(
     indexes: IndexCatalog,
     path: Path,
     known: Sequence[IndexEntry] | None = None,
-    checkout: Path | None = None,
+    identity: Identity | None = None,
 ) -> list[IndexEntry]:
     """Return the stored indexes a search of *path* reads.
 
     Take every index whose tree sits at or below *path*, except the
-    indexes of another checkout of a repository. A worktree kept under
-    the main checkout, as ``.claude/worktrees/`` keeps them, would
+    indexes of another checkout of the same repository. A worktree kept
+    under the main checkout, as ``.claude/worktrees/`` keeps them, would
     otherwise join every search of the main tree and answer with the
-    same chunk once more for each checkout. A path inside no checkout
-    reads them all, and the reader shows each chunk once.
+    same chunk once more for each checkout. An index of another
+    repository inside the tree, such as a submodule, stays: it holds
+    other text. A path inside no checkout reads them all, and the reader
+    shows each chunk once.
 
-    *checkout* is the top of the checkout *path* belongs to, when the
-    caller knows it. It is asked of git otherwise.
+    *identity* is the repository and the checkout *path* belongs to,
+    when the caller knows them. They are asked of git otherwise.
     """
     resolved = path.resolve()
     entries = indexes.entries() if known is None else known
@@ -345,11 +352,16 @@ def indexes_for(
         for e in entries
         if e.present and (e.tree == resolved or resolved in e.tree.parents)
     ]
-    if checkout is None:
-        _repository, checkout = repository_identity(resolved)
+    repository, checkout = (
+        repository_identity(resolved) if identity is None else identity
+    )
     if checkout is None:
         return below
-    return [e for e in below if e.checkout is None or e.checkout == checkout]
+    return [
+        e
+        for e in below
+        if e.checkout is None or e.checkout == checkout or e.repository != repository
+    ]
 
 
 def forget_index(settings: Settings, path: Path) -> list[Path]:
@@ -484,17 +496,19 @@ def build_scan(settings: Settings, root: Path, checkout: Path | None = None) -> 
 
 
 def build_search(
-    settings: Settings, root: Path, checkout: Path | None = None
+    settings: Settings, root: Path, identity: Identity | None = None
 ) -> Search:
     """Wire the full search use case for one scanned tree.
 
-    Ask git once for the checkout *root* belongs to, unless the caller
-    names it, and hand the answer to the scan and to the stores.
+    Ask git once for the repository and the checkout *root* belongs to,
+    unless the caller names them, and hand the answer to the scan and
+    to the stores.
     """
     embedder = build_embedder(settings)
     resolved = root.resolve()
-    if checkout is None:
-        _repository, checkout = repository_identity(resolved)
+    if identity is None:
+        identity = repository_identity(resolved)
+    _repository, checkout = identity
     keep = build_result_filter(settings, settings_filters(settings))
 
     # An index that belongs to a tree above this one holds more than was
@@ -505,7 +519,7 @@ def build_search(
     ):
         keep = _inside(resolved, keep)
 
-    primary, reader = build_stores(settings, root, embedder, checkout=checkout)
+    primary, reader = build_stores(settings, root, embedder, identity=identity)
     index = None
     if primary is not None:
         index = Index(
@@ -558,8 +572,11 @@ def refresh_indexes(
     from ish.settings import load_settings
 
     resolved = root.resolve()
-    checkouts = {e.tree: e.checkout for e in indexes_for(catalog(settings), resolved)}
-    trees = sorted(checkouts) or [resolved]
+    identities = {
+        e.tree: (e.repository, e.checkout)
+        for e in indexes_for(catalog(settings), resolved)
+    }
+    trees = sorted(identities) or [resolved]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
         within = None
@@ -572,7 +589,7 @@ def refresh_indexes(
             federate=False,
             refresh=False,
         )
-        search = build_search(per_tree, tree, checkout=checkouts.get(tree))
+        search = build_search(per_tree, tree, identity=identities.get(tree))
         try:
             search.build_index(tree, within)
         finally:
