@@ -88,3 +88,19 @@ paths:
   warns that it refreshed nothing. `refresh_indexes()` visits each tree.
 - Asking inside an indexed tree reads that tree's index and narrows the
   answers to the path asked for.
+- A search reads the indexes of its own checkout. `indexes_for()` applies
+  the rule for the search, the refresh, and the status alike, and leaves
+  out an index whose tree is gone.
+
+## Repositories and checkouts
+
+- An index records `root`, `repository`, and `checkout` in `meta`. The
+  composition root asks git through the vcs adapter and passes paths. The
+  application never learns what git is.
+- The vectors of a repository live in one shared store, named by the
+  catalog after the common directory. An index names the store it uses in
+  `meta`, so it reaches it without git. Chunk rows and file stamps stay
+  per tree.
+- `prune_vectors()` on a shared store asks every sibling index before it
+  deletes, siblings whose tree is gone included. A sibling that cannot be
+  read keeps everything.
