@@ -149,7 +149,8 @@ nvim $(ish -i src/)
 | `--model NAME` | Override the backend model |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
-| `--forget` | Remove the stored index of the path, sweep the vectors only it used, and stop |
+| `--forget` | Remove the stored index of the path and stop. The vectors stay |
+| `--sweep` | Delete the vectors no index of the path's repository references, and stop |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
 
@@ -343,7 +344,12 @@ A search reads only the indexes of the checkout it starts in, so a worktree
 kept under `.claude/worktrees/` does not join a search of the main tree, and
 a search from a directory above several checkouts shows each chunk once. An
 index whose tree is gone is left out of every search and said so once.
-`ish --forget PATH` removes it and sweeps the vectors only it used.
+`ish --forget PATH` removes it. The vectors stay in the shared store, because
+a checkout at an older commit still needs the vectors of text the main
+checkout has since changed: on one firmware tree, sweeping the vectors no
+index referenced took a worktree from 100 % reuse to 87 %. Sweep them only on
+purpose, with `ish --sweep PATH`, which deletes the vectors no index of the
+repository references.
 
 A Markdown or AsciiDoc file with no heading is one chunk, named after the
 file, when it holds a line of prose. A file of attribute definitions,

@@ -355,13 +355,12 @@ def indexes_for(
 def forget_index(settings: Settings, path: Path) -> list[Path]:
     """Remove the stored index of the tree at *path*. Return the files removed.
 
-    Raise ``LookupError`` when no index describes the tree. Sweep the
-    shared store of what only this index referenced when another index
-    of the repository remains, and leave the store as it is when none
-    does: a vector costs a second of embedding to make again, and the
-    file is named so it can be deleted by hand.
+    Raise ``LookupError`` when no index describes the tree. Leave the
+    vectors where they are. A checkout at an older commit still needs
+    the vectors of text the main checkout has since changed, and a
+    vector costs a second of embedding to make again. Sweeping is a
+    separate act, through ``sweep_vectors()``.
     """
-    from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
     resolved = path.resolve()
     indexes = catalog(settings)
@@ -371,23 +370,45 @@ def forget_index(settings: Settings, path: Path) -> list[Path]:
         raise LookupError(f"No stored index describes {resolved}.")
     removed = indexes.forget(entry)
     log.info("Removed the index of %s: %d file(s).", resolved, len(removed))
-    if entry.repository is None:
-        return removed
-
-    remaining = [
-        e for e in known if e.repository == entry.repository and e.path != entry.path
-    ]
-    shared = indexes.shared_store_for(entry.repository)
-    if not remaining:
-        log.warning(
-            "No index of %s remains. Its vectors stay in %s, which can be deleted.",
-            entry.repository,
-            shared,
+    if entry.repository is not None:
+        log.info(
+            "The vectors stay in %s. Sweep them on purpose with --sweep.",
+            indexes.shared_store_for(entry.repository),
         )
-        return removed
-    # The keeper names the store it uses, so none is passed: the one it
-    # recorded is the one the removed index shared.
-    keeper, *others = remaining
+    return removed
+
+
+def sweep_vectors(settings: Settings, path: Path) -> int:
+    """Delete the vectors no index of the repository of *path* references.
+
+    Return how many went. Raise ``LookupError`` when no index belongs to
+    that repository, or, outside one, when no index describes the tree.
+    Every index of the repository is asked first, those whose tree is
+    gone included, so nothing an index still names is taken. Measured
+    on one firmware tree, the vectors no index referenced were what a
+    worktree at an older commit reused: sweeping them took its reuse
+    from 100 % to 87 %. Hence a sweep happens only when asked for.
+    """
+    from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+    resolved = path.resolve()
+    indexes = catalog(settings)
+    known = indexes.entries()
+    repository, _checkout = repository_identity(resolved)
+    if repository is None:
+        members = [e for e in known if e.tree == resolved]
+        if not members:
+            raise LookupError(
+                f"No stored index describes {resolved}, and it is in no repository."
+            )
+    else:
+        members = [e for e in known if e.repository == repository]
+        if not members:
+            raise LookupError(
+                f"No stored index belongs to the repository of {resolved}."
+            )
+    # The keeper names the store it uses, so none is passed.
+    keeper, *others = members
     store = SqliteVectorStore(
         keeper.path,
         model_id=model_id(settings, build_embedder(settings)),
@@ -400,8 +421,8 @@ def forget_index(settings: Settings, path: Path) -> list[Path]:
         swept = store.prune_vectors()
     finally:
         store.close()
-    log.info("Swept %d vector(s) that only %s used.", swept, resolved)
-    return removed
+    log.info("Swept %d vector(s) no index references.", swept)
+    return swept
 
 
 def _nests(trees: Sequence[Path]) -> bool:
