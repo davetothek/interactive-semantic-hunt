@@ -194,7 +194,10 @@ def catalog(settings: Settings) -> IndexCatalog:
 
 
 def build_stores(
-    settings: Settings, root: Path, embedder: Embedder
+    settings: Settings,
+    root: Path,
+    embedder: Embedder,
+    checkout: Path | None = None,
 ) -> tuple[VectorStore | None, VectorReader]:
     """Build what a search of *root* reads, and what a refresh of it writes.
 
@@ -204,6 +207,8 @@ def build_stores(
     reader releases everything.
 
     Persist to disk unless the caller asked for a run that leaves none.
+    *checkout* is the top of the checkout *root* belongs to, when the
+    caller knows it. It is asked of git otherwise.
     """
     if settings.no_cache:
         from ish.adapters.vector_store.pure_python import PurePythonVectorStore
@@ -218,7 +223,11 @@ def build_stores(
     resolved = root.resolve()
     indexes = catalog(settings)
     known = indexes.entries()
-    entries = indexes_for(indexes, resolved, known) if settings.federate else []
+    entries = (
+        indexes_for(indexes, resolved, known, checkout=checkout)
+        if settings.federate
+        else []
+    )
     existing = {entry.tree: entry.path for entry in entries}
     recorded = {entry.tree: entry for entry in known}
     scopes: dict[Path, tuple[Path | None, Path | None]] = {}
@@ -312,7 +321,10 @@ def build_stores(
 
 
 def indexes_for(
-    indexes: IndexCatalog, path: Path, known: Sequence[IndexEntry] | None = None
+    indexes: IndexCatalog,
+    path: Path,
+    known: Sequence[IndexEntry] | None = None,
+    checkout: Path | None = None,
 ) -> list[IndexEntry]:
     """Return the stored indexes a search of *path* reads.
 
@@ -322,11 +334,15 @@ def indexes_for(
     otherwise join every search of the main tree and answer with the
     same chunk once more for each checkout. A path inside no checkout
     reads them all, and the reader shows each chunk once.
+
+    *checkout* is the top of the checkout *path* belongs to, when the
+    caller knows it. It is asked of git otherwise.
     """
     resolved = path.resolve()
     entries = indexes.entries() if known is None else known
     below = [e for e in entries if e.tree == resolved or resolved in e.tree.parents]
-    _repository, checkout = repository_identity(resolved)
+    if checkout is None:
+        _repository, checkout = repository_identity(resolved)
     if checkout is None:
         return below
     return [e for e in below if e.checkout is None or e.checkout == checkout]
@@ -368,8 +384,16 @@ def build_ignored_by(settings: Settings, root: Path):
     return GitVisibleFiles(root).ignores
 
 
-def build_scan(settings: Settings, root: Path) -> Scan:
-    """Wire the scan use case."""
+def build_scan(settings: Settings, root: Path, checkout: Path | None = None) -> Scan:
+    """Wire the scan use case.
+
+    An exclude pattern and an ignored name are judged from the top of
+    the checkout *root* belongs to, so a tree is never rejected for
+    where it sits. Ask git for the checkout when the caller does not
+    name it.
+    """
+    if checkout is None:
+        _repository, checkout = repository_identity(root)
     return Scan(
         parsers=build_parsers(settings),
         ignored_dirs=settings.ignore,
@@ -378,13 +402,22 @@ def build_scan(settings: Settings, root: Path) -> Scan:
         ignored_by=build_ignored_by(settings, root),
         unignore=settings.unignore,
         root=root,
+        anchor=checkout,
     )
 
 
-def build_search(settings: Settings, root: Path) -> Search:
-    """Wire the full search use case for one scanned tree."""
+def build_search(
+    settings: Settings, root: Path, checkout: Path | None = None
+) -> Search:
+    """Wire the full search use case for one scanned tree.
+
+    Ask git once for the checkout *root* belongs to, unless the caller
+    names it, and hand the answer to the scan and to the stores.
+    """
     embedder = build_embedder(settings)
     resolved = root.resolve()
+    if checkout is None:
+        _repository, checkout = repository_identity(resolved)
     keep = build_result_filter(settings, settings_filters(settings))
 
     # An index that belongs to a tree above this one holds more than was
@@ -392,11 +425,11 @@ def build_search(settings: Settings, root: Path) -> Search:
     if not settings.no_cache and catalog(settings).covering(resolved) is not None:
         keep = _inside(resolved, keep)
 
-    primary, reader = build_stores(settings, root, embedder)
+    primary, reader = build_stores(settings, root, embedder, checkout=checkout)
     index = None
     if primary is not None:
         index = Index(
-            scan=build_scan(settings, root),
+            scan=build_scan(settings, root, checkout=checkout),
             embedder=embedder,
             vector_store=primary,
             rebuild=settings.reindex,
@@ -445,9 +478,8 @@ def refresh_indexes(
     from ish.settings import load_settings
 
     resolved = root.resolve()
-    trees = sorted(e.tree for e in indexes_for(catalog(settings), resolved)) or [
-        resolved
-    ]
+    checkouts = {e.tree: e.checkout for e in indexes_for(catalog(settings), resolved)}
+    trees = sorted(checkouts) or [resolved]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
         within = None
@@ -460,7 +492,7 @@ def refresh_indexes(
             federate=False,
             refresh=False,
         )
-        search = build_search(per_tree, tree)
+        search = build_search(per_tree, tree, checkout=checkouts.get(tree))
         try:
             search.build_index(tree, within)
         finally:

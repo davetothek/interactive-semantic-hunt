@@ -356,11 +356,18 @@ exclude = ["/vendor/", "_pb2\\.py$", "(_test|_spec)\\.py$"]
 ```
 
 `include` and `exclude` take regular expressions rather than globs, so
-alternation works. `exclude` is searched against the whole path, so `/vendor/`
-matches at any depth. `include` is anchored at the root of the tree, so
-`30\.Firmware/` indexes that directory and not `99.Artifacts/30.Firmware/`.
-Write `(?:.*/)?30\.Firmware/` to take the name at any depth. `exclude` wins
-over `include`.
+alternation works. `exclude` is searched against the path from the top of the
+checkout the tree belongs to, written with a leading slash, so `/vendor/`
+matches at any depth and `^/vendor/` only at the top. Outside a repository it
+is searched against the whole path. `include` is anchored at the root of the
+tree, so `30\.Firmware/` indexes that directory and not
+`99.Artifacts/30.Firmware/`. Write `(?:.*/)?30\.Firmware/` to take the name at
+any depth. `exclude` wins over `include`.
+
+Both `ignore` and `exclude` judge only what lies inside the checkout, never
+the directories above it. A git worktree kept under `.claude/worktrees/` is
+indexable with the same configuration that keeps `.claude` out of the main
+index.
 
 `--git` is on by default, so anything a `.gitignore` covers stays out of the
 index. Pass `--no-git` to index it all anyway, or name the one ignored tree

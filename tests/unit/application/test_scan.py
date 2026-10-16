@@ -435,6 +435,92 @@ class TestPathFilters:
             Scan(parsers=[FakeParser()], include=["*bad"])
 
 
+class TestFiltersJudgeFromTheCheckout:
+    """Verify a tree is not rejected for where it sits.
+
+    A worktree lives under .claude/worktrees/, and the config of the
+    repository keeps .claude out of the main index. The same config
+    serves the worktree, whose own files must still be indexed. The
+    patterns are judged from the top of the checkout, so a pattern that
+    names a directory of the tree still matches when that tree is the
+    one scanned.
+    """
+
+    @pytest.fixture()
+    def checkout(self, tmp_path: Path) -> Path:
+        """A worktree checkout, under the directory the config ignores."""
+        top = tmp_path / ".claude" / "worktrees" / "wt"
+        src = top / "src"
+        (src / "pkg").mkdir(parents=True)
+        (src / "app.py").write_text("pass\n")
+        (src / "pkg" / "deep.py").write_text("pass\n")
+        (top / ".claude").mkdir()
+        (top / ".claude" / "hidden.py").write_text("pass\n")
+        (src / "vendor").mkdir()
+        (src / "vendor" / "lib.py").write_text("pass\n")
+        return top
+
+    def _names(self, checkout: Path, root: Path, **kwargs) -> list[str]:
+        scanner = Scan(parsers=[FakeParser()], root=root, anchor=checkout, **kwargs)
+        return sorted(p.name for p in scanner.discover(root))
+
+    def test_an_ignored_name_above_the_checkout_rejects_nothing(
+        self, checkout: Path
+    ) -> None:
+        found = self._names(checkout, checkout, ignored_dirs=[".claude", "worktrees"])
+        assert found == ["app.py", "deep.py", "lib.py"]
+
+    def test_an_exclude_pattern_on_an_ancestor_rejects_nothing(
+        self, checkout: Path
+    ) -> None:
+        found = self._names(checkout, checkout, exclude=[r"(?:^|/)\.claude(?:/|$)"])
+        assert found == ["app.py", "deep.py", "lib.py"]
+
+    def test_the_same_pattern_still_matches_inside(self, checkout: Path) -> None:
+        found = self._names(checkout, checkout, exclude=["/vendor/"])
+        assert found == ["app.py", "deep.py", "hidden.py"]
+
+    def test_a_pattern_naming_the_tree_matches_when_the_tree_is_scanned(
+        self, checkout: Path
+    ) -> None:
+        """The pattern names src/pkg from the top. Scanning src alone must honor it."""
+        found = self._names(
+            checkout, checkout / "src", exclude=[r"(?:^|/)src/pkg(?:/|$)"]
+        )
+        assert found == ["app.py", "lib.py"]
+
+    def test_a_pattern_anchored_at_the_start_names_the_top_of_the_checkout(
+        self, checkout: Path
+    ) -> None:
+        found = self._names(checkout, checkout / "src", exclude=[r"^/src/vendor/"])
+        assert found == ["app.py", "deep.py"]
+
+    def test_pruning_asks_the_same_question(self, checkout: Path) -> None:
+        """Index pruning asks about a stored path. The answers must agree."""
+        scanner = Scan(
+            parsers=[FakeParser()],
+            ignored_dirs=[".claude"],
+            exclude=["/vendor/"],
+            root=checkout,
+            anchor=checkout,
+        )
+        found = set(scanner.discover(checkout))
+        for path in checkout.rglob("*.py"):
+            assert scanner.accepts(path) == (path in found), path
+        assert scanner.accepts(checkout / "src" / "app.py") is True
+        assert scanner.accepts(checkout / ".claude" / "hidden.py") is False
+
+    def test_a_path_outside_the_checkout_is_judged_whole(self, checkout: Path) -> None:
+        scanner = Scan(
+            parsers=[FakeParser()], ignored_dirs=[".claude"], anchor=checkout
+        )
+        assert scanner.accepts(checkout.parent / "elsewhere.py") is False
+
+    def test_without_an_anchor_the_whole_path_is_judged(self, checkout: Path) -> None:
+        scanner = Scan(parsers=[FakeParser()], ignored_dirs=[".claude"])
+        assert scanner.accepts(checkout / "src" / "app.py") is False
+
+
 class TestIncludeIsAnchoredAtTheRoot:
     """Verify an include pattern names a place in the tree, not a segment.
 

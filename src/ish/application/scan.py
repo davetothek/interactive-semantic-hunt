@@ -47,10 +47,16 @@ class Scan:
         ignored_by: Callable[[Path], bool] | None = None,
         unignore: Sequence[str] = (),
         root: Path | None = None,
+        anchor: Path | None = None,
     ) -> None:
         # The tree an include pattern is anchored at. Without one, a
         # pattern is matched against the whole path.
         self._root = root
+        # The top of the checkout the tree belongs to. An exclude
+        # pattern and an ignored name are judged from there, so a tree
+        # is never rejected for where it sits. Without one, the whole
+        # path is judged.
+        self._anchor = anchor
         self._ignored_dirs = frozenset(ignored_dirs) or DEFAULT_IGNORED_DIRS
         self._include = _compile(include, "include")
         self._exclude = _compile(exclude, "exclude")
@@ -125,7 +131,7 @@ class Scan:
         """
         if path.suffix not in self._by_suffix:
             return False
-        if any(part in self._ignored_dirs for part in path.parts):
+        if any(part in self._ignored_dirs for part in Path(self._judged(path)).parts):
             return False
 
         # An include pattern is anchored at the root of the tree. One
@@ -136,9 +142,10 @@ class Scan:
             inside = self._relative(path)
             if not any(p.match(inside) for p in self._include):
                 return False
-        # Search the whole path, so "vendor/" matches at any depth.
-        text = path.as_posix()
-        if any(p.search(text) for p in self._exclude):
+        # Search the path from the top of the checkout, written with a
+        # leading slash, so "/vendor/" matches at any depth and
+        # "^/vendor/" at the top.
+        if any(p.search(self._judged(path)) for p in self._exclude):
             return False
         if self._ignored_by is None or not self._ignored_by(path):
             return True
@@ -159,6 +166,22 @@ class Scan:
         except ValueError:
             return path.as_posix()
         return path.name if inside == Path() else inside.as_posix()
+
+    def _judged(self, path: Path) -> str:
+        """Return *path* as an exclude pattern or an ignored name sees it.
+
+        Write it from the top of the checkout, with a leading slash. A
+        worktree lives under .claude/worktrees/, and the configuration
+        that keeps .claude out of the main index serves the worktree
+        too. Its own files must still be indexed, so nothing above the
+        checkout is seen. Outside a checkout, the whole path is.
+        """
+        if self._anchor is not None:
+            try:
+                return "/" + path.relative_to(self._anchor).as_posix()
+            except ValueError:
+                pass
+        return path.as_posix()
 
     def parse_file(self, path: Path) -> Sequence[Chunk] | None:
         """Read and parse one discovered file.
@@ -226,7 +249,7 @@ class Scan:
         cost 5.5 times the query: 589,968 files, 272,364 of them under
         one excluded directory.
         """
-        text = directory.as_posix() + "/"
+        text = self._judged(directory) + "/"
         if any(p.search(text) for p in self._exclude):
             log.debug("Skip excluded directory %s", directory)
             return True

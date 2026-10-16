@@ -41,6 +41,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `ignore` names and `exclude` patterns judge the path from the top of the
+  checkout the tree belongs to, written with a leading slash, never the
+  directories above it. A tree kept inside a directory its own
+  configuration ignores, such as a git worktree under `.claude/worktrees/`,
+  was indexed as empty: every file carried `.claude` in its path. A pattern
+  such as `/vendor/` still matches at any depth, `^/vendor/` names the top
+  of the checkout, and outside a repository the whole path is judged, as
+  before.
 - A search of a parent reads only the indexes of the checkout it starts
   in. A worktree kept under the main checkout, as `.claude/worktrees/`
   keeps them, no longer joins a search of the main tree, and a refresh of
