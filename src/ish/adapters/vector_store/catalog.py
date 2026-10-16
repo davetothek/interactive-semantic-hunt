@@ -9,10 +9,22 @@ checkout the tree belongs to, when git could name them.
 """
 
 import hashlib
+import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from ish.adapters.vector_store.sqlite import SHARED_PREFIX, SqliteVectorStore
+from ish.adapters.vector_store.sqlite import (
+    MATRIX_SUFFIX,
+    SHARED_PREFIX,
+    SqliteVectorStore,
+)
+
+log = logging.getLogger(__name__)
+
+# Trees already reported as gone, so a server that reads the catalog
+# every half minute says it once.
+_REPORTED_GONE: set[Path] = set()
 
 
 def _digest(path: Path) -> str:
@@ -20,14 +32,35 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:12]
 
 
+def _gone(tree: Path) -> bool:
+    """Return True when *tree* is no longer there.
+
+    A permission error means "cannot tell" and keeps the index. Absence
+    has many causes, and an index costs hours to build again.
+    """
+    try:
+        os.stat(tree)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class IndexEntry:
-    """One stored index: the tree it describes, and where that tree belongs."""
+    """One stored index: the tree it describes, and where that tree belongs.
+
+    ``present`` says whether the tree is still there. An index outlives
+    a worktree made for one branch and deleted with it, and a search
+    must not answer from it, nor a preview try to open its files.
+    """
 
     tree: Path
     path: Path
     repository: Path | None = None
     checkout: Path | None = None
+    present: bool = True
 
 
 class IndexCatalog:
@@ -58,12 +91,12 @@ class IndexCatalog:
         return {entry.tree: entry.path for entry in self.entries_below(path)}
 
     def entries_below(self, path: Path) -> list[IndexEntry]:
-        """Return every stored index whose tree sits at or below *path*."""
+        """Return every stored index whose tree is present at or below *path*."""
         wanted = path.resolve()
         return [
             entry
             for entry in self.entries()
-            if entry.tree == wanted or wanted in entry.tree.parents
+            if entry.present and (entry.tree == wanted or wanted in entry.tree.parents)
         ]
 
     def covering(self, path: Path) -> tuple[Path, Path] | None:
@@ -78,14 +111,20 @@ class IndexCatalog:
         wanted = path.resolve()
         best: IndexEntry | None = None
         for entry in self.entries():
-            if entry.tree not in wanted.parents:
+            if not entry.present or entry.tree not in wanted.parents:
                 continue
             if best is None or len(entry.tree.parts) > len(best.tree.parts):
                 best = entry
         return None if best is None else (best.tree, best.path)
 
     def entries(self) -> list[IndexEntry]:
-        """Return every index file that records its tree, with what it records."""
+        """Return every index file that records its tree, with what it records.
+
+        Include an index whose tree is gone, marked so, and say so once.
+        A search leaves it out. A sweep of the shared store still counts
+        what it references, because its vectors would otherwise be lost
+        while its rows still name them.
+        """
         if not self.directory.is_dir():
             return []
         found: list[IndexEntry] = []
@@ -94,12 +133,32 @@ class IndexCatalog:
             tree = identity.get("root")
             if tree is None:
                 continue
+            present = not _gone(tree)
+            if not present and tree not in _REPORTED_GONE:
+                _REPORTED_GONE.add(tree)
+                log.info(
+                    "The tree %s is gone. Its index is left out of every search. "
+                    "Remove it with: ish --forget %s",
+                    tree,
+                    tree,
+                )
             found.append(
                 IndexEntry(
                     tree=tree,
                     path=db_path,
                     repository=identity.get("repository"),
                     checkout=identity.get("checkout"),
+                    present=present,
                 )
             )
         return found
+
+    def forget(self, entry: IndexEntry) -> list[Path]:
+        """Delete the index file of *entry* and its companions. Return what went."""
+        gone: list[Path] = []
+        for suffix in ("", "-wal", "-shm", MATRIX_SUFFIX):
+            companion = entry.path.with_name(entry.path.name + suffix)
+            if companion.exists():
+                companion.unlink()
+                gone.append(companion)
+        return gone

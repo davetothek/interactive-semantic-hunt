@@ -278,6 +278,14 @@ class Settings:
             action="store_true",
         ),
     )
+    forget: bool = field(
+        default=False,
+        metadata=_opt(
+            "Remove the stored index of the path, sweep the vectors only it "
+            "used, and stop.",
+            action="store_true",
+        ),
+    )
 
 
 def option_names() -> tuple[str, ...]:

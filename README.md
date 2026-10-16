@@ -149,6 +149,7 @@ nvim $(ish -i src/)
 | `--model NAME` | Override the backend model |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
+| `--forget` | Remove the stored index of the path, sweep the vectors only it used, and stop |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
 

@@ -10,6 +10,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Remove the stored index of a tree with `ish --forget PATH`. A worktree is
+  made for one branch and deleted with it, and its index outlived it. An
+  index whose tree is gone is now left out of every search and said so
+  once, with the command that removes it. Forgetting an index sweeps the
+  shared store of the vectors only that index referenced when another index
+  of the repository remains, and leaves the store in place when none does,
+  because a vector costs a second of embedding to make again.
 - An index records the repository and the checkout its tree belongs to,
   as git names them, beside the tree itself. Every worktree of one
   repository names the same repository, which is what lets a second
