@@ -1198,6 +1198,14 @@ class TestFederationWarning:
             bootstrap.build_search(settings, nested).close()
         assert "without refreshing" not in caplog.text
 
+    def test_a_kept_parent_stays_quiet(self, nested: Path, monkeypatch, caplog):
+        """ish-serve keeps the indexes current, so there is nothing to ask for."""
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: self._Fake())
+        settings = self._seed_child(nested)
+        with caplog.at_level("WARNING"):
+            bootstrap.build_search(settings, nested, kept=True).close()
+        assert "without refreshing" not in caplog.text
+
 
 class TestCoveringIndex:
     """Verify that asking inside an indexed tree reads what is there.

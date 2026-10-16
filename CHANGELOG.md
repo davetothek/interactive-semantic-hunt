@@ -35,22 +35,30 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   and file stamps stay in the index of each tree, because a result names
   a file to open. A sweep of the shared store asks every index of the
   repository before it deletes a vector.
-- Keep one server resident for a tree, with `ish-serve`. It listens on a
-  Unix socket under `$XDG_RUNTIME_DIR/ish/`, named after the tree the way
-  its index file is, refreshes the tree as soon as it starts and then every
-  `refresh_seconds`, and outlives any client. `ish "query" path` answers
-  through it from the index it holds and asks it to refresh behind the
-  answer. `ish-mcp` joins it when it finds the socket and carries the lines
-  of its host to it, so every editor and agent shares the one server with
-  no change on their side. Everything works as before without one.
-  Measured on a root over 7 indexes and 72,995 chunks: 237 ms on its own,
-  131 ms through the server. `--socket PATH` names the socket,
-  `--idle-seconds N` stops a server nobody has used for N seconds, a second
-  server for the same tree exits at once, and the socket of a killed server
-  is taken over.
+- Keep the indexes of a tree current with `ish-serve`, the one process
+  that fills them. It refreshes the tree as soon as it starts, then every
+  `refresh_seconds` or when a client asks, and it answers no query. It
+  writes a status file under `$XDG_RUNTIME_DIR/ish/` every few seconds,
+  and every client reads the index itself: one that finds the status of a
+  live server leaves the refreshing to it, and one that finds none, or a
+  status nobody has written for 30 seconds, brings the index up to date as
+  before. `ish "query" path` then walks and embeds nothing before it
+  answers, and says what the server is doing while a refresh runs.
+  `ish-mcp` starts no refresh thread for a tree the server keeps, and
+  `refresh_index` asks the server instead. A second `ish-serve` for the
+  same tree exits at once, and `--once` refreshes once and exits. Measured
+  on a firmware tree of 6,266 chunks, a cold query took 691 ms on its own
+  and 274 ms beside a server.
+- `ish "query" path` shows what it is doing while it brings the index up
+  to date: a spinner, the step, and while the model embeds the rate and
+  about how long is left.
 
 ### Changed
 
+- `index_status` counts the chunks by language again only when the index
+  changed, or when `ish-serve` finished another refresh. Measured on a root
+  over 8 indexes and 74,459 chunks, a call cost 981 ms and a repeated one
+  now costs 2 ms, which is what a picker polling once a second paid.
 - `ignore` names and `exclude` patterns judge the path from the top of the
   checkout the tree belongs to, written with a leading slash, never the
   directories above it. A tree kept inside a directory its own

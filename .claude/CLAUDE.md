@@ -30,14 +30,15 @@ blocks a version bump outside a release branch. `poe hooks` tests them.
 |---|---|---|
 | CLI | `ish "query" path` | one shot, ~380 ms including interpreter start |
 | TUI | `ish -i path` | the primary one, an `fzf`-style picker |
-| MCP | `ish-mcp`, which joins `ish-serve` when one runs for the tree | resident, ~58 ms a call, for an agent or an editor |
+| MCP | `ish-mcp` | resident, ~58 ms a call, for an agent or an editor |
 | Python | `from ish.interfaces.python.api import Ish` | holds the index open |
 
 `ish-complete` and `ish-serve` are two more entry points, not interfaces.
 The first finishes a filter word rather than searching. The second keeps
-one MCP server resident for a tree on a Unix socket. `Ish` is the session
-the other three are built on. Nothing beyond these is built, and an HTTP
-API stays out by decision.
+the indexes of a tree current and answers no query: it writes a status
+file the clients read, and a client that finds a live one refreshes
+nothing itself. `Ish` is the session the other three are built on. Nothing
+beyond these is built, and an HTTP API stays out by decision.
 
 ## Architecture
 
@@ -80,6 +81,9 @@ one module that joins them.
 | Interface | `src/ish/interfaces/python/api.py` | `Ish`, the session every interface shares |
 | Interface | `src/ish/interfaces/format.py` | Shared output formatting |
 | Interface | `src/ish/interfaces/log.py` | Logging setup, shared by every entry point |
+| Interface | `src/ish/interfaces/busy.py` | The busy line: spinner, step, rate, and time left |
+| Interface | `src/ish/interfaces/heartbeat.py` | The status file of `ish-serve`, and the nudge beside it |
+| Interface | `src/ish/interfaces/daemon.py` | `ish-serve`, the one process that fills an index |
 | Interface | `src/ish/interfaces/completion.py` | Finish a filter word |
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
@@ -262,10 +266,15 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   vectors, a root query through the CLI, cold, median of 5: 1110 ms → 629 ms
   when the federated count became a sum of counts rather than a listing of
   73,000 chunks; 670 ms → 213 ms when the matrix came from a mapped file
-  beside each index rather than from the blobs; 237 ms on its own against
-  131 ms through `ish-serve`, most of the rest the interpreter start
-  of `ish` itself. The mapped file loads in 18 ms against 310 to 460 ms for
-  the blobs, and the first run after a change writes it in about 1.2 s.
+  beside each index rather than from the blobs. The mapped file loads in
+  18 ms against 310 to 460 ms for the blobs, and the first run after a
+  change writes it in about 1.2 s.
+- A query inside the firmware tree of 6,266 chunks walked the tree before
+  it answered: 691 ms cold, median of 5. Beside an `ish-serve` that keeps
+  the tree it reads what is stored, 274 ms. At the root, which never
+  walked, 323 ms against 329 ms. `index_status` at the root built 74,459
+  chunks to count them by language, 981 ms a call, and a repeated call
+  costs 2 ms while the count and the last finish of the server stand.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
 
@@ -281,3 +290,10 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   as code until `type_patterns` let a repository say what its paths hold.
 - Reading only the nearest config file made a `git = false` for one tree
   drop the `type_patterns` the repository above had set.
+- One socket server for every client of /srv/mono serialized them. A
+  refresh asked for by one client embedded 696 chunks inside the server,
+  342 s in all, while the picker polled `index_status` every second at
+  1.2 to 1.9 s a call, and each query embedding waited behind a document
+  batch of the one Ollama slot. Searches took 3 to 9 s against 128 to
+  279 ms in-process. Hence `ish-serve` fills the index and answers
+  nothing, and every client reads the index itself.

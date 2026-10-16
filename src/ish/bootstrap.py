@@ -202,6 +202,7 @@ def build_stores(
     root: Path,
     embedder: Embedder,
     identity: Identity | None = None,
+    kept: bool = False,
 ) -> tuple[VectorStore | None, VectorReader]:
     """Build what a search of *root* reads, and what a refresh of it writes.
 
@@ -212,7 +213,9 @@ def build_stores(
 
     Persist to disk unless the caller asked for a run that leaves none.
     *identity* is the repository and the checkout *root* belongs to,
-    when the caller knows them. They are asked of git otherwise.
+    when the caller knows them. They are asked of git otherwise. *kept*
+    says another process keeps the indexes current, so a read of
+    several needs no warning.
     """
     if settings.no_cache:
         from ish.adapters.vector_store.pure_python import PurePythonVectorStore
@@ -301,11 +304,12 @@ def build_stores(
         # Nothing below, so the named tree's own index is the whole search.
         return primary, primary
 
-    if primary is None and not settings.refresh:
+    if primary is None and not settings.refresh and not kept:
         # Nothing here may be written, so a search reads whatever the
         # indexes below already hold. Say so: a stale answer and a fresh
         # one look the same. Stay quiet when a refresh has just run,
-        # which is the very thing the warning asks for.
+        # which is the very thing the warning asks for, and when a
+        # server keeps the indexes current.
         log.warning(
             "Reading %d stored indexes under %s without refreshing them. "
             "Pass --refresh to bring them up to date first.",
@@ -473,16 +477,20 @@ def build_ignored_by(settings: Settings, root: Path):
     return GitVisibleFiles(root).ignores
 
 
-def build_scan(settings: Settings, root: Path, checkout: Path | None = None) -> Scan:
+def build_scan(
+    settings: Settings, root: Path, identity: Identity | None = None
+) -> Scan:
     """Wire the scan use case.
 
     An exclude pattern and an ignored name are judged from the top of
     the checkout *root* belongs to, so a tree is never rejected for
-    where it sits. Ask git for the checkout when the caller does not
-    name it.
+    where it sits. *identity* is the repository and the checkout, when
+    the caller knows them. They are asked of git otherwise, and a pair
+    of None means a tree outside any repository.
     """
-    if checkout is None:
-        _repository, checkout = repository_identity(root)
+    if identity is None:
+        identity = repository_identity(root)
+    _repository, checkout = identity
     return Scan(
         parsers=build_parsers(settings),
         ignored_dirs=settings.ignore,
@@ -496,13 +504,17 @@ def build_scan(settings: Settings, root: Path, checkout: Path | None = None) -> 
 
 
 def build_search(
-    settings: Settings, root: Path, identity: Identity | None = None
+    settings: Settings,
+    root: Path,
+    identity: Identity | None = None,
+    kept: bool = False,
 ) -> Search:
     """Wire the full search use case for one scanned tree.
 
     Ask git once for the repository and the checkout *root* belongs to,
     unless the caller names them, and hand the answer to the scan and
-    to the stores.
+    to the stores. *kept* says another process keeps the indexes
+    current.
     """
     embedder = build_embedder(settings)
     resolved = root.resolve()
@@ -519,11 +531,13 @@ def build_search(
     ):
         keep = _inside(resolved, keep)
 
-    primary, reader = build_stores(settings, root, embedder, identity=identity)
+    primary, reader = build_stores(
+        settings, root, embedder, identity=identity, kept=kept
+    )
     index = None
     if primary is not None:
         index = Index(
-            scan=build_scan(settings, root, checkout=checkout),
+            scan=build_scan(settings, root, identity=identity),
             embedder=embedder,
             vector_store=primary,
             rebuild=settings.reindex,

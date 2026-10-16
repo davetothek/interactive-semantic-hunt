@@ -5,163 +5,36 @@ Parse arguments, delegate wiring to the bootstrap module, format output.
 
 import logging
 import os
-import re
-import shutil
 import sys
-import time
-from pathlib import Path
 
 from ish import bootstrap
-from ish.application.progress import EMBED, Progress
+from ish.interfaces.busy import ProgressLine
 from ish.interfaces.cli.args import CliArgs
-from ish.interfaces.format import display_path, format_selection, render
+from ish.interfaces.format import format_selection, render
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
 
 log = logging.getLogger("ish.cli")
 
-# The flags a resident server honors for one call. Any other flag
-# changes what a run reads or writes, so that run does its own work.
-_SERVER_FLAGS = frozenset(
-    {"limit", "lang", "under", "type", "format", "verbosity", "color"}
-)
-
-# A result line in either shape: a score when ranked, then the path,
-# then the line numbers. The path ends at the first colon a line number
-# follows.
-_RESULT_LINE = re.compile(
-    r"^(?P<prefix>\[\d+\.\d+\] )?(?P<path>.+?):(?P<rest>\d+[-:].*)$"
-)
-
-
-class ProgressLine:
-    """Show what a long refresh is doing, on one line of the terminal.
-
-    A first index of a large tree runs for minutes, and a command that
-    prints nothing cannot be told from one that has stopped. Keep it to
-    stderr, so a piped stdout still holds only results. Say how fast
-    the embedding goes, because a blocked run and a slow one otherwise
-    look the same.
-    """
-
-    def __init__(self) -> None:
-        self._embedding_began: float | None = None
-
-    def show(self, step: Progress) -> None:
-        """Rewrite the line with *step*."""
-        if not sys.stderr.isatty():
-            # Not a terminal, so the log already carries it at -v.
-            return
-        sys.stderr.write(f"\r\033[2K{self.render(step)[: _width() - 1]}")
-        sys.stderr.flush()
-
-    def render(self, step: Progress) -> str:
-        """Return the line for *step*, with a rate while embedding."""
-        text = str(step)
-        if step.stage != EMBED:
-            self._embedding_began = None
-            return text
-        if step.done == 0 or self._embedding_began is None:
-            self._embedding_began = time.monotonic()
-            return text
-        elapsed = time.monotonic() - self._embedding_began
-        if elapsed <= 0:
-            return text
-        return f"{text}, {step.done / elapsed:.1f} chunks/s"
-
-    def clear(self) -> None:
-        """Clear the line, leaving the output as it would be."""
-        if sys.stderr.isatty():
-            sys.stderr.write("\r\033[2K")
-            sys.stderr.flush()
-
-
-def _width() -> int:
-    """Return the terminal width, or a sensible guess."""
-    return shutil.get_terminal_size((80, 24)).columns
-
 
 def _run_query(args: CliArgs) -> int:
-    """Search for the query and print the ranked results."""
+    """Search for the query and print the ranked results.
+
+    Bring the index up to date first, behind a line that says what is
+    happening, unless ``ish-serve`` keeps it current. The run then reads
+    what the server wrote, and says so while the server is mid-refresh,
+    because the answer may not hold the latest edit yet.
+    """
+    line = ProgressLine()
     with Ish(args.path, settings=args.settings) as ish:
+        ish.index(on_progress=line.show)
+        line.clear()
+        kept = ish.kept_by()
+        if kept is not None and kept.refreshing:
+            line.note(f"ish-serve: {kept.refreshing}")
         for chunk, score in ish.search(args.query):
             sys.stdout.write(f"{render(chunk, args.settings.format, score)}\n")
     return 0
-
-
-def _ask_server(args: CliArgs) -> int | None:
-    """Answer through the server that listens for this tree, or return None.
-
-    A resident server holds the index open and the model warm, so it
-    answers in the time a process start takes. It answers from the
-    index it holds and brings the index up to date behind the answer,
-    so an edit is searchable moments later rather than embedded in
-    front of this run. A run that refreshes, reindexes, names a config
-    file, or sets an option the server cannot take per call does its
-    own work. So does a run that finds no server, or a server that
-    fails on the way.
-    """
-    given = {name for name, value in args.overrides.items() if value is not None}
-    if not given <= _SERVER_FLAGS:
-        return None
-
-    from ish.interfaces.mcp import transport
-
-    found = transport.find_socket(args.path)
-    if found is None:
-        return None
-    client = transport.Client.connect(found)
-    if client is None:
-        return None
-
-    arguments: dict[str, object] = {
-        "query": args.query,
-        "path": str(args.path),
-        "limit": args.settings.limit,
-        "format": args.settings.format,
-    }
-    if args.settings.lang:
-        arguments["lang"] = list(args.settings.lang)
-    if args.settings.under:
-        arguments["under"] = args.settings.under
-    if args.settings.type:
-        arguments["type"] = list(args.settings.type)
-    try:
-        with client:
-            text = client.call_tool("search_code", arguments)
-            client.call_tool("refresh_index", {"path": str(args.path)})
-    except transport.ToolError as exc:
-        log.error("%s", exc)
-        return 1
-    except (OSError, transport.RpcError) as exc:
-        log.info("Cannot use the server at %s: %s", found, exc)
-        return None
-
-    from ish.interfaces.mcp.server import NO_RESULTS
-
-    log.info("Answered by the server at %s", found)
-    if not text.startswith(NO_RESULTS):
-        sys.stdout.write(f"{_relocate(text, args.path)}\n")
-    return 0
-
-
-def _relocate(text: str, base: Path) -> str:
-    """Return *text* with each result path written from the working directory.
-
-    The server writes a path from the directory asked about, which is
-    what an editor resolves it against. The command line shows it from
-    where the command ran, as a run of its own would. Leave a line that
-    is not a result, and a path that is already absolute, as they are.
-    """
-    lines = []
-    for line in text.splitlines():
-        match = _RESULT_LINE.match(line)
-        if match is None or Path(match["path"]).is_absolute():
-            lines.append(line)
-            continue
-        shown = display_path(base / match["path"])
-        lines.append(f"{match['prefix'] or ''}{shown}:{match['rest']}")
-    return "\n".join(lines)
 
 
 def _sync_terminal_size() -> None:
@@ -280,9 +153,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             line.clear()
         if args.query:
-            answered = _ask_server(args)
-            if answered is not None:
-                return answered
             return _run_query(args)
         if args.interactive:
             return _run_tui(args)
