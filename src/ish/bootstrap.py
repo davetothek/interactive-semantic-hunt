@@ -340,12 +340,68 @@ def indexes_for(
     """
     resolved = path.resolve()
     entries = indexes.entries() if known is None else known
-    below = [e for e in entries if e.tree == resolved or resolved in e.tree.parents]
+    below = [
+        e
+        for e in entries
+        if e.present and (e.tree == resolved or resolved in e.tree.parents)
+    ]
     if checkout is None:
         _repository, checkout = repository_identity(resolved)
     if checkout is None:
         return below
     return [e for e in below if e.checkout is None or e.checkout == checkout]
+
+
+def forget_index(settings: Settings, path: Path) -> list[Path]:
+    """Remove the stored index of the tree at *path*. Return the files removed.
+
+    Raise ``LookupError`` when no index describes the tree. Sweep the
+    shared store of what only this index referenced when another index
+    of the repository remains, and leave the store as it is when none
+    does: a vector costs a second of embedding to make again, and the
+    file is named so it can be deleted by hand.
+    """
+    from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+    resolved = path.resolve()
+    indexes = catalog(settings)
+    known = indexes.entries()
+    entry = next((e for e in known if e.tree == resolved), None)
+    if entry is None:
+        raise LookupError(f"No stored index describes {resolved}.")
+    removed = indexes.forget(entry)
+    log.info("Removed the index of %s: %d file(s).", resolved, len(removed))
+    if entry.repository is None:
+        return removed
+
+    remaining = [
+        e for e in known if e.repository == entry.repository and e.path != entry.path
+    ]
+    shared = indexes.shared_store_for(entry.repository)
+    if not remaining:
+        log.warning(
+            "No index of %s remains. Its vectors stay in %s, which can be deleted.",
+            entry.repository,
+            shared,
+        )
+        return removed
+    # The keeper names the store it uses, so none is passed: the one it
+    # recorded is the one the removed index shared.
+    keeper, *others = remaining
+    store = SqliteVectorStore(
+        keeper.path,
+        model_id=model_id(settings, build_embedder(settings)),
+        root=keeper.tree,
+        repository=keeper.repository,
+        checkout=keeper.checkout,
+        siblings=[e.path for e in others],
+    )
+    try:
+        swept = store.prune_vectors()
+    finally:
+        store.close()
+    log.info("Swept %d vector(s) that only %s used.", swept, resolved)
+    return removed
 
 
 def _nests(trees: Sequence[Path]) -> bool:

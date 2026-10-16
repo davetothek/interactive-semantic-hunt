@@ -7,6 +7,9 @@ from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
 
 def _index(directory: Path, name: str, root: Path | None) -> None:
+    """Store an index for *root*, which is made to exist: a gone tree is left out."""
+    if root is not None:
+        root.mkdir(parents=True, exist_ok=True)
     SqliteVectorStore(directory / f"{name}.db", model_id="m", root=root).close()
 
 
@@ -100,6 +103,81 @@ class TestEntries:
         _index(tmp_path, "out", tmp_path / "elsewhere")
         found = IndexCatalog(tmp_path).entries_below(tmp_path / "p")
         assert [entry.tree for entry in found] == [tmp_path / "p" / "q"]
+
+
+class TestGoneTrees:
+    """Verify an index whose tree is gone is left out, and said so once."""
+
+    def test_a_gone_tree_is_marked_and_left_out(self, tmp_path: Path) -> None:
+        gone = tmp_path / "proj" / "deleted"
+        gone.mkdir(parents=True)
+        _index(tmp_path / "idx", "deleted", gone)
+        gone.rmdir()
+        catalog = IndexCatalog(tmp_path / "idx")
+        (entry,) = catalog.entries()
+        assert entry.present is False
+        assert catalog.below(tmp_path / "proj") == {}
+        assert catalog.covering(gone / "src") is None
+
+    def test_it_is_said_once(self, tmp_path: Path, caplog) -> None:
+        import logging
+
+        gone = tmp_path / "proj" / "deleted"
+        gone.mkdir(parents=True)
+        _index(tmp_path / "idx", "deleted", gone)
+        gone.rmdir()
+        catalog = IndexCatalog(tmp_path / "idx")
+        with caplog.at_level(logging.INFO, logger="ish.adapters.vector_store.catalog"):
+            catalog.entries()
+            catalog.entries()
+        said = [r for r in caplog.records if "is gone" in r.getMessage()]
+        assert len(said) == 1
+        assert "--forget" in said[0].getMessage()
+
+    def test_a_tree_that_cannot_be_read_is_kept(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Absence has many causes. Only a missing tree is gone."""
+        import os
+
+        tree = tmp_path / "proj" / "locked"
+        tree.mkdir(parents=True)
+        _index(tmp_path / "idx", "locked", tree)
+        real = os.stat
+
+        def refusing(path, *args, **kwargs):
+            if Path(path) == tree:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "stat", refusing)
+        (entry,) = IndexCatalog(tmp_path / "idx").entries()
+        assert entry.present is True
+
+
+class TestForget:
+    """Verify an index and what sits beside it can be removed."""
+
+    def test_the_file_and_its_companions_go(self, tmp_path: Path) -> None:
+        indexes = tmp_path / "idx"
+        _index(indexes, "proj", tmp_path / "proj")
+        for suffix in ("-wal", "-shm", "-matrix"):
+            (indexes / f"proj.db{suffix}").write_bytes(b"")
+        catalog = IndexCatalog(indexes)
+        (entry,) = catalog.entries()
+        removed = catalog.forget(entry)
+        assert len(removed) == 4
+        assert list(indexes.iterdir()) == []
+
+    def test_what_is_not_there_is_not_counted(self, tmp_path: Path) -> None:
+        indexes = tmp_path / "idx"
+        _index(indexes, "proj", tmp_path / "proj")
+        catalog = IndexCatalog(indexes)
+        (entry,) = catalog.entries()
+        removed = [p.name for p in catalog.forget(entry)]
+        assert "proj.db" in removed
+        assert "proj.db-matrix" not in removed
+        assert list(indexes.iterdir()) == []
 
 
 class TestSharedStore:

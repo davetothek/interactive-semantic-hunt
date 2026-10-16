@@ -219,6 +219,21 @@ def _run_scan(args: CliArgs) -> int:
     return 0
 
 
+def _run_forget(args: CliArgs) -> int:
+    """Remove the stored index of the path, and say what went.
+
+    Run before the path is looked for on disk. The tree is usually gone,
+    which is the reason to forget its index.
+    """
+    try:
+        removed = bootstrap.forget_index(args.settings, args.path)
+    except LookupError as exc:
+        log.error("%s", exc)
+        return 1
+    print(f"Removed the index of {args.path}: {len(removed)} file(s).", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run ish from the command line. Return an exit code.
 
@@ -235,6 +250,8 @@ def main(argv: list[str] | None = None) -> int:
         verbosity=args.settings.verbosity, color=resolve_color(args.settings.color)
     )
 
+    if args.settings.forget:
+        return _run_forget(args)
     if not args.path.exists():
         log.error("Path does not exist: %s", args.path)
         return 1

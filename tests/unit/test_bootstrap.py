@@ -287,6 +287,7 @@ class TestVectorStoreWiring:
         ):
             subprocess.run(["git", "-C", str(main), *arguments], check=True)
         worktree = main / ".claude" / "worktrees" / "wt"
+        (worktree / "src").mkdir()
         common = (main / ".git").resolve()
         indexes = tmp_path / "idx"
         indexes.mkdir()
@@ -708,6 +709,140 @@ class TestFederatedWiring:
             assert listed == [1, 1]
         finally:
             reader.close()
+
+
+class _StubBackend:
+    """Stand in the registry for a backend, so forgetting needs no daemon."""
+
+    model_name = "stub"
+
+    @classmethod
+    def from_option(cls, model: str, context_tokens=None) -> "_StubBackend":
+        return cls()
+
+    def embed_documents(self, texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def embed_query(self, text):
+        return [1.0, 0.0]
+
+
+class TestForgetIndex:
+    """Verify an index can be removed, and the shared store swept."""
+
+    def _repo_with_two_trees(self, tmp_path):
+        """Two indexed trees of one repository, one chunk each, one vector shared."""
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+        from ish.application.ports.vector_store import FileStamp
+        from ish.domain.chunk import Chunk
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        shared = indexes / "vectors-shared.db"
+        stores = {}
+        for name, hashes in (("one", ["common", "only-one"]), ("two", ["common"])):
+            tree = tmp_path / "repo" / name
+            tree.mkdir(parents=True)
+            store = SqliteVectorStore(
+                indexes / f"{name}.db",
+                model_id="stub:",
+                root=tree,
+                repository=tmp_path / "repo" / ".git",
+                checkout=tmp_path / "repo",
+                shared=shared,
+            )
+            store.add_vectors({digest: [1.0, 0.0] for digest in hashes})
+            store.set_file(
+                tree / "a.py",
+                FileStamp(mtime_ns=1, size=1),
+                [
+                    (
+                        Chunk(
+                            path=tree / "a.py",
+                            text="",
+                            kind="function",
+                            language="python",
+                            symbol=digest,
+                            start_line=1,
+                            end_line=2,
+                        ),
+                        digest,
+                    )
+                    for digest in hashes
+                ],
+            )
+            store.close()
+            stores[name] = indexes / f"{name}.db"
+        settings = replace(Settings(), cache_dir=str(indexes))
+        return settings, stores, shared
+
+    def _hashes(self, shared) -> set[str]:
+        import sqlite3
+
+        db = sqlite3.connect(shared)
+        try:
+            return {r[0] for r in db.execute("SELECT content_hash FROM vectors")}
+        finally:
+            db.close()
+
+    def test_the_index_goes_and_what_only_it_used_is_swept(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", _StubBackend)
+        settings, stores, shared = self._repo_with_two_trees(tmp_path)
+        assert self._hashes(shared) == {"common", "only-one"}
+
+        removed = bootstrap.forget_index(settings, tmp_path / "repo" / "one")
+        assert stores["one"] in removed
+        assert not stores["one"].exists()
+        assert stores["two"].exists()
+        assert self._hashes(shared) == {"common"}
+
+    def test_the_last_index_leaves_the_store_in_place(
+        self, tmp_path, monkeypatch, caplog
+    ) -> None:
+        """A vector costs a second of embedding. Say where they are instead."""
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", _StubBackend)
+        settings, stores, shared = self._repo_with_two_trees(tmp_path)
+        bootstrap.forget_index(settings, tmp_path / "repo" / "one")
+        bootstrap.forget_index(settings, tmp_path / "repo" / "two")
+        assert shared.exists()
+        assert self._hashes(shared) == {"common"}
+        assert any("can be deleted" in r.getMessage() for r in caplog.records)
+
+    def test_a_gone_tree_can_be_forgotten(self, tmp_path, monkeypatch) -> None:
+        """The tree is usually gone. That is the reason to forget its index."""
+        import shutil
+
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", _StubBackend)
+        settings, stores, _shared = self._repo_with_two_trees(tmp_path)
+        shutil.rmtree(tmp_path / "repo" / "one")
+        removed = bootstrap.forget_index(settings, tmp_path / "repo" / "one")
+        assert stores["one"] in removed
+        assert not stores["one"].exists()
+
+    def test_an_unknown_tree_is_an_error(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        settings = replace(Settings(), cache_dir=str(tmp_path / "idx"))
+        with pytest.raises(LookupError, match="No stored index"):
+            bootstrap.forget_index(settings, tmp_path / "nowhere")
+
+    def test_a_tree_outside_a_repository_just_goes(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        indexes = tmp_path / "idx"
+        tree = tmp_path / "alone"
+        tree.mkdir()
+        SqliteVectorStore(indexes / "alone.db", model_id="m", root=tree).close()
+        settings = replace(Settings(), cache_dir=str(indexes))
+        removed = bootstrap.forget_index(settings, tree)
+        assert indexes / "alone.db" in removed
+        assert list(indexes.glob("*.db")) == []
 
 
 class TestBusyIndexes:
