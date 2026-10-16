@@ -99,19 +99,29 @@ class IndexCatalog:
             if entry.present and (entry.tree == wanted or wanted in entry.tree.parents)
         ]
 
-    def covering(self, path: Path) -> tuple[Path, Path] | None:
+    def covering(
+        self, path: Path, checkout: Path | None = None
+    ) -> tuple[Path, Path] | None:
         """Return the nearest stored index whose tree contains *path*.
 
         Asking about a directory inside an indexed tree should read what
-        is already there. Building a second index for it would embed
-        every file again, because a vector is shared only within one
-        index file. Prefer the closest ancestor, which describes the
-        path best.
+        is already there, rather than building a second index for it.
+        Prefer the closest ancestor, which describes the path best.
+
+        A worktree kept under the main checkout lies inside its tree and
+        is another checkout all the same. Name the *checkout* of *path*,
+        and an index of another checkout does not cover it.
         """
         wanted = path.resolve()
         best: IndexEntry | None = None
         for entry in self.entries():
             if not entry.present or entry.tree not in wanted.parents:
+                continue
+            if (
+                checkout is not None
+                and entry.checkout is not None
+                and entry.checkout != checkout
+            ):
                 continue
             if best is None or len(entry.tree.parts) > len(best.tree.parts):
                 best = entry
