@@ -304,14 +304,29 @@ class TestVectorStoreWiring:
             ).close()
         catalog = IndexCatalog(indexes)
 
-        from_main = [e.tree for e in bootstrap.indexes_for(catalog, main)]
-        assert from_main == [(main / "src").resolve()]
+        # A submodule is another repository inside the tree, not another
+        # checkout of this one. It stays in a search of the tree above.
+        (main / "vendor" / "lib").mkdir(parents=True)
+        SqliteVectorStore(
+            indexes / "lib.db",
+            model_id="m",
+            root=(main / "vendor" / "lib").resolve(),
+            repository=(main / ".git" / "modules" / "lib").resolve(),
+            checkout=(main / "vendor" / "lib").resolve(),
+        ).close()
+
+        from_main = {e.tree for e in bootstrap.indexes_for(catalog, main)}
+        assert from_main == {
+            (main / "src").resolve(),
+            (main / "vendor" / "lib").resolve(),
+        }
         from_worktree = [e.tree for e in bootstrap.indexes_for(catalog, worktree)]
         assert from_worktree == [(worktree / "src").resolve()]
         from_above = [e.tree for e in bootstrap.indexes_for(catalog, tmp_path)]
         assert set(from_above) == {
             (main / "src").resolve(),
             (worktree / "src").resolve(),
+            (main / "vendor" / "lib").resolve(),
         }
 
     def test_a_scan_judges_its_filters_from_the_checkout(self, tmp_path) -> None:
