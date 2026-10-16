@@ -234,6 +234,17 @@ def _run_forget(args: CliArgs) -> int:
     return 0
 
 
+def _run_sweep(args: CliArgs) -> int:
+    """Delete the vectors no index of the repository references, and say how many."""
+    try:
+        swept = bootstrap.sweep_vectors(args.settings, args.path)
+    except LookupError as exc:
+        log.error("%s", exc)
+        return 1
+    print(f"Swept {swept} vector(s) no index references.", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run ish from the command line. Return an exit code.
 
@@ -252,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.settings.forget:
         return _run_forget(args)
+    if args.settings.sweep:
+        return _run_sweep(args)
     if not args.path.exists():
         log.error("Path does not exist: %s", args.path)
         return 1
