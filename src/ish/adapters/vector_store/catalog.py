@@ -4,13 +4,25 @@ Every scanned tree has one index file in one directory. The file is
 named after the tree, with a digest of its full path, so two projects
 never share an index and a person reading the directory can still tell
 them apart. The tree itself is recorded inside the file, because the
-name carries only a hash of it.
+name carries only a hash of it, and so are the repository and the
+checkout the tree belongs to, when git could name them.
 """
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+
+@dataclass(frozen=True, slots=True)
+class IndexEntry:
+    """One stored index: the tree it describes, and where that tree belongs."""
+
+    tree: Path
+    path: Path
+    repository: Path | None = None
+    checkout: Path | None = None
 
 
 class IndexCatalog:
@@ -31,12 +43,16 @@ class IndexCatalog:
         Map each tree to its index file. Read the tree from inside each
         index, because the file name carries only a hash of it.
         """
+        return {entry.tree: entry.path for entry in self.entries_below(path)}
+
+    def entries_below(self, path: Path) -> list[IndexEntry]:
+        """Return every stored index whose tree sits at or below *path*."""
         wanted = path.resolve()
-        found: dict[Path, Path] = {}
-        for tree, db_path in self._trees():
-            if tree == wanted or wanted in tree.parents:
-                found[tree] = db_path
-        return found
+        return [
+            entry
+            for entry in self.entries()
+            if entry.tree == wanted or wanted in entry.tree.parents
+        ]
 
     def covering(self, path: Path) -> tuple[Path, Path] | None:
         """Return the nearest stored index whose tree contains *path*.
@@ -48,21 +64,30 @@ class IndexCatalog:
         path best.
         """
         wanted = path.resolve()
-        best: tuple[Path, Path] | None = None
-        for tree, db_path in self._trees():
-            if tree not in wanted.parents:
+        best: IndexEntry | None = None
+        for entry in self.entries():
+            if entry.tree not in wanted.parents:
                 continue
-            if best is None or len(tree.parts) > len(best[0].parts):
-                best = (tree, db_path)
-        return best
+            if best is None or len(entry.tree.parts) > len(best.tree.parts):
+                best = entry
+        return None if best is None else (best.tree, best.path)
 
-    def _trees(self) -> list[tuple[Path, Path]]:
-        """Return every index file that records its tree, with that tree."""
+    def entries(self) -> list[IndexEntry]:
+        """Return every index file that records its tree, with what it records."""
         if not self.directory.is_dir():
             return []
-        found: list[tuple[Path, Path]] = []
+        found: list[IndexEntry] = []
         for db_path in sorted(self.directory.glob("*.db")):
-            tree = SqliteVectorStore.read_root(db_path)
-            if tree is not None:
-                found.append((tree, db_path))
+            identity = SqliteVectorStore.read_identity(db_path)
+            tree = identity.get("root")
+            if tree is None:
+                continue
+            found.append(
+                IndexEntry(
+                    tree=tree,
+                    path=db_path,
+                    repository=identity.get("repository"),
+                    checkout=identity.get("checkout"),
+                )
+            )
         return found

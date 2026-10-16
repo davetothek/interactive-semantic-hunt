@@ -217,10 +217,25 @@ def build_stores(
     identity = model_id(settings, embedder)
     resolved = root.resolve()
     indexes = catalog(settings)
-    existing = indexes.below(resolved) if settings.federate else {}
+    entries = indexes.entries_below(resolved) if settings.federate else []
+    existing = {entry.tree: entry.path for entry in entries}
+    recorded = {entry.tree: entry for entry in entries}
 
     def open_index(path: Path, tree: Path) -> SqliteVectorStore:
-        return SqliteVectorStore(path, model_id=identity, root=tree)
+        # An index records the repository and the checkout it belongs
+        # to. Ask git only for a tree that has not recorded them.
+        entry = recorded.get(tree)
+        if entry is not None and entry.repository is not None:
+            repository, checkout = entry.repository, entry.checkout
+        else:
+            repository, checkout = repository_identity(tree)
+        return SqliteVectorStore(
+            path,
+            model_id=identity,
+            root=tree,
+            repository=repository,
+            checkout=checkout,
+        )
 
     # Write to the index of the named tree. Build one only when nothing
     # below already covers the search, so asking about a parent of
@@ -285,6 +300,21 @@ def _nests(trees: Sequence[Path]) -> bool:
     return any(
         inner != outer and outer in inner.parents for inner in trees for outer in trees
     )
+
+
+def repository_identity(root: Path) -> tuple[Path | None, Path | None]:
+    """Return the repository *root* belongs to and the checkout it is in.
+
+    Return a pair of None outside a repository, or when git cannot run.
+    The application never learns what git is: the answer travels as two
+    paths, and the index records them.
+    """
+    from ish.adapters.vcs.git import repository_of
+
+    found = repository_of(root)
+    if found is None:
+        return None, None
+    return found.common_dir, found.checkout
 
 
 def build_ignored_by(settings: Settings, root: Path):

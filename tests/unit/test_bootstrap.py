@@ -178,6 +178,71 @@ class TestVectorStoreWiring:
             reader.close()
         assert list((tmp_path / "idx").glob("*.db"))
 
+    def test_a_new_index_records_its_repository(self, tmp_path, monkeypatch) -> None:
+        """Two checkouts of one repository must be told apart later."""
+        import subprocess
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        tree = tmp_path / "repo"
+        tree.mkdir()
+        subprocess.run(["git", "-C", str(tree), "init", "-q"], check=True)
+        indexes = tmp_path / "idx"
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, tree, _StubEmbedder())
+        reader.close()
+
+        (db_path,) = indexes.glob("*.db")
+        identity = SqliteVectorStore.read_identity(db_path)
+        assert identity["repository"] == (tree / ".git").resolve()
+        assert identity["checkout"] == tree.resolve()
+
+    def test_an_index_that_knows_its_repository_asks_git_nothing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Opening seven indexes must not cost seven git commands."""
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        tree = tmp_path / "proj"
+        tree.mkdir()
+        SqliteVectorStore(
+            indexes / "proj.db",
+            model_id="m",
+            root=tree,
+            repository=tmp_path / ".git",
+            checkout=tree,
+        ).close()
+        asked: list[Path] = []
+
+        def counted(root):
+            asked.append(root)
+            return None, None
+
+        monkeypatch.setattr(bootstrap, "repository_identity", counted)
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, tree, _StubEmbedder())
+        reader.close()
+        assert asked == []
+
+    def test_outside_a_repository_nothing_is_recorded(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        tree = tmp_path / "plain"
+        tree.mkdir()
+        indexes = tmp_path / "idx"
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, tree, _StubEmbedder())
+        reader.close()
+        (db_path,) = indexes.glob("*.db")
+        assert SqliteVectorStore.read_identity(db_path) == {"root": tree.resolve()}
+
     def test_cache_dir_option_wins(self, tmp_path) -> None:
         from dataclasses import replace
 
@@ -542,10 +607,10 @@ class TestBusyIndexes:
         from ish.adapters.vector_store.sqlite import SqliteVectorStore
         from ish.application.ports.vector_store import StoreBusy
 
-        def open_or_report(path, *, model_id, root):
+        def open_or_report(path, *, model_id, root, **identity):
             if path in busy:
                 raise StoreBusy(f"Another process holds the index {path}.")
-            return SqliteVectorStore(path, model_id=model_id, root=root)
+            return SqliteVectorStore(path, model_id=model_id, root=root, **identity)
 
         monkeypatch.setattr(
             "ish.adapters.vector_store.sqlite.SqliteVectorStore", open_or_report

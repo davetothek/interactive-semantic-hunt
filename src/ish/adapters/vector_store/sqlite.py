@@ -182,11 +182,28 @@ class SqliteVectorStore:
     """Persist chunks and embeddings in a single SQLite file."""
 
     def __init__(
-        self, db_path: Path, *, model_id: str, root: Path | None = None
+        self,
+        db_path: Path,
+        *,
+        model_id: str,
+        root: Path | None = None,
+        repository: Path | None = None,
+        checkout: Path | None = None,
     ) -> None:
+        """Open the index at *db_path* for the tree at *root*.
+
+        Name the *repository* the tree belongs to and the *checkout* it
+        is in when they are known. Both are recorded, so a later search
+        can tell two checkouts of one repository apart without asking
+        git again.
+        """
         self._model_id = model_id
         self._path = db_path
-        self._root = root
+        self._identity = {
+            "root": root,
+            "repository": repository,
+            "checkout": checkout,
+        }
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # The TUI reaches the store from a worker thread, so the connection
@@ -231,7 +248,7 @@ class SqliteVectorStore:
                 "SELECT value FROM meta WHERE key='schema_version'"
             ).fetchone()
             if row and row[0] == SCHEMA_VERSION:
-                self._record_root()
+                self._record_identity()
                 return
             log.info("Index schema changed. Rebuilding %s", self._path)
             for trigger in ("chunks_fts_insert", "chunks_fts_delete"):
@@ -250,50 +267,74 @@ class SqliteVectorStore:
             (SCHEMA_VERSION,),
         )
         self._db.commit()
-        self._record_root()
+        self._record_identity()
 
-    def _record_root(self) -> None:
-        """Store the tree this index was built from.
+    def _record_identity(self) -> None:
+        """Store the tree this index was built from, and where it belongs.
 
         The file name carries only a hash of the path, so without this
-        no one can tell which tree an index describes.
+        no one can tell which tree an index describes, nor which
+        repository and checkout hold it.
 
-        Write only when the stored tree differs. Opening an index is
+        Write only what differs from what is stored. Opening an index is
         what a search, a status report, and a refresh of an unchanged
         tree all do, and a write there takes the write lock of every
         index the caller touches. It also moves ``PRAGMA data_version``,
         which makes a reader in another process discard the scored
         matrix it holds.
         """
-        if self._root is None:
+        wanted = {
+            key: str(value)
+            for key, value in self._identity.items()
+            if value is not None
+        }
+        if not wanted:
             return
-        text = str(self._root)
         with self._lock:
-            row = self._db.execute(
-                "SELECT value FROM meta WHERE key = 'root'"
-            ).fetchone()
-            if row is not None and row[0] == text:
+            stored = dict(
+                self._db.execute(
+                    "SELECT key, value FROM meta "
+                    "WHERE key IN ('root', 'repository', 'checkout')"
+                ).fetchall()
+            )
+            changed = {
+                key: value for key, value in wanted.items() if stored.get(key) != value
+            }
+            if not changed:
                 return
             with self._db:
-                self._db.execute(
-                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('root', ?)",
-                    (text,),
+                self._db.executemany(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                    list(changed.items()),
                 )
+
+    @staticmethod
+    def read_identity(db_path: Path) -> dict[str, Path]:
+        """Return the tree, repository, and checkout an index records.
+
+        Read without opening the index fully, and return what is there:
+        an index made before repositories were recorded names only its
+        tree, and a file that is not an index names nothing.
+        """
+        try:
+            db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        except sqlite3.Error:
+            return {}
+        try:
+            rows = db.execute(
+                "SELECT key, value FROM meta "
+                "WHERE key IN ('root', 'repository', 'checkout')"
+            ).fetchall()
+        except sqlite3.Error:
+            return {}
+        finally:
+            db.close()
+        return {str(key): Path(str(value)) for key, value in rows}
 
     @staticmethod
     def read_root(db_path: Path) -> Path | None:
         """Return the tree an index was built from, without opening it fully."""
-        try:
-            db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        except sqlite3.Error:
-            return None
-        try:
-            row = db.execute("SELECT value FROM meta WHERE key = 'root'").fetchone()
-        except sqlite3.Error:
-            return None
-        finally:
-            db.close()
-        return Path(row[0]) if row else None
+        return SqliteVectorStore.read_identity(db_path).get("root")
 
     def clear(self) -> None:
         """Discard every indexed file.
