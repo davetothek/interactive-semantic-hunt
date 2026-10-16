@@ -267,7 +267,7 @@ def build_stores(
     # several indexes reads them rather than starting a new one.
     primary = None
     if resolved in existing or not existing:
-        covering = None if existing else indexes.covering(resolved)
+        covering = None if existing else indexes.covering(resolved, checkout)
         if covering is not None:
             tree, db_path = covering
             log.info(
@@ -478,7 +478,10 @@ def build_search(
 
     # An index that belongs to a tree above this one holds more than was
     # asked for, so keep the answers inside the path.
-    if not settings.no_cache and catalog(settings).covering(resolved) is not None:
+    if (
+        not settings.no_cache
+        and catalog(settings).covering(resolved, checkout) is not None
+    ):
         keep = _inside(resolved, keep)
 
     primary, reader = build_stores(settings, root, embedder, checkout=checkout)

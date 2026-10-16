@@ -77,6 +77,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- An index of a checkout no longer covers a worktree kept inside it. A
+  search of a worktree under `.claude/worktrees/` read the index of the
+  main checkout, whose tree contains the worktree, and a refresh wrote the
+  worktree's chunks into it. An index covers a path only within one
+  checkout.
 - Say what to do when a remote Ollama daemon does not answer. The message
   told every user to start a daemon with `ollama serve`, which cannot help
   when `OLLAMA_HOST` names another machine. The message now names that

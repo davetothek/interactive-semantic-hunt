@@ -73,6 +73,25 @@ class TestCovering:
         _index(tmp_path, "other", tmp_path / "b")
         assert IndexCatalog(tmp_path).covering(tmp_path / "a") is None
 
+    def test_another_checkout_does_not_cover(self, tmp_path: Path) -> None:
+        """A worktree under the main checkout is inside its tree, and apart."""
+        main = tmp_path / "main"
+        worktree = main / ".claude" / "worktrees" / "wt"
+        (worktree / "src").mkdir(parents=True)
+        SqliteVectorStore(
+            tmp_path / "main.db",
+            model_id="m",
+            root=main,
+            repository=main / ".git",
+            checkout=main,
+        ).close()
+        catalog = IndexCatalog(tmp_path)
+        assert catalog.covering(worktree / "src", checkout=worktree) is None
+        covered = catalog.covering(worktree / "src", checkout=main)
+        assert covered is not None and covered[0] == main
+        covered = catalog.covering(worktree / "src")
+        assert covered is not None and covered[0] == main
+
 
 class TestEntries:
     """Verify an entry carries where its tree belongs."""
