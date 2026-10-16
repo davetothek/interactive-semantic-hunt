@@ -24,7 +24,7 @@ from ish.adapters.parser import (
     categories,
     spellings,
 )
-from ish.adapters.vector_store.catalog import IndexCatalog
+from ish.adapters.vector_store.catalog import IndexCatalog, IndexEntry
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
@@ -218,25 +218,24 @@ def build_stores(
     resolved = root.resolve()
     indexes = catalog(settings)
     known = indexes.entries()
-    entries = (
-        [e for e in known if e.tree == resolved or resolved in e.tree.parents]
-        if settings.federate
-        else []
-    )
+    entries = indexes_for(indexes, resolved, known) if settings.federate else []
     existing = {entry.tree: entry.path for entry in entries}
     recorded = {entry.tree: entry for entry in known}
+    scopes: dict[Path, tuple[Path | None, Path | None]] = {}
 
-    def open_index(path: Path, tree: Path) -> SqliteVectorStore:
+    def identity_of(tree: Path) -> tuple[Path | None, Path | None]:
         # An index records the repository and the checkout it belongs
-        # to. Ask git only for a tree that has not recorded them. The
-        # vectors of a repository live in one shared store, which every
-        # index of the repository attaches, and a sweep of that store
-        # asks every sibling index before it deletes anything.
+        # to. Ask git only for a tree that has not recorded them.
         entry = recorded.get(tree)
         if entry is not None and entry.repository is not None:
-            repository, checkout = entry.repository, entry.checkout
-        else:
-            repository, checkout = repository_identity(tree)
+            return entry.repository, entry.checkout
+        return repository_identity(tree)
+
+    def open_index(path: Path, tree: Path) -> SqliteVectorStore:
+        # The vectors of a repository live in one shared store, which
+        # every index of the repository attaches, and a sweep of that
+        # store asks every sibling index before it deletes anything.
+        repository, checkout = scopes.setdefault(tree, identity_of(tree))
         shared = None
         siblings: list[Path] = []
         if repository is not None:
@@ -305,7 +304,32 @@ def build_stores(
         readers.insert(0, primary)
         trees.insert(0, resolved)
     log.info("Searching %d indexes under %s", len(readers), resolved)
-    return primary, FederatedReader(readers, disjoint=not _nests(trees))
+    return primary, FederatedReader(
+        readers,
+        disjoint=not _nests(trees),
+        scopes=[scopes[tree] for tree in trees],
+    )
+
+
+def indexes_for(
+    indexes: IndexCatalog, path: Path, known: Sequence[IndexEntry] | None = None
+) -> list[IndexEntry]:
+    """Return the stored indexes a search of *path* reads.
+
+    Take every index whose tree sits at or below *path*, except the
+    indexes of another checkout of a repository. A worktree kept under
+    the main checkout, as ``.claude/worktrees/`` keeps them, would
+    otherwise join every search of the main tree and answer with the
+    same chunk once more for each checkout. A path inside no checkout
+    reads them all, and the reader shows each chunk once.
+    """
+    resolved = path.resolve()
+    entries = indexes.entries() if known is None else known
+    below = [e for e in entries if e.tree == resolved or resolved in e.tree.parents]
+    _repository, checkout = repository_identity(resolved)
+    if checkout is None:
+        return below
+    return [e for e in below if e.checkout is None or e.checkout == checkout]
 
 
 def _nests(trees: Sequence[Path]) -> bool:
@@ -421,7 +445,9 @@ def refresh_indexes(
     from ish.settings import load_settings
 
     resolved = root.resolve()
-    trees = sorted(catalog(settings).below(resolved)) or [resolved]
+    trees = sorted(e.tree for e in indexes_for(catalog(settings), resolved)) or [
+        resolved
+    ]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
         within = None

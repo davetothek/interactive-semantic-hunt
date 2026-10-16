@@ -41,6 +41,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A search of a parent reads only the indexes of the checkout it starts
+  in. A worktree kept under the main checkout, as `.claude/worktrees/`
+  keeps them, no longer joins a search of the main tree, and a refresh of
+  the main tree leaves the worktrees to their own. A search from a
+  directory above several checkouts of one repository shows each chunk
+  once, from the checkout nearest the path asked about.
 - A search of a parent counts the chunks below it without building each
   one. The indexes of sibling trees cannot share a chunk, so their counts
   add up. Measured on a root over 7 indexes and 72,995 chunks, the count
