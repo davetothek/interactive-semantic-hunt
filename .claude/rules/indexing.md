@@ -13,10 +13,16 @@ paths:
 - Every rule about what to index lives in `Scan.accepts()` and nowhere else.
   Discovery and pruning both ask that one predicate.
 - `include` and `exclude` are regular expressions over the POSIX path.
-  `exclude` is searched against the whole path. `include` is matched from
-  the start of the path written from the tree root, so it names a place and
-  not a segment. `exclude` beats `include`. A malformed pattern names its
-  option and stops the run.
+  `exclude` is searched against the path from the top of the checkout,
+  written with a leading slash, and against the whole path outside a
+  repository. `include` is matched from the start of the path written from
+  the tree root, so it names a place and not a segment. `exclude` beats
+  `include`. A malformed pattern names its option and stops the run.
+- `ignore` names and `exclude` patterns judge only what lies inside the
+  checkout, never a directory above it. A worktree under
+  `.claude/worktrees/` must be indexable with the configuration that keeps
+  `.claude` out of the main index. The checkout reaches the scan as
+  `anchor`, from `bootstrap`, which asks git once per search.
 - The walk tests `exclude` against each directory it meets, written with a
   trailing slash, and never enters one that matches. `ignore` prunes by
   name, `exclude` by path. Both prune.

@@ -313,6 +313,40 @@ class TestVectorStoreWiring:
             (worktree / "src").resolve(),
         }
 
+    def test_a_scan_judges_its_filters_from_the_checkout(self, tmp_path) -> None:
+        """A worktree under .claude/worktrees/ is indexable with the main config."""
+        import subprocess
+        from dataclasses import replace
+
+        main = tmp_path / "main"
+        main.mkdir()
+        for arguments in (
+            ["init", "-q"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "Test"],
+            ["commit", "-qm", "first", "--allow-empty"],
+            [
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wt",
+                str(main / ".claude" / "worktrees" / "wt"),
+            ],
+        ):
+            subprocess.run(["git", "-C", str(main), *arguments], check=True)
+        worktree = main / ".claude" / "worktrees" / "wt"
+        (worktree / "src").mkdir()
+        (worktree / "src" / "app.py").write_text("def app():\n    pass\n")
+        settings = replace(Settings(), ignore=(".git", ".claude"), git=False)
+
+        in_worktree = bootstrap.build_scan(settings, worktree / "src").run(
+            worktree / "src"
+        )
+        assert [c.path.name for c in in_worktree] == ["app.py"]
+        in_main = bootstrap.build_scan(settings, main).run(main)
+        assert in_main == []
+
     def test_an_index_without_a_checkout_joins_every_search(self, tmp_path) -> None:
         """An index from before checkouts were recorded is read as before."""
         import subprocess
