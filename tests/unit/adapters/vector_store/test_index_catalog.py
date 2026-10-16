@@ -100,3 +100,29 @@ class TestEntries:
         _index(tmp_path, "out", tmp_path / "elsewhere")
         found = IndexCatalog(tmp_path).entries_below(tmp_path / "p")
         assert [entry.tree for entry in found] == [tmp_path / "p" / "q"]
+
+
+class TestSharedStore:
+    """Verify the vectors store of a repository is named and told apart."""
+
+    def test_the_store_is_named_after_the_repository(self, tmp_path: Path) -> None:
+        catalog = IndexCatalog(tmp_path)
+        path = catalog.shared_store_for(tmp_path / ".git")
+        assert path.parent == tmp_path
+        assert path.name.startswith("vectors-")
+        assert path.name.endswith(".db")
+        assert catalog.shared_store_for(tmp_path / ".git") == path
+        assert catalog.shared_store_for(tmp_path / "other" / ".git") != path
+
+    def test_the_store_is_not_an_index(self, tmp_path: Path) -> None:
+        catalog = IndexCatalog(tmp_path)
+        shared = catalog.shared_store_for(tmp_path / ".git")
+        SqliteVectorStore(
+            tmp_path / "one.db",
+            model_id="m",
+            root=tmp_path / "one",
+            repository=tmp_path / ".git",
+            shared=shared,
+        ).close()
+        assert shared.exists()
+        assert [entry.tree for entry in catalog.entries()] == [tmp_path / "one"]

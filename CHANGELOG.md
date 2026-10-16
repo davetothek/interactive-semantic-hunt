@@ -15,6 +15,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   repository names the same repository, which is what lets a second
   checkout reuse the work of the first, and an index that has recorded
   them is opened without asking git again.
+- The vectors of a repository live in one shared store, which every index
+  of the repository attaches. A vector is keyed by the text it stands for,
+  so a second checkout, such as a git worktree, finds the vectors of the
+  first and embeds only what differs. Measured on /Project, the firmware
+  tree of two worktrees shares 100 % of its chunk hashes with the main
+  index. An index from the release before moves its vectors into the
+  shared store on its first opening and embeds nothing again. Chunk rows
+  and file stamps stay in the index of each tree, because a result names
+  a file to open. A sweep of the shared store asks every index of the
+  repository before it deletes a vector.
 - Keep one server resident for a tree, with `ish-serve`. It listens on a
   Unix socket under `$XDG_RUNTIME_DIR/ish/`, named after the tree the way
   its index file is, refreshes the tree as soon as it starts and then every

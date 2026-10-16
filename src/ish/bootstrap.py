@@ -217,24 +217,41 @@ def build_stores(
     identity = model_id(settings, embedder)
     resolved = root.resolve()
     indexes = catalog(settings)
-    entries = indexes.entries_below(resolved) if settings.federate else []
+    known = indexes.entries()
+    entries = (
+        [e for e in known if e.tree == resolved or resolved in e.tree.parents]
+        if settings.federate
+        else []
+    )
     existing = {entry.tree: entry.path for entry in entries}
-    recorded = {entry.tree: entry for entry in entries}
+    recorded = {entry.tree: entry for entry in known}
 
     def open_index(path: Path, tree: Path) -> SqliteVectorStore:
         # An index records the repository and the checkout it belongs
-        # to. Ask git only for a tree that has not recorded them.
+        # to. Ask git only for a tree that has not recorded them. The
+        # vectors of a repository live in one shared store, which every
+        # index of the repository attaches, and a sweep of that store
+        # asks every sibling index before it deletes anything.
         entry = recorded.get(tree)
         if entry is not None and entry.repository is not None:
             repository, checkout = entry.repository, entry.checkout
         else:
             repository, checkout = repository_identity(tree)
+        shared = None
+        siblings: list[Path] = []
+        if repository is not None:
+            shared = indexes.shared_store_for(repository)
+            siblings = [
+                e.path for e in known if e.repository == repository and e.path != path
+            ]
         return SqliteVectorStore(
             path,
             model_id=identity,
             root=tree,
             repository=repository,
             checkout=checkout,
+            shared=shared,
+            siblings=siblings,
         )
 
     # Write to the index of the named tree. Build one only when nothing

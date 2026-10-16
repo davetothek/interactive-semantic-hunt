@@ -12,7 +12,12 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from ish.adapters.vector_store.sqlite import SqliteVectorStore
+from ish.adapters.vector_store.sqlite import SHARED_PREFIX, SqliteVectorStore
+
+
+def _digest(path: Path) -> str:
+    """Return the short digest of *path* that names a file after it."""
+    return hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +39,15 @@ class IndexCatalog:
     def path_for(self, root: Path) -> Path:
         """Return the index file for the tree at *root*."""
         resolved = root.resolve()
-        digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:12]
-        return self.directory / f"{resolved.name}-{digest}.db"
+        return self.directory / f"{resolved.name}-{_digest(resolved)}.db"
+
+    def shared_store_for(self, repository: Path) -> Path:
+        """Return the file that holds the vectors of every tree in *repository*.
+
+        Name it after the repository's common directory, which every
+        worktree reports alike, so every checkout reaches the same file.
+        """
+        return self.directory / f"{SHARED_PREFIX}{_digest(repository.resolve())}.db"
 
     def below(self, path: Path) -> dict[Path, Path]:
         """Return every stored index whose tree sits at or below *path*.

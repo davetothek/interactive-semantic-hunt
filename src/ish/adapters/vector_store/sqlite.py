@@ -19,6 +19,13 @@ bytes cost 18 ms. SQLite stays the source of truth: the file carries a
 stamp of the index state it was built from, and a file that does not
 match is read past and written again.
 
+Keep the vectors of one repository in one shared store, which every
+index of that repository attaches. A vector is keyed by the hash of the
+text it stands for, so a second checkout of the repository finds the
+vectors of the first and embeds only what differs. Chunk rows and file
+stamps stay in the index of each tree, because a result names a file to
+open, and a shared row would open the wrong checkout.
+
 The TUI indexes on a worker thread and searches on another, so the
 connection is opened for cross-thread use and every statement runs under
 one lock. SQLite itself serializes writers; the lock is what keeps a
@@ -48,8 +55,15 @@ log = logging.getLogger(__name__)
 
 # Bump when the schema changes, and also when anything changes the meaning
 # of a stored vector, such as the task prefixes the embedder applies. An
-# index built by an older version is discarded rather than mixed.
-SCHEMA_VERSION = "4"
+# index built by an older version is discarded rather than mixed, except
+# one at MIGRATES_FROM, which keeps its vectors and moves them into the
+# shared store of its repository.
+SCHEMA_VERSION = "5"
+MIGRATES_FROM = "4"
+
+# The shared store of a repository, named in the index directory after a
+# digest of the repository's common directory.
+SHARED_PREFIX = "vectors-"
 
 # Read chunk details this many at a time while a filter is trimming the
 # vector order. Reading a detail costs far more than scoring a vector,
@@ -123,13 +137,29 @@ CREATE TRIGGER chunks_fts_delete AFTER DELETE ON chunks BEGIN
     VALUES ('delete', old.id, old.symbol, old.terms);
 END;
 
-CREATE TABLE vectors (
+"""
+
+# The vectors, keyed by the text they stand for and the model that made
+# them. The table lives in the shared store of the repository, or in the
+# index itself for a tree outside any repository.
+_VECTORS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS {schema}.vectors (
     content_hash TEXT NOT NULL,
     model_id     TEXT NOT NULL,
     dim          INTEGER NOT NULL,
     data         BLOB NOT NULL,
     PRIMARY KEY (content_hash, model_id)
 );
+"""
+
+# What a shared store says about itself, so a reader of the directory
+# can tell it from an index.
+_SHARED_META_SCHEMA = """
+CREATE TABLE IF NOT EXISTS shared.meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+INSERT OR IGNORE INTO shared.meta (key, value) VALUES ('kind', 'vectors');
 """
 
 
@@ -167,6 +197,27 @@ gave up with nothing to act on.
 """
 
 
+def _referenced_by(index_path: Path) -> set[str] | None:
+    """Return the content hashes the index at *index_path* references.
+
+    Return an empty set for an index that is gone, and None for one
+    that is there but cannot be read.
+    """
+    if not index_path.exists():
+        return set()
+    try:
+        db = sqlite3.connect(f"file:{index_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+    try:
+        rows = db.execute("SELECT DISTINCT content_hash FROM chunks").fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        db.close()
+    return {str(row[0]) for row in rows}
+
+
 def _busy(path: Path, exc: sqlite3.OperationalError) -> Exception:
     """Return the error to raise for *exc*, named when a writer holds the file."""
     text = str(exc)
@@ -189,6 +240,8 @@ class SqliteVectorStore:
         root: Path | None = None,
         repository: Path | None = None,
         checkout: Path | None = None,
+        shared: Path | None = None,
+        siblings: Sequence[Path] = (),
     ) -> None:
         """Open the index at *db_path* for the tree at *root*.
 
@@ -196,6 +249,12 @@ class SqliteVectorStore:
         is in when they are known. Both are recorded, so a later search
         can tell two checkouts of one repository apart without asking
         git again.
+
+        Keep the vectors in *shared*, the store of the repository, when
+        one is given, and in this index otherwise. An index that has
+        moved its vectors into a shared store reaches it again on its
+        own. *siblings* names the other indexes of the repository, which
+        a sweep of the shared store asks before it deletes anything.
         """
         self._model_id = model_id
         self._path = db_path
@@ -204,6 +263,10 @@ class SqliteVectorStore:
             "repository": repository,
             "checkout": checkout,
         }
+        self._shared = shared
+        self._siblings = list(siblings)
+        # Where the vectors are, as SQL names the table.
+        self._vectors = "main.vectors"
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # The TUI reaches the store from a worker thread, so the connection
@@ -238,36 +301,112 @@ class SqliteVectorStore:
     # ------------------------------------------------------------------
 
     def _prepare(self) -> None:
-        """Create the schema, discarding any build from an older version."""
+        """Create or migrate the schema, discarding a build this version cannot read."""
         found = self._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
         ).fetchone()
-
+        meta: dict[str, str] = {}
         if found:
-            row = self._db.execute(
-                "SELECT value FROM meta WHERE key='schema_version'"
-            ).fetchone()
-            if row and row[0] == SCHEMA_VERSION:
-                self._record_identity()
-                return
+            meta = dict(self._db.execute("SELECT key, value FROM main.meta").fetchall())
+        # An index that moved its vectors into a shared store names it,
+        # so the store is reached again when nothing else names it.
+        if self._shared is None and "shared" in meta:
+            self._shared = Path(meta["shared"])
+        self._attach()
+
+        version = meta.get("schema_version")
+        if found and version == SCHEMA_VERSION:
+            self._record_identity()
+            return
+        if found and version == MIGRATES_FROM:
+            self._migrate_vectors()
+            self._record_identity()
+            return
+        if found:
             log.info("Index schema changed. Rebuilding %s", self._path)
             for trigger in ("chunks_fts_insert", "chunks_fts_delete"):
-                self._db.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+                self._db.execute(f"DROP TRIGGER IF EXISTS main.{trigger}")
             for table in ("chunks_fts", "vectors", "chunks", "files", "meta"):
-                self._db.execute(f"DROP TABLE IF EXISTS {table}")
+                self._db.execute(f"DROP TABLE IF EXISTS main.{table}")
             self._db.commit()
             # Dropping a table frees its pages but leaves what they held.
             # An index built before the source stopped being stored would
             # keep that source readable on disk for ever.
-            self._db.execute("VACUUM")
+            self._db.execute("VACUUM main")
 
         self._db.executescript(_SCHEMA)
+        if self._shared is None:
+            self._db.executescript(_VECTORS_SCHEMA.format(schema="main"))
         self._db.execute(
-            "INSERT INTO meta (key, value) VALUES ('schema_version', ?)",
+            "INSERT INTO main.meta (key, value) VALUES ('schema_version', ?)",
+            (SCHEMA_VERSION,),
+        )
+        self._record_shared()
+        self._db.commit()
+        self._record_identity()
+
+    def _attach(self) -> None:
+        """Reach the shared store, when this index has one, and make sure it exists."""
+        if self._shared is None:
+            self._vectors = "main.vectors"
+            return
+        self._shared.parent.mkdir(parents=True, exist_ok=True)
+        self._db.execute("ATTACH DATABASE ? AS shared", (str(self._shared),))
+        self._db.execute("PRAGMA shared.journal_mode=WAL")
+        self._db.execute("PRAGMA shared.synchronous=NORMAL")
+        made = self._db.execute(
+            "SELECT name FROM shared.sqlite_master WHERE type='table' AND name='meta'"
+        ).fetchone()
+        if made is None:
+            # A new store. Say what it is and whose it is, this once.
+            # Opening writes nothing after that, as for an index.
+            self._db.executescript(
+                _VECTORS_SCHEMA.format(schema="shared") + _SHARED_META_SCHEMA
+            )
+            repository = self._identity.get("repository")
+            if repository is not None:
+                self._db.execute(
+                    "INSERT OR IGNORE INTO shared.meta (key, value) "
+                    "VALUES ('repository', ?)",
+                    (str(repository),),
+                )
+            self._db.commit()
+        self._vectors = "shared.vectors"
+
+    def _record_shared(self) -> None:
+        """Name the shared store in meta, so a later opening finds it unaided."""
+        if self._shared is None:
+            return
+        self._db.execute(
+            "INSERT OR REPLACE INTO main.meta (key, value) VALUES ('shared', ?)",
+            (str(self._shared),),
+        )
+
+    def _migrate_vectors(self) -> None:
+        """Bring an index at MIGRATES_FROM to this version, keeping every vector.
+
+        Copy the vectors into the shared store of the repository and
+        drop the table they came from. An index outside any repository
+        keeps its table. Nothing is embedded again either way: a vector
+        is a second of embedding, and an index holds tens of thousands.
+        """
+        if self._shared is not None:
+            moved = self._db.execute(
+                f"INSERT OR IGNORE INTO {self._vectors} "
+                "SELECT content_hash, model_id, dim, data FROM main.vectors"
+            ).rowcount
+            self._db.commit()
+            log.info("Moved %d vectors of %s into %s", moved, self._path, self._shared)
+            self._db.execute("DROP TABLE main.vectors")
+            self._record_shared()
+        self._db.execute(
+            "UPDATE main.meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
         )
         self._db.commit()
-        self._record_identity()
+        if self._shared is not None:
+            # The pages the table held stay in the file until a vacuum.
+            self._db.execute("VACUUM main")
 
     def _record_identity(self) -> None:
         """Store the tree this index was built from, and where it belongs.
@@ -407,7 +546,7 @@ class SqliteVectorStore:
             marks = ",".join("?" * len(batch))
             with lock:
                 rows = self._db.execute(
-                    f"SELECT content_hash FROM vectors "  # noqa: S608
+                    f"SELECT content_hash FROM {self._vectors} "  # noqa: S608
                     f"WHERE model_id = ? AND content_hash IN ({marks})",
                     [self._model_id, *batch],
                 ).fetchall()
@@ -425,7 +564,7 @@ class SqliteVectorStore:
         with self._lock, self._db:
             self._mark_written()
             self._db.executemany(
-                "INSERT OR REPLACE INTO vectors "
+                f"INSERT OR REPLACE INTO {self._vectors} "  # noqa: S608
                 "(content_hash, model_id, dim, data) VALUES (?, ?, ?, ?)",
                 rows,
             )
@@ -477,12 +616,37 @@ class SqliteVectorStore:
             )
 
     def prune_vectors(self) -> int:
-        """Delete vectors no chunk references. Return how many went."""
+        """Delete vectors no chunk references. Return how many went.
+
+        A shared store is referenced by every index of the repository,
+        so ask each sibling what it still uses before anything goes. A
+        sibling that is gone references nothing. A sibling that cannot
+        be read keeps everything: absence has many causes, and a vector
+        costs a second of embedding to make again.
+        """
         with self._lock, self._db:
+            kept: set[str] = set()
+            for sibling in self._siblings:
+                referenced = _referenced_by(sibling)
+                if referenced is None:
+                    log.warning("Cannot read %s. Sweeping nothing.", sibling)
+                    return 0
+                kept.update(referenced)
             self._mark_written()
+            self._db.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS kept (content_hash TEXT PRIMARY KEY)"
+            )
+            self._db.execute("DELETE FROM kept")
+            self._db.execute(
+                "INSERT OR IGNORE INTO kept SELECT content_hash FROM main.chunks"
+            )
+            self._db.executemany(
+                "INSERT OR IGNORE INTO kept (content_hash) VALUES (?)",
+                [(digest,) for digest in kept],
+            )
             cursor = self._db.execute(
-                "DELETE FROM vectors WHERE content_hash NOT IN "
-                "(SELECT content_hash FROM chunks)"
+                f"DELETE FROM {self._vectors} WHERE content_hash NOT IN "  # noqa: S608
+                "(SELECT content_hash FROM kept)"
             )
         return cursor.rowcount
 
@@ -668,8 +832,8 @@ class SqliteVectorStore:
 
             rows = self._db.execute(
                 "SELECT c.id, v.dim, v.data "
-                "FROM chunks c "
-                "JOIN vectors v ON v.content_hash = c.content_hash "
+                "FROM main.chunks c "
+                f"JOIN {self._vectors} v ON v.content_hash = c.content_hash "  # noqa: S608
                 "WHERE v.model_id = ?",
                 (self._model_id,),
             ).fetchall()

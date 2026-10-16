@@ -193,7 +193,9 @@ class TestVectorStoreWiring:
         _primary, reader = bootstrap.build_stores(settings, tree, _StubEmbedder())
         reader.close()
 
-        (db_path,) = indexes.glob("*.db")
+        (db_path,) = [
+            p for p in indexes.glob("*.db") if not p.name.startswith("vectors-")
+        ]
         identity = SqliteVectorStore.read_identity(db_path)
         assert identity["repository"] == (tree / ".git").resolve()
         assert identity["checkout"] == tree.resolve()
@@ -228,6 +230,31 @@ class TestVectorStoreWiring:
         _primary, reader = bootstrap.build_stores(settings, tree, _StubEmbedder())
         reader.close()
         assert asked == []
+
+    def test_trees_of_one_repository_share_a_vectors_store(self, tmp_path) -> None:
+        """The second tree of a repository finds what the first embedded."""
+        import subprocess
+        from dataclasses import replace
+
+        repo = tmp_path / "repo"
+        for name in ("one", "two"):
+            (repo / name).mkdir(parents=True)
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        indexes = tmp_path / "idx"
+        settings = replace(Settings(), cache_dir=str(indexes))
+
+        first, _reader = bootstrap.build_stores(settings, repo / "one", _StubEmbedder())
+        assert first is not None
+        first.add_vectors({"h1": [1.0, 0.0]})
+        first.close()
+
+        second, reader = bootstrap.build_stores(settings, repo / "two", _StubEmbedder())
+        try:
+            assert second is not None
+            assert second.missing_vectors({"h1"}) == set()
+        finally:
+            reader.close()
+        assert len(list(indexes.glob("vectors-*.db"))) == 1
 
     def test_outside_a_repository_nothing_is_recorded(self, tmp_path) -> None:
         from dataclasses import replace
