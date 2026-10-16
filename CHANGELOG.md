@@ -8,6 +8,22 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Keep one server resident for a tree, with `ish-serve`. It listens on a
+  Unix socket under `$XDG_RUNTIME_DIR/ish/`, named after the tree the way
+  its index file is, refreshes the tree as soon as it starts and then every
+  `refresh_seconds`, and outlives any client. `ish "query" path` answers
+  through it from the index it holds and asks it to refresh behind the
+  answer. `ish-mcp` joins it when it finds the socket and carries the lines
+  of its host to it, so every editor and agent shares the one server with
+  no change on their side. Everything works as before without one.
+  Measured on a root over 7 indexes and 72,995 chunks: 237 ms on its own,
+  131 ms through the server. `--socket PATH` names the socket,
+  `--idle-seconds N` stops a server nobody has used for N seconds, a second
+  server for the same tree exits at once, and the socket of a killed server
+  is taken over.
+
 ### Changed
 
 - A search of a parent counts the chunks below it without building each

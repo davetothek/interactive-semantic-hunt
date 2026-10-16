@@ -60,6 +60,7 @@ dev = [
 [project.scripts]
 ish = "ish.interfaces.cli.main:main"
 ish-mcp = "ish.interfaces.mcp.server:main"
+ish-serve = "ish.interfaces.mcp.daemon:main"
 ish-complete = "ish.interfaces.cli.complete:main"
 
 [tool.uv]

@@ -18,6 +18,7 @@ from ish.application.categories import TYPES
 from ish.application.progress import Progress
 from ish.interfaces.format import render
 from ish.interfaces.log import setup_logging
+from ish.interfaces.mcp import transport
 from ish.interfaces.mcp.protocol import Server, Tool
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings, choices_of, load_settings
@@ -30,6 +31,10 @@ log = logging.getLogger("ish.mcp")
 WATCH_STOP_SECONDS = 5.0
 
 SERVER_NAME = "ish"
+
+# How a search that found nothing begins its answer. A client that
+# prints results as lines reads this as prose, not as a result.
+NO_RESULTS = "No results for"
 
 _PATH_PROPERTY = {
     "type": "string",
@@ -94,6 +99,9 @@ class IshTools:
         self._watchers: list[threading.Thread] = []
         self._progress: dict[Path, str] = {}
         self._closing = threading.Event()
+        # Several clients may ask at once over a socket, and a tree
+        # must get one session and one watch however many ask.
+        self._lock = threading.Lock()
 
     def close(self) -> None:
         """Release every index this server opened, and stop watching.
@@ -145,18 +153,28 @@ class IshTools:
         refreshing through it did nothing at all. Refresh each tree
         beneath it, which is what brings an edit into view.
         """
-        if root in self._watched:
-            return
-        wake = threading.Event()
-        self._watched[root] = wake
-        watcher = threading.Thread(
-            target=self._refresh_forever,
-            args=(root, wake),
-            name=f"ish-refresh-{root.name}",
-            daemon=True,
-        )
-        self._watchers.append(watcher)
-        watcher.start()
+        with self._lock:
+            if root in self._watched:
+                return
+            wake = threading.Event()
+            self._watched[root] = wake
+            watcher = threading.Thread(
+                target=self._refresh_forever,
+                args=(root, wake),
+                name=f"ish-refresh-{root.name}",
+                daemon=True,
+            )
+            self._watchers.append(watcher)
+            watcher.start()
+
+    def watch(self, root: Path) -> None:
+        """Keep *root* current from now on, and look at it right away.
+
+        A server that listens on a socket may wait a long time for its
+        first client, and the index should be current when one comes.
+        """
+        self._keep_current(root, self._session_for(root))
+        self._watched[root].set()
 
     def _refresh_forever(self, root: Path, wake: threading.Event) -> None:
         """Bring every index under *root* up to date, when asked or in time."""
@@ -195,18 +213,16 @@ class IshTools:
         does. Report progress through ``index_status``.
         """
         root = self._resolve(arguments.get("path"))
-        self._keep_current(root, self._session_for(root))
-        waiting = self._watched.get(root)
-        if waiting is not None:
-            waiting.set()
+        self.watch(root)
         return f"Refreshing {root} in the background."
 
     def _session_for(self, root: Path) -> Ish:
         """Return the session for *root*, opening it on first use."""
-        if root not in self._by_root:
-            log.info("Opening an index for %s", root)
-            self._by_root[root] = Ish(root, settings=self._settings)
-        return self._by_root[root]
+        with self._lock:
+            if root not in self._by_root:
+                log.info("Opening an index for %s", root)
+                self._by_root[root] = Ish(root, settings=self._settings)
+            return self._by_root[root]
 
     # ------------------------------------------------------------------
     # Tool handlers
@@ -227,10 +243,15 @@ class IshTools:
         # so an editor can pass the line as typed.
         results = session.search(query, limit, **self._narrowing(arguments))
         if not results:
-            return f"No results for {query!r} under {root}."
+            return f"{NO_RESULTS} {query!r} under {root}."
 
+        # Write each path from the directory asked about. A caller in
+        # another directory resolves it against that one, and the
+        # working directory of a shared server means nothing to it.
         shape = str(arguments.get("format") or self._settings.format)
-        return "\n".join(render(chunk, shape, score) for chunk, score in results)
+        return "\n".join(
+            render(chunk, shape, score, base=root) for chunk, score in results
+        )
 
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
@@ -239,7 +260,7 @@ class IshTools:
         if not chunks:
             return f"No source files found under {root}."
         shape = str(arguments.get("format") or self._settings.format)
-        return "\n".join(render(chunk, shape) for chunk in chunks)
+        return "\n".join(render(chunk, shape, base=root) for chunk in chunks)
 
     def index_status(self, arguments: Mapping[str, Any]) -> str:
         """Report what the stored index holds for a path."""
@@ -379,7 +400,7 @@ class IshTools:
         ]
 
 
-def _version() -> str:
+def installed_version() -> str:
     """Return the installed package version."""
     import importlib.metadata
 
@@ -390,15 +411,30 @@ def _version() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the MCP server on stdio. Return an exit code."""
+    """Run the MCP server on stdio. Return an exit code.
+
+    Join the resident server of the tree when one listens, so every
+    host of the tree shares one index and one warm model. Serve from
+    this process otherwise.
+    """
     root = Path.cwd()
     settings = load_settings(start=root)
 
     # stdout carries the protocol, so every log line must go to stderr.
     setup_logging(verbosity=settings.verbosity, color=False)
 
+    found = transport.find_socket(root)
+    connection = None if found is None else transport.connect(found)
+    if connection is not None:
+        log.info("Serving %s through the server at %s", root, found)
+        try:
+            transport.bridge(sys.stdin, sys.stdout, connection, default_path=root)
+        except KeyboardInterrupt:
+            log.info("Interrupted")
+        return 0
+
     tools = IshTools(settings, root)
-    server = Server(SERVER_NAME, _version(), tools.tools())
+    server = Server(SERVER_NAME, installed_version(), tools.tools())
     try:
         server.serve(sys.stdin, sys.stdout)
     except KeyboardInterrupt:

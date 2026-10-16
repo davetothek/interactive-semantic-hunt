@@ -309,20 +309,20 @@ class TestVersionReporting:
     """Verify the version handed to the host."""
 
     def test_reports_the_installed_version(self) -> None:
-        from ish.interfaces.mcp.server import _version
+        from ish.interfaces.mcp.server import installed_version
 
-        assert _version() != ""
+        assert installed_version() != ""
 
     def test_falls_back_when_not_installed(self, monkeypatch) -> None:
         import importlib.metadata
 
-        from ish.interfaces.mcp.server import _version
+        from ish.interfaces.mcp.server import installed_version
 
         def missing(name):
             raise importlib.metadata.PackageNotFoundError(name)
 
         monkeypatch.setattr(importlib.metadata, "version", missing)
-        assert _version() == "unknown"
+        assert installed_version() == "unknown"
 
 
 class TestInterrupt:
@@ -490,6 +490,25 @@ class TestOutputShape:
     def test_listing_honours_the_shape(self, tools: IshTools, project: Path) -> None:
         out = tools.list_chunks({"path": str(project), "format": "grep"})
         assert all(line.split(":")[2] == "1" for line in out.splitlines())
+
+    def test_paths_are_written_from_the_path_asked_about(
+        self,
+        tools: IshTools,
+        stub_backend,
+        project: Path,
+        monkeypatch,
+        tmp_path_factory,
+    ) -> None:
+        """A shared server answers callers in other directories.
+
+        Its own working directory means nothing to them, and an editor
+        resolves a result against the directory it asked about.
+        """
+        monkeypatch.chdir(tmp_path_factory.mktemp("elsewhere"))
+        out = tools.search({"query": "config", "path": str(project), "format": "grep"})
+        assert out.splitlines()[0].startswith("app.py:")
+        listed = tools.list_chunks({"path": str(project)})
+        assert all(line.startswith("app.py:") for line in listed.splitlines())
 
     def test_the_shape_is_offered_by_the_tools(self, tools: IshTools) -> None:
         search = next(t for t in tools.tools() if t.name == "search_code")

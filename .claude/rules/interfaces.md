@@ -56,6 +56,16 @@ finishes a filter word. Nothing else is added.
 - An index another process holds is left out of a search above it, with a
   warning that names it. A search of the held tree itself raises `StoreBusy`.
 - Report a tool failure through `isError`, not a JSON-RPC error.
+- `ish-serve` owns the socket and the lifecycle: it binds, watches its own
+  tree from the start, stops when idle if asked, and steps aside when one
+  already listens. It serves the same `Server` and one `IshTools`, so a
+  tree gets one session and one watch however many clients ask.
+- `ish-mcp` serves stdio and nothing else. It joins the server of its tree
+  when one listens, carrying lines both ways and filling the directory of
+  its host into a call that names no path. The CLI connects directly for a
+  plain query, and never for a run that refreshes, reindexes, names a
+  config file, or sets an index-scope option. Editor clients know nothing
+  of sockets.
 
 ## Neovim
 

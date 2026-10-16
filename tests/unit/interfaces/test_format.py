@@ -4,9 +4,11 @@ from pathlib import Path
 
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import (
+    display_path,
     format_chunk_line,
     format_grep_line,
     format_result_line,
+    render,
     symbol_of,
 )
 
@@ -63,3 +65,32 @@ class TestPlainShape:
 
     def test_symbol_of_names_the_unnamed(self) -> None:
         assert symbol_of(chunk(None)) == "<anonymous>"
+
+
+class TestTheBase:
+    """Verify a path is written from the directory a caller asked about.
+
+    A server shared by several callers has a working directory that
+    means nothing to them. An editor resolves a result against the
+    directory it asked about, so the path is written from there.
+    """
+
+    def test_a_path_under_the_base_is_relative_to_it(self) -> None:
+        assert display_path(Path("/proj/src/a.py"), Path("/proj")) == Path("src/a.py")
+
+    def test_a_path_outside_the_base_stays_absolute(self) -> None:
+        shown = display_path(Path("/proj/src/a.py"), Path("/other"))
+        assert shown == Path("/proj/src/a.py")
+
+    def test_without_a_base_the_working_directory_is_used(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        assert display_path(tmp_path / "src" / "a.py") == Path("src/a.py")
+        assert display_path(Path("/proj/src/a.py")) == Path("/proj/src/a.py")
+
+    def test_every_shape_takes_the_base(self) -> None:
+        base = Path("/proj")
+        assert render(chunk(), "plain", 0.5, base=base).startswith("[0.50] src/a.py:")
+        assert render(chunk(), "plain", base=base).startswith("src/a.py:")
+        assert render(chunk(), "grep", 0.5, base=base).startswith("src/a.py:12:1:")

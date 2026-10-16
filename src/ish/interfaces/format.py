@@ -5,18 +5,24 @@ from pathlib import Path
 from ish.domain.chunk import Chunk
 
 
-def display_path(path: Path) -> Path:
-    """Return *path* relative to the working directory when possible."""
+def display_path(path: Path, base: Path | None = None) -> Path:
+    """Return *path* relative to *base*, or to the working directory, when possible.
+
+    A server that answers for several callers names the directory each
+    one asked about, because its own working directory means nothing to
+    them. A caller that resolves the answer against that directory, as
+    an editor does, then opens the right file.
+    """
     try:
-        return path.relative_to(Path.cwd())
+        return path.relative_to(base if base is not None else Path.cwd())
     except ValueError:
         return path
 
 
-def format_chunk_line(chunk: Chunk) -> str:
+def format_chunk_line(chunk: Chunk, base: Path | None = None) -> str:
     """Format one chunk in the plain scan output format."""
     return (
-        f"{display_path(chunk.path)}:{chunk.start_line}-{chunk.end_line}  "
+        f"{display_path(chunk.path, base)}:{chunk.start_line}-{chunk.end_line}  "
         f"{chunk.kind}  {symbol_of(chunk)}"
     )
 
@@ -26,12 +32,14 @@ def symbol_of(chunk: Chunk) -> str:
     return chunk.symbol or "<anonymous>"
 
 
-def format_result_line(chunk: Chunk, score: float) -> str:
+def format_result_line(chunk: Chunk, score: float, base: Path | None = None) -> str:
     """Format one ranked search result."""
-    return f"[{score:.2f}] {format_chunk_line(chunk)}"
+    return f"[{score:.2f}] {format_chunk_line(chunk, base)}"
 
 
-def format_grep_line(chunk: Chunk, score: float | None = None) -> str:
+def format_grep_line(
+    chunk: Chunk, score: float | None = None, base: Path | None = None
+) -> str:
     """Format a result the way a grep-driven editor expects.
 
     ``path:line:column:text`` is what an editor picker parses to open a
@@ -40,22 +48,30 @@ def format_grep_line(chunk: Chunk, score: float | None = None) -> str:
     """
     prefix = f"[{score:.2f}] " if score is not None else ""
     return (
-        f"{display_path(chunk.path)}:{chunk.start_line}:1:"
+        f"{display_path(chunk.path, base)}:{chunk.start_line}:1:"
         f"{prefix}{chunk.kind}  {symbol_of(chunk)}"
     )
 
 
-def render(chunk: Chunk, shape: str, score: float | None = None) -> str:
+def render(
+    chunk: Chunk,
+    shape: str,
+    score: float | None = None,
+    *,
+    base: Path | None = None,
+) -> str:
     """Render one chunk in the shape the caller asked for.
 
     Accept a score for a ranked result and none for a plain listing, so
-    every interface formats a line through this one function.
+    every interface formats a line through this one function. Write the
+    path from *base* when one is given, and from the working directory
+    otherwise.
     """
     if shape == "grep":
-        return format_grep_line(chunk, score)
+        return format_grep_line(chunk, score, base)
     if score is None:
-        return format_chunk_line(chunk)
-    return format_result_line(chunk, score)
+        return format_chunk_line(chunk, base)
+    return format_result_line(chunk, score, base)
 
 
 def format_selection(chunk: Chunk) -> str:

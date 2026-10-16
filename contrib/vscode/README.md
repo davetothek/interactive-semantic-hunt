@@ -10,6 +10,11 @@ resident server per workspace folder, started on the first search and
 reused after, so a query costs a round trip and no process start.
 Nothing here searches on its own.
 
+When `ish-serve` runs for the workspace folder, or for a folder above
+it, the `ish-mcp` this extension starts joins it, so several windows,
+Neovim, and the command line share one server and one current index.
+Nothing in the extension changes for that.
+
 ## Setup
 
 1. Install ish and a backend, as the [project README](https://github.com/davetothek/interactive-semantic-hunt#install)
