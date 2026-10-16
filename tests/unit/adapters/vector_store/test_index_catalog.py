@@ -69,3 +69,34 @@ class TestCovering:
     def test_nothing_covers_an_unrelated_path(self, tmp_path: Path) -> None:
         _index(tmp_path, "other", tmp_path / "b")
         assert IndexCatalog(tmp_path).covering(tmp_path / "a") is None
+
+
+class TestEntries:
+    """Verify an entry carries where its tree belongs."""
+
+    def test_an_entry_names_repository_and_checkout(self, tmp_path: Path) -> None:
+        SqliteVectorStore(
+            tmp_path / "wt.db",
+            model_id="m",
+            root=tmp_path / "wt" / "src",
+            repository=tmp_path / ".git",
+            checkout=tmp_path / "wt",
+        ).close()
+        (entry,) = IndexCatalog(tmp_path).entries()
+        assert entry.tree == tmp_path / "wt" / "src"
+        assert entry.path == tmp_path / "wt.db"
+        assert entry.repository == tmp_path / ".git"
+        assert entry.checkout == tmp_path / "wt"
+
+    def test_an_older_entry_names_only_its_tree(self, tmp_path: Path) -> None:
+        _index(tmp_path, "plain", tmp_path / "p")
+        (entry,) = IndexCatalog(tmp_path).entries()
+        assert entry.tree == tmp_path / "p"
+        assert entry.repository is None
+        assert entry.checkout is None
+
+    def test_entries_below_a_path(self, tmp_path: Path) -> None:
+        _index(tmp_path, "in", tmp_path / "p" / "q")
+        _index(tmp_path, "out", tmp_path / "elsewhere")
+        found = IndexCatalog(tmp_path).entries_below(tmp_path / "p")
+        assert [entry.tree for entry in found] == [tmp_path / "p" / "q"]

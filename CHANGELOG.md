@@ -10,6 +10,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- An index records the repository and the checkout its tree belongs to,
+  as git names them, beside the tree itself. Every worktree of one
+  repository names the same repository, which is what lets a second
+  checkout reuse the work of the first, and an index that has recorded
+  them is opened without asking git again.
 - Keep one server resident for a tree, with `ish-serve`. It listens on a
   Unix socket under `$XDG_RUNTIME_DIR/ish/`, named after the tree the way
   its index file is, refreshes the tree as soon as it starts and then every
