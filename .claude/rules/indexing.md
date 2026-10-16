@@ -66,6 +66,14 @@ paths:
   exists for this.
 - The scored matrix cache is dropped when this store writes, and when
   `PRAGMA data_version` shows another connection committed.
+- Every write transaction goes through `_mark_written()`, which bumps the
+  `generation` row in `meta`. The matrix file beside the index is stamped
+  with that generation and the chunk count, and a file whose stamp differs
+  is read past and written again.
+- The matrix file is a cache. SQLite stays the source of truth, and the
+  file holds ids and vectors only. Write it under a temporary name and
+  rename it into place, and never on a miss within `SETTLE_SECONDS` of a
+  write by this store.
 - Every interface calls `Search.close()`.
 
 ## Federation

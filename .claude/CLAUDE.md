@@ -30,12 +30,14 @@ blocks a version bump outside a release branch. `poe hooks` tests them.
 |---|---|---|
 | CLI | `ish "query" path` | one shot, ~380 ms including interpreter start |
 | TUI | `ish -i path` | the primary one, an `fzf`-style picker |
-| MCP | `ish-mcp` | resident, ~58 ms a call, for an agent or an editor |
+| MCP | `ish-mcp`, which joins `ish-serve` when one runs for the tree | resident, ~58 ms a call, for an agent or an editor |
 | Python | `from ish.interfaces.python.api import Ish` | holds the index open |
 
-`ish-complete` is a fifth entry point. It finishes a filter word rather than
-searching. `Ish` is the session the other three are built on. Nothing beyond
-these is built, and an HTTP API stays out by decision.
+`ish-complete` and `ish-serve` are two more entry points, not interfaces.
+The first finishes a filter word rather than searching. The second keeps
+one MCP server resident for a tree on a Unix socket. `Ish` is the session
+the other three are built on. Nothing beyond these is built, and an HTTP
+API stays out by decision.
 
 ## Architecture
 
@@ -178,6 +180,10 @@ something broke. This is that record, so a rule is never argued from taste.
   with llama.cpp. A real firmware project (10k files, 30,317 chunks): 14 s to
   scan and parse, then about one chunk per second to embed. A whole tree is
   hours. Index the subtrees that matter and federate.
+- A matrix file stamped with row counts alone cannot tell a replaced file:
+  swapping the vectors behind two chunks leaves every count the same, and
+  SQLite's own change counter does not move in WAL mode. Hence the
+  `generation` row in `meta`, bumped by every write transaction.
 
 ### Embedding
 
@@ -236,6 +242,14 @@ Profiled against a real 7,834-chunk index across three federated indexes:
 - MCP: ~58 ms per `search_code`, against ~190 ms for the same query through
   the CLI. A resident server answers in about 130 ms. `build_index` per call
   once cost 390 ms through Neovim against 135 now.
+- On /Project, 7 sibling indexes, 9,231 files, 72,995 chunks, 224 MB of
+  vectors, a root query through the CLI, cold, median of 5: 1110 ms → 629 ms
+  when the federated count became a sum of counts rather than a listing of
+  73,000 chunks; 670 ms → 213 ms when the matrix came from a mapped file
+  beside each index rather than from the blobs; 237 ms on its own against
+  131 ms through `ish-serve`, most of the rest the interpreter start
+  of `ish` itself. The mapped file loads in 18 ms against 310 to 460 ms for
+  the blobs, and the first run after a change writes it in about 1.2 s.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
 

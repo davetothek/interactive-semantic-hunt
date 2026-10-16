@@ -259,6 +259,43 @@ write the same filters into the query text. It cannot change
 what is indexed — those settings come from the config file only, so no single
 call can shrink an index that another call depends on.
 
+## Keep one server running
+
+`ish-serve` keeps one server resident for a tree. It listens on a Unix
+socket under `$XDG_RUNTIME_DIR/ish/`, named after the tree the way its index
+file is, serves every client of the tree through the tools `ish-mcp` offers,
+and outlives any of them:
+
+```sh
+ish-serve /path/to/tree
+```
+
+A running server refreshes its tree as soon as it starts, and then every
+`refresh_seconds`, so the index is current before anyone asks. Clients find
+it by walking up from the path they ask about, so a question about a
+subdirectory reaches the server of the tree that holds it:
+
+- `ish "query" path` answers from the index the server holds and asks it to
+  refresh behind the answer, so an edit is searchable on the next query
+  rather than embedded in front of this one. Measured on a root over 7
+  indexes and 72,995 chunks, a query cost 237 ms on its own and 131 ms
+  through the server, most of it the interpreter start of `ish` itself.
+- `ish-mcp` joins the server when it finds the socket and carries the lines
+  of its host to it, so every editor and every agent that spawns `ish-mcp`
+  shares the one server with no change on their side. A call that names no
+  path still means the directory the host started `ish-mcp` in.
+
+Without a server everything works as before: `ish` opens the index itself,
+and `ish-mcp` serves from its own process. A run that refreshes, reindexes,
+names a config file, or sets an option that decides what is indexed does its
+own work, because the server cannot take those per call.
+
+`--socket PATH` names the socket. `--idle-seconds N` stops a server that has
+had no client for N seconds, and 0, the default, keeps it running. A second
+`ish-serve` for the same tree exits at once, so a shell hook may start one
+without checking first, and one that finds the socket of a server that was
+killed takes it over.
+
 ## Index
 
 The index persists in SQLite under `$XDG_DATA_HOME/ish/`, one file per scanned
