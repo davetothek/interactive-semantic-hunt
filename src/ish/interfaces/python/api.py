@@ -304,7 +304,12 @@ class Ish:
             "chunks": len(chunks),
             "files": len(with_chunks),
             "empty_files": len(read - with_chunks),
-            "indexes": sorted(bootstrap.catalog(self.settings).below(self.path)),
+            "indexes": sorted(
+                entry.tree
+                for entry in bootstrap.indexes_for(
+                    bootstrap.catalog(self.settings), self.path
+                )
+            ),
             "languages": dict(sorted(languages.items())),
             "types": dict(sorted(kinds.items())),
         }
