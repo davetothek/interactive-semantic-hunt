@@ -178,6 +178,223 @@ class TestVectorStoreWiring:
             reader.close()
         assert list((tmp_path / "idx").glob("*.db"))
 
+    def test_a_new_index_records_its_repository(self, tmp_path, monkeypatch) -> None:
+        """Two checkouts of one repository must be told apart later."""
+        import subprocess
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        tree = tmp_path / "repo"
+        tree.mkdir()
+        subprocess.run(["git", "-C", str(tree), "init", "-q"], check=True)
+        indexes = tmp_path / "idx"
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, tree, _StubEmbedder())
+        reader.close()
+
+        (db_path,) = [
+            p for p in indexes.glob("*.db") if not p.name.startswith("vectors-")
+        ]
+        identity = SqliteVectorStore.read_identity(db_path)
+        assert identity["repository"] == (tree / ".git").resolve()
+        assert identity["checkout"] == tree.resolve()
+
+    def test_an_index_that_knows_its_repository_asks_git_nothing(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Opening seven indexes must not cost seven git commands.
+
+        One command names the checkout the search starts in. The
+        indexes below it have recorded their own.
+        """
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        project = tmp_path / "proj"
+        for name in ("one", "two"):
+            (project / name).mkdir(parents=True)
+            SqliteVectorStore(
+                indexes / f"{name}.db",
+                model_id="m",
+                root=project / name,
+                repository=tmp_path / ".git",
+                checkout=project,
+            ).close()
+        asked: list[Path] = []
+
+        def counted(root):
+            asked.append(root)
+            return None, None
+
+        monkeypatch.setattr(bootstrap, "repository_identity", counted)
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
+        reader.close()
+        assert asked == [project.resolve()]
+
+    def test_trees_of_one_repository_share_a_vectors_store(self, tmp_path) -> None:
+        """The second tree of a repository finds what the first embedded."""
+        import subprocess
+        from dataclasses import replace
+
+        repo = tmp_path / "repo"
+        for name in ("one", "two"):
+            (repo / name).mkdir(parents=True)
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        indexes = tmp_path / "idx"
+        settings = replace(Settings(), cache_dir=str(indexes))
+
+        first, _reader = bootstrap.build_stores(settings, repo / "one", _StubEmbedder())
+        assert first is not None
+        first.add_vectors({"h1": [1.0, 0.0]})
+        first.close()
+
+        second, reader = bootstrap.build_stores(settings, repo / "two", _StubEmbedder())
+        try:
+            assert second is not None
+            assert second.missing_vectors({"h1"}) == set()
+        finally:
+            reader.close()
+        assert len(list(indexes.glob("vectors-*.db"))) == 1
+
+    def test_a_search_reads_only_its_own_checkout(self, tmp_path) -> None:
+        """A worktree under the main checkout must not join a search of it."""
+        import subprocess
+
+        from ish.adapters.vector_store.catalog import IndexCatalog
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        main = tmp_path / "main"
+        (main / "src").mkdir(parents=True)
+        for arguments in (
+            ["init", "-q"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "Test"],
+            ["add", "."],
+            ["commit", "-qm", "first", "--allow-empty"],
+            [
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wt",
+                str(main / ".claude" / "worktrees" / "wt"),
+            ],
+        ):
+            subprocess.run(["git", "-C", str(main), *arguments], check=True)
+        worktree = main / ".claude" / "worktrees" / "wt"
+        (worktree / "src").mkdir()
+        common = (main / ".git").resolve()
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        for name, tree, checkout in (
+            ("main-src", main / "src", main),
+            ("wt-src", worktree / "src", worktree),
+        ):
+            SqliteVectorStore(
+                indexes / f"{name}.db",
+                model_id="m",
+                root=tree.resolve(),
+                repository=common,
+                checkout=checkout.resolve(),
+            ).close()
+        catalog = IndexCatalog(indexes)
+
+        # A submodule is another repository inside the tree, not another
+        # checkout of this one. It stays in a search of the tree above.
+        (main / "vendor" / "lib").mkdir(parents=True)
+        SqliteVectorStore(
+            indexes / "lib.db",
+            model_id="m",
+            root=(main / "vendor" / "lib").resolve(),
+            repository=(main / ".git" / "modules" / "lib").resolve(),
+            checkout=(main / "vendor" / "lib").resolve(),
+        ).close()
+
+        from_main = {e.tree for e in bootstrap.indexes_for(catalog, main)}
+        assert from_main == {
+            (main / "src").resolve(),
+            (main / "vendor" / "lib").resolve(),
+        }
+        from_worktree = [e.tree for e in bootstrap.indexes_for(catalog, worktree)]
+        assert from_worktree == [(worktree / "src").resolve()]
+        from_above = [e.tree for e in bootstrap.indexes_for(catalog, tmp_path)]
+        assert set(from_above) == {
+            (main / "src").resolve(),
+            (worktree / "src").resolve(),
+            (main / "vendor" / "lib").resolve(),
+        }
+
+    def test_a_scan_judges_its_filters_from_the_checkout(self, tmp_path) -> None:
+        """A worktree under .claude/worktrees/ is indexable with the main config."""
+        import subprocess
+        from dataclasses import replace
+
+        main = tmp_path / "main"
+        main.mkdir()
+        for arguments in (
+            ["init", "-q"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "Test"],
+            ["commit", "-qm", "first", "--allow-empty"],
+            [
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wt",
+                str(main / ".claude" / "worktrees" / "wt"),
+            ],
+        ):
+            subprocess.run(["git", "-C", str(main), *arguments], check=True)
+        worktree = main / ".claude" / "worktrees" / "wt"
+        (worktree / "src").mkdir()
+        (worktree / "src" / "app.py").write_text("def app():\n    pass\n")
+        settings = replace(Settings(), ignore=(".git", ".claude"), git=False)
+
+        in_worktree = bootstrap.build_scan(settings, worktree / "src").run(
+            worktree / "src"
+        )
+        assert [c.path.name for c in in_worktree] == ["app.py"]
+        in_main = bootstrap.build_scan(settings, main).run(main)
+        assert in_main == []
+
+    def test_an_index_without_a_checkout_joins_every_search(self, tmp_path) -> None:
+        """An index from before checkouts were recorded is read as before."""
+        import subprocess
+
+        from ish.adapters.vector_store.catalog import IndexCatalog
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        SqliteVectorStore(
+            indexes / "old.db", model_id="m", root=(repo / "src").resolve()
+        ).close()
+        found = bootstrap.indexes_for(IndexCatalog(indexes), repo)
+        assert [e.tree for e in found] == [(repo / "src").resolve()]
+
+    def test_outside_a_repository_nothing_is_recorded(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        tree = tmp_path / "plain"
+        tree.mkdir()
+        indexes = tmp_path / "idx"
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, tree, _StubEmbedder())
+        reader.close()
+        (db_path,) = indexes.glob("*.db")
+        assert SqliteVectorStore.read_identity(db_path) == {"root": tree.resolve()}
+
     def test_cache_dir_option_wins(self, tmp_path) -> None:
         from dataclasses import replace
 
@@ -452,6 +669,234 @@ class TestFederatedWiring:
         finally:
             reader.close()
 
+    def _listings(self, monkeypatch) -> list[int]:
+        """Count how often a store lists its chunks."""
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        listed: list[int] = []
+        original = SqliteVectorStore.chunks
+
+        def watched(store):
+            listed.append(1)
+            return original(store)
+
+        monkeypatch.setattr(SqliteVectorStore, "chunks", watched)
+        return listed
+
+    def test_sibling_indexes_count_without_listing(self, tmp_path, monkeypatch) -> None:
+        """A parent of siblings sums the counts, because siblings share no chunk."""
+        from dataclasses import replace
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        project = tmp_path / "proj"
+        for name in ("one", "two"):
+            (project / name).mkdir(parents=True)
+            self._index_for(indexes, name, project / name)
+        listed = self._listings(monkeypatch)
+
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
+        try:
+            assert reader.count() == 0
+            assert listed == []
+        finally:
+            reader.close()
+
+    def test_nested_indexes_still_count_each_chunk_once(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A tree indexed inside another may repeat a chunk, so list to count."""
+        from dataclasses import replace
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        project = tmp_path / "proj"
+        (project / "one").mkdir(parents=True)
+        self._index_for(indexes, "one", project / "one")
+        self._index_for(indexes, "root", project)
+        listed = self._listings(monkeypatch)
+
+        settings = replace(Settings(), cache_dir=str(indexes))
+        _primary, reader = bootstrap.build_stores(settings, project, _StubEmbedder())
+        try:
+            assert reader.count() == 0
+            assert listed == [1, 1]
+        finally:
+            reader.close()
+
+
+class _StubBackend:
+    """Stand in the registry for a backend, so forgetting needs no daemon."""
+
+    model_name = "stub"
+
+    @classmethod
+    def from_option(cls, model: str, context_tokens=None) -> "_StubBackend":
+        return cls()
+
+    def embed_documents(self, texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def embed_query(self, text):
+        return [1.0, 0.0]
+
+
+class TestForgetIndex:
+    """Verify an index can be removed, and the shared store swept."""
+
+    def _repo_with_two_trees(self, tmp_path):
+        """Two indexed trees of one repository, one chunk each, one vector shared."""
+        import subprocess
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+        from ish.application.ports.vector_store import FileStamp
+        from ish.domain.chunk import Chunk
+
+        indexes = tmp_path / "idx"
+        indexes.mkdir()
+        shared = indexes / "vectors-shared.db"
+        stores = {}
+        (tmp_path / "repo").mkdir()
+        subprocess.run(["git", "-C", str(tmp_path / "repo"), "init", "-q"], check=True)
+        for name, hashes in (("one", ["common", "only-one"]), ("two", ["common"])):
+            tree = tmp_path / "repo" / name
+            tree.mkdir(parents=True)
+            store = SqliteVectorStore(
+                indexes / f"{name}.db",
+                model_id="stub:",
+                root=tree,
+                repository=tmp_path / "repo" / ".git",
+                checkout=tmp_path / "repo",
+                shared=shared,
+            )
+            store.add_vectors({digest: [1.0, 0.0] for digest in hashes})
+            store.set_file(
+                tree / "a.py",
+                FileStamp(mtime_ns=1, size=1),
+                [
+                    (
+                        Chunk(
+                            path=tree / "a.py",
+                            text="",
+                            kind="function",
+                            language="python",
+                            symbol=digest,
+                            start_line=1,
+                            end_line=2,
+                        ),
+                        digest,
+                    )
+                    for digest in hashes
+                ],
+            )
+            store.close()
+            stores[name] = indexes / f"{name}.db"
+        settings = replace(Settings(), cache_dir=str(indexes))
+        return settings, stores, shared
+
+    def _hashes(self, shared) -> set[str]:
+        import sqlite3
+
+        db = sqlite3.connect(shared)
+        try:
+            return {r[0] for r in db.execute("SELECT content_hash FROM vectors")}
+        finally:
+            db.close()
+
+    def test_the_index_goes_and_the_vectors_stay(self, tmp_path, caplog) -> None:
+        """A checkout at an older commit still needs what no index names."""
+        import logging
+
+        settings, stores, shared = self._repo_with_two_trees(tmp_path)
+        assert self._hashes(shared) == {"common", "only-one"}
+
+        with caplog.at_level(logging.INFO, logger="ish.bootstrap"):
+            removed = bootstrap.forget_index(settings, tmp_path / "repo" / "one")
+        assert stores["one"] in removed
+        assert not stores["one"].exists()
+        assert stores["two"].exists()
+        assert self._hashes(shared) == {"common", "only-one"}
+        assert any("--sweep" in r.getMessage() for r in caplog.records)
+
+    def test_a_sweep_takes_what_no_index_names(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", _StubBackend)
+        settings, stores, shared = self._repo_with_two_trees(tmp_path)
+        bootstrap.forget_index(settings, tmp_path / "repo" / "one")
+
+        assert bootstrap.sweep_vectors(settings, tmp_path / "repo" / "two") == 1
+        assert self._hashes(shared) == {"common"}
+
+    def test_a_sweep_spares_what_any_index_names(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", _StubBackend)
+        settings, _stores, shared = self._repo_with_two_trees(tmp_path)
+        assert bootstrap.sweep_vectors(settings, tmp_path / "repo") == 0
+        assert self._hashes(shared) == {"common", "only-one"}
+
+    def test_a_sweep_outside_a_repository_takes_the_trees_own(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", _StubBackend)
+        indexes = tmp_path / "idx"
+        tree = tmp_path / "alone"
+        tree.mkdir()
+        store = SqliteVectorStore(indexes / "alone.db", model_id="m", root=tree)
+        store.add_vectors({"orphan": [1.0, 0.0]})
+        store.close()
+        settings = replace(Settings(), cache_dir=str(indexes))
+        assert bootstrap.sweep_vectors(settings, tree) == 1
+
+    def test_a_sweep_with_nothing_to_ask_is_an_error(self, tmp_path) -> None:
+        import subprocess
+        from dataclasses import replace
+
+        settings = replace(Settings(), cache_dir=str(tmp_path / "idx"))
+        alone = tmp_path / "alone"
+        alone.mkdir()
+        with pytest.raises(LookupError, match="in no repository"):
+            bootstrap.sweep_vectors(settings, alone)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        with pytest.raises(LookupError, match="belongs to the repository"):
+            bootstrap.sweep_vectors(settings, repo)
+
+    def test_a_gone_tree_can_be_forgotten(self, tmp_path) -> None:
+        """The tree is usually gone. That is the reason to forget its index."""
+        import shutil
+
+        settings, stores, _shared = self._repo_with_two_trees(tmp_path)
+        shutil.rmtree(tmp_path / "repo" / "one")
+        removed = bootstrap.forget_index(settings, tmp_path / "repo" / "one")
+        assert stores["one"] in removed
+        assert not stores["one"].exists()
+
+    def test_an_unknown_tree_is_an_error(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        settings = replace(Settings(), cache_dir=str(tmp_path / "idx"))
+        with pytest.raises(LookupError, match="No stored index"):
+            bootstrap.forget_index(settings, tmp_path / "nowhere")
+
+    def test_a_tree_outside_a_repository_just_goes(self, tmp_path) -> None:
+        from dataclasses import replace
+
+        from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+        indexes = tmp_path / "idx"
+        tree = tmp_path / "alone"
+        tree.mkdir()
+        SqliteVectorStore(indexes / "alone.db", model_id="m", root=tree).close()
+        settings = replace(Settings(), cache_dir=str(indexes))
+        removed = bootstrap.forget_index(settings, tree)
+        assert indexes / "alone.db" in removed
+        assert list(indexes.glob("*.db")) == []
+
 
 class TestBusyIndexes:
     """Verify that an index under a writer does not stop a search above it.
@@ -486,10 +931,10 @@ class TestBusyIndexes:
         from ish.adapters.vector_store.sqlite import SqliteVectorStore
         from ish.application.ports.vector_store import StoreBusy
 
-        def open_or_report(path, *, model_id, root):
+        def open_or_report(path, *, model_id, root, **identity):
             if path in busy:
                 raise StoreBusy(f"Another process holds the index {path}.")
-            return SqliteVectorStore(path, model_id=model_id, root=root)
+            return SqliteVectorStore(path, model_id=model_id, root=root, **identity)
 
         monkeypatch.setattr(
             "ish.adapters.vector_store.sqlite.SqliteVectorStore", open_or_report
@@ -595,6 +1040,33 @@ class TestRefreshIndexes:
         bootstrap.refresh_indexes(settings, nested / "a")
         found = bootstrap.catalog(settings).below(nested)
         assert list(found) == [nested / "a"]
+
+    def test_the_checkouts_of_the_repository_join_on_request(
+        self, nested: Path, offline, tmp_path: Path, monkeypatch
+    ) -> None:
+        """One server keeps a repository current, a worktree beside it included."""
+        repository = tmp_path / "repo" / ".git"
+        other = tmp_path / "other"
+
+        def identity(root: Path) -> tuple[Path, Path]:
+            # Two checkouts of one repository: the nested tree, and the
+            # other one beside it.
+            inside_other = root == other or other in root.parents
+            return repository, (other if inside_other else nested)
+
+        monkeypatch.setattr(bootstrap, "repository_identity", identity)
+        other.mkdir()
+        (other / "three.py").write_text("def three():\n    pass\n")
+        settings = self._settings()
+        for tree in (nested / "a", other):
+            search = bootstrap.build_search(replace(settings, federate=False), tree)
+            search.build_index(tree)
+            search.close()
+
+        assert bootstrap.refresh_indexes(settings, nested) == [nested / "a"]
+        assert bootstrap.refresh_indexes(settings, nested, checkouts=True) == sorted(
+            [nested / "a", other]
+        )
 
 
 class TestRefreshReadsEachTreeConfig:
@@ -751,6 +1223,14 @@ class TestFederationWarning:
         settings = replace(self._seed_child(nested), refresh=True)
         with caplog.at_level("WARNING"):
             bootstrap.build_search(settings, nested).close()
+        assert "without refreshing" not in caplog.text
+
+    def test_a_kept_parent_stays_quiet(self, nested: Path, monkeypatch, caplog):
+        """ish-serve keeps the indexes current, so there is nothing to ask for."""
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: self._Fake())
+        settings = self._seed_child(nested)
+        with caplog.at_level("WARNING"):
+            bootstrap.build_search(settings, nested, kept=True).close()
         assert "without refreshing" not in caplog.text
 
 

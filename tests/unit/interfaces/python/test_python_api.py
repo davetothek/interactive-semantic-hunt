@@ -1,10 +1,13 @@
 """Test the Python API, which wires the same use cases the CLI wires."""
 
+import time
 from pathlib import Path
 
 import pytest
 
+from ish import bootstrap
 from ish.application.progress import Progress
+from ish.interfaces import heartbeat
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings
 
@@ -273,3 +276,76 @@ class TestWarmUp:
             assert ish._indexed is False
         finally:
             ish.close()
+
+
+class TestKeptByAServer:
+    """Verify the session leaves the refresh to ish-serve when one keeps the tree."""
+
+    @staticmethod
+    def _keep(project: Path, **more) -> heartbeat.Status:
+        fields: dict = {"tree": project.resolve(), "pid": 4242, "updated": time.time()}
+        fields.update(more)
+        status = heartbeat.Status(**fields)
+        heartbeat.write(heartbeat.status_for(project), status)
+        return status
+
+    def test_index_reads_what_the_server_wrote(
+        self, project: Path, offline, monkeypatch, caplog
+    ) -> None:
+        from ish.application.search import Search
+
+        self._keep(project)
+        walked: list[Path] = []
+        monkeypatch.setattr(
+            Search,
+            "build_index",
+            lambda self, root, on_progress=None: walked.append(root) or 0,
+        )
+        with _ish(project) as ish, caplog.at_level("INFO", logger="ish"):
+            assert ish.index() == 0
+            assert ish._indexed is True
+            assert ish.kept_by() is not None
+            ish.index()
+        assert walked == []
+        assert caplog.text.count("ish-serve keeps") == 1
+
+    def test_a_stale_server_is_read_past(self, project: Path, offline) -> None:
+        self._keep(project, updated=0.0)
+        with _ish(project) as ish:
+            assert ish.kept_by() is None
+            assert ish.index() > 0
+
+    def test_the_status_names_what_the_server_does(
+        self, project: Path, offline
+    ) -> None:
+        self._keep(project, refreshing="Embedded 8 of 16 chunks")
+        kept = _ish(project).kept_by()
+        assert kept is not None
+        assert kept.refreshing == "Embedded 8 of 16 chunks"
+        assert kept.pid == 4242
+
+    def test_held_counts_without_refreshing(self, project: Path, offline) -> None:
+        with _ish(project) as ish:
+            assert ish.held() == 0
+            assert ish._indexed is False
+            ish.index()
+            assert ish.held() == ish.index()
+
+    def test_git_is_asked_once(self, project: Path, offline, monkeypatch) -> None:
+        """A process start per question would put git in front of every keystroke."""
+        asked: list[Path] = []
+        monkeypatch.setattr(
+            bootstrap,
+            "repository_identity",
+            lambda root: asked.append(root) or (None, None),
+        )
+        with _ish(project) as ish:
+            ish.index()
+            ish.search("configure")
+            ish.kept_by()
+            ish.status()
+            ish.scan()
+        assert asked == [project.resolve()]
+
+    def test_this_process_is_not_a_server(self, project: Path, offline) -> None:
+        assert _ish(project).kept_by() is None

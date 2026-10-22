@@ -13,10 +13,16 @@ paths:
 - Every rule about what to index lives in `Scan.accepts()` and nowhere else.
   Discovery and pruning both ask that one predicate.
 - `include` and `exclude` are regular expressions over the POSIX path.
-  `exclude` is searched against the whole path. `include` is matched from
-  the start of the path written from the tree root, so it names a place and
-  not a segment. `exclude` beats `include`. A malformed pattern names its
-  option and stops the run.
+  `exclude` is searched against the path from the top of the checkout,
+  written with a leading slash, and against the whole path outside a
+  repository. `include` is matched from the start of the path written from
+  the tree root, so it names a place and not a segment. `exclude` beats
+  `include`. A malformed pattern names its option and stops the run.
+- `ignore` names and `exclude` patterns judge only what lies inside the
+  checkout, never a directory above it. A worktree under
+  `.claude/worktrees/` must be indexable with the configuration that keeps
+  `.claude` out of the main index. The checkout reaches the scan as
+  `anchor`, from `bootstrap`, which asks git once per search.
 - The walk tests `exclude` against each directory it meets, written with a
   trailing slash, and never enters one that matches. `ignore` prunes by
   name, `exclude` by path. Both prune.
@@ -66,6 +72,14 @@ paths:
   exists for this.
 - The scored matrix cache is dropped when this store writes, and when
   `PRAGMA data_version` shows another connection committed.
+- Every write transaction goes through `_mark_written()`, which bumps the
+  `generation` row in `meta`. The matrix file beside the index is stamped
+  with that generation and the chunk count, and a file whose stamp differs
+  is read past and written again.
+- The matrix file is a cache. SQLite stays the source of truth, and the
+  file holds ids and vectors only. Write it under a temporary name and
+  rename it into place, and never on a miss within `SETTLE_SECONDS` of a
+  write by this store.
 - Every interface calls `Search.close()`.
 
 ## Federation
@@ -74,3 +88,19 @@ paths:
   warns that it refreshed nothing. `refresh_indexes()` visits each tree.
 - Asking inside an indexed tree reads that tree's index and narrows the
   answers to the path asked for.
+- A search reads the indexes of its own checkout. `indexes_for()` applies
+  the rule for the search, the refresh, and the status alike, and leaves
+  out an index whose tree is gone.
+
+## Repositories and checkouts
+
+- An index records `root`, `repository`, and `checkout` in `meta`. The
+  composition root asks git through the vcs adapter and passes paths. The
+  application never learns what git is.
+- The vectors of a repository live in one shared store, named by the
+  catalog after the common directory. An index names the store it uses in
+  `meta`, so it reaches it without git. Chunk rows and file stamps stay
+  per tree.
+- `prune_vectors()` on a shared store asks every sibling index before it
+  deletes, siblings whose tree is gone included. A sibling that cannot be
+  read keeps everything.

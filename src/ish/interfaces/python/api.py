@@ -31,7 +31,7 @@ from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
-from ish.interfaces import completion
+from ish.interfaces import completion, heartbeat
 from ish.settings import Settings, load_settings
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,8 @@ class Ish:
     Bring the index up to date once, on the first question, and then
     answer from what is stored. Call `index()` to bring it up to date
     again; a resident interface does that on a thread, so a question
-    never waits for a walk of the tree.
+    never waits for a walk of the tree. When `ish-serve` keeps the tree
+    current, `index()` reads what it wrote and refreshes nothing.
     """
 
     def __init__(
@@ -70,6 +71,7 @@ class Ish:
         self._search: Search | None = None
         self._indexed = False
         self._vocabulary: bootstrap.Vocabulary | None = None
+        self._identity: bootstrap.Identity | None = None
 
     # ------------------------------------------------------------------
     # Lifetime
@@ -105,25 +107,65 @@ class Ish:
         return self._vocabulary
 
     @property
+    def identity(self) -> bootstrap.Identity:
+        """Return the repository and the checkout this tree is in, asked once.
+
+        Asking git costs a process start, and the answer decides which
+        indexes a search reads and whether a server's refresh reaches
+        this tree.
+        """
+        if self._identity is None:
+            self._identity = bootstrap.repository_identity(self.path)
+        return self._identity
+
+    @property
     def _use_case(self) -> Search:
         """Return the use case, building it on first use."""
         if self._search is None:
-            self._search = bootstrap.build_search(self.settings, self.path)
+            self._search = bootstrap.build_search(
+                self.settings,
+                self.path,
+                identity=self.identity,
+                kept=self.kept_by() is not None,
+            )
         return self._search
 
     # ------------------------------------------------------------------
     # Indexing
     # ------------------------------------------------------------------
 
+    def kept_by(self) -> heartbeat.Status | None:
+        """Return the status of the `ish-serve` that keeps this tree current.
+
+        None when no live server's refresh reaches this path. The
+        status names what the server is doing, so an interface can say
+        when the index is still catching up.
+        """
+        repository, _checkout = self.identity
+        return heartbeat.find(self.path, repository)
+
     def index(self, on_progress: ProgressCallback | None = None) -> int:
         """Bring this tree's index up to date. Return the chunks it holds.
 
         Report progress through *on_progress*, since a first index of a
-        large tree runs for minutes.
+        large tree runs for minutes. Leave the work to `ish-serve` when
+        one keeps the tree current, and read what it wrote.
         """
-        held = self._use_case.build_index(self.path, on_progress)
+        kept = self.kept_by()
+        if kept is None:
+            held = self._use_case.build_index(self.path, on_progress)
+        else:
+            if not self._indexed:
+                log.info(
+                    "ish-serve keeps %s current. Reading what it wrote.", kept.tree
+                )
+            held = self.held()
         self._indexed = True
         return held
+
+    def held(self) -> int:
+        """Return how many chunks the index holds now, without refreshing it."""
+        return self._use_case.held()
 
     def warm(self) -> None:
         """Load the model before the first query waits on it.
@@ -252,7 +294,9 @@ class Ish:
             self.filters_of(lang=lang, under=under, type=type),
             self._words,
         )
-        found = bootstrap.build_scan(self.settings, self.path).run(self.path)
+        found = bootstrap.build_scan(
+            self.settings, self.path, identity=self.identity
+        ).run(self.path)
         return [chunk for chunk in found if keep is None or keep(chunk)]
 
     # ------------------------------------------------------------------
@@ -304,7 +348,12 @@ class Ish:
             "chunks": len(chunks),
             "files": len(with_chunks),
             "empty_files": len(read - with_chunks),
-            "indexes": sorted(bootstrap.catalog(self.settings).below(self.path)),
+            "indexes": sorted(
+                entry.tree
+                for entry in bootstrap.indexes_for(
+                    bootstrap.catalog(self.settings), self.path, identity=self.identity
+                )
+            ),
             "languages": dict(sorted(languages.items())),
             "types": dict(sorted(kinds.items())),
         }

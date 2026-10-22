@@ -3,6 +3,10 @@
 This interface is long-lived, which is what makes it fast: the embedding
 backend and the persistent index are opened once and reused by every
 call, so a query costs a search rather than a startup.
+
+The server refreshes each tree it is asked about on a thread of its
+own, unless ``ish-serve`` keeps the tree current. Then it reads what
+that process writes, and passes a request for a refresh on to it.
 """
 
 import json
@@ -16,6 +20,7 @@ from typing import Any
 from ish import bootstrap
 from ish.application.categories import TYPES
 from ish.application.progress import Progress
+from ish.interfaces import heartbeat
 from ish.interfaces.format import render
 from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
@@ -30,6 +35,10 @@ log = logging.getLogger("ish.mcp")
 WATCH_STOP_SECONDS = 5.0
 
 SERVER_NAME = "ish"
+
+# How a search that found nothing begins its answer. A client that
+# prints results as lines reads this as prose, not as a result.
+NO_RESULTS = "No results for"
 
 _PATH_PROPERTY = {
     "type": "string",
@@ -93,7 +102,12 @@ class IshTools:
         # The threads themselves, so closing can wait for them.
         self._watchers: list[threading.Thread] = []
         self._progress: dict[Path, str] = {}
+        # What each index holds, counted again only when it changed.
+        self._status: dict[Path, tuple[tuple[int, float | None], dict[str, Any]]] = {}
         self._closing = threading.Event()
+        # The host's calls and the watch threads reach these at once,
+        # and a tree must get one session and one watch however many ask.
+        self._lock = threading.Lock()
 
     def close(self) -> None:
         """Release every index this server opened, and stop watching.
@@ -144,29 +158,56 @@ class IshTools:
         A parent read from the indexes below it is not writable, and
         refreshing through it did nothing at all. Refresh each tree
         beneath it, which is what brings an edit into view.
+
+        Start nothing while ``ish-serve`` keeps the tree current. A
+        thread here would walk and embed the same files beside it.
         """
-        if root in self._watched:
+        if session.kept_by() is not None:
             return
-        wake = threading.Event()
-        self._watched[root] = wake
-        watcher = threading.Thread(
-            target=self._refresh_forever,
-            args=(root, wake),
-            name=f"ish-refresh-{root.name}",
-            daemon=True,
-        )
-        self._watchers.append(watcher)
-        watcher.start()
+        with self._lock:
+            if root in self._watched:
+                return
+            wake = threading.Event()
+            self._watched[root] = wake
+            watcher = threading.Thread(
+                target=self._refresh_forever,
+                args=(root, wake),
+                name=f"ish-refresh-{root.name}",
+                daemon=True,
+            )
+            self._watchers.append(watcher)
+            watcher.start()
+
+    def watch(self, root: Path) -> None:
+        """Keep *root* current from now on, and look at it right away."""
+        self._keep_current(root, self._session_for(root))
+        wake = self._watched.get(root)
+        if wake is not None:
+            wake.set()
 
     def _refresh_forever(self, root: Path, wake: threading.Event) -> None:
-        """Bring every index under *root* up to date, when asked or in time."""
+        """Bring every index under *root* up to date, when asked or in time.
+
+        Leave a cycle to ``ish-serve`` when one has started keeping the
+        tree current since the watch began.
+        """
         while not self._closing.is_set():
             # Wake early when something asks, otherwise on the interval.
             wake.wait(self._settings.refresh_seconds or None)
             wake.clear()
             if self._closing.is_set():
                 return
+            if self._kept(root):
+                log.info(
+                    "ish-serve keeps %s current now. Leaving it the refresh.", root
+                )
+                continue
             self._refresh_once(root)
+
+    def _kept(self, root: Path) -> bool:
+        """Return True when ``ish-serve`` keeps *root* current."""
+        session = self._by_root.get(root)
+        return session is not None and session.kept_by() is not None
 
     def _refresh_once(self, root: Path) -> None:
         """Refresh *root*, recording what it is doing as it goes."""
@@ -186,27 +227,31 @@ class IshTools:
             log.warning("Cannot refresh %s: %s", root, exc)
         finally:
             self._progress.pop(root, None)
+            self._status.pop(root, None)
 
     def refresh(self, arguments: Mapping[str, Any]) -> str:
         """Ask for a refresh now, and return without waiting for it.
 
         An editor opens a picker over code it has been changing, so this
         is the moment to look, and the answers must keep coming while it
-        does. Report progress through ``index_status``.
+        does. Report progress through ``index_status``. Pass the request
+        on to ``ish-serve`` when one keeps the tree current.
         """
         root = self._resolve(arguments.get("path"))
-        self._keep_current(root, self._session_for(root))
-        waiting = self._watched.get(root)
-        if waiting is not None:
-            waiting.set()
+        kept = self._session_for(root).kept_by()
+        if kept is not None:
+            heartbeat.nudge(kept.tree)
+            return f"Asked ish-serve to refresh {kept.tree} in the background."
+        self.watch(root)
         return f"Refreshing {root} in the background."
 
     def _session_for(self, root: Path) -> Ish:
         """Return the session for *root*, opening it on first use."""
-        if root not in self._by_root:
-            log.info("Opening an index for %s", root)
-            self._by_root[root] = Ish(root, settings=self._settings)
-        return self._by_root[root]
+        with self._lock:
+            if root not in self._by_root:
+                log.info("Opening an index for %s", root)
+                self._by_root[root] = Ish(root, settings=self._settings)
+            return self._by_root[root]
 
     # ------------------------------------------------------------------
     # Tool handlers
@@ -227,10 +272,15 @@ class IshTools:
         # so an editor can pass the line as typed.
         results = session.search(query, limit, **self._narrowing(arguments))
         if not results:
-            return f"No results for {query!r} under {root}."
+            return f"{NO_RESULTS} {query!r} under {root}."
 
+        # Write each path from the directory asked about. A caller in
+        # another directory resolves it against that one, and the
+        # working directory of a shared server means nothing to it.
         shape = str(arguments.get("format") or self._settings.format)
-        return "\n".join(render(chunk, shape, score) for chunk, score in results)
+        return "\n".join(
+            render(chunk, shape, score, base=root) for chunk, score in results
+        )
 
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
@@ -239,22 +289,33 @@ class IshTools:
         if not chunks:
             return f"No source files found under {root}."
         shape = str(arguments.get("format") or self._settings.format)
-        return "\n".join(render(chunk, shape) for chunk in chunks)
+        return "\n".join(render(chunk, shape, base=root) for chunk in chunks)
 
     def index_status(self, arguments: Mapping[str, Any]) -> str:
-        """Report what the stored index holds for a path."""
+        """Report what the stored index holds for a path.
+
+        Say what ``ish-serve`` is doing when one keeps the tree, and
+        what the watch thread is doing otherwise.
+        """
         root = self._resolve(arguments.get("path"))
         session = self._session_for(root)
         self._keep_current(root, session)
-        status = session.status()
+        kept = session.kept_by()
+        status = self._status_of(root, session, kept)
 
         languages: Any = status["languages"]
         breakdown = ", ".join(f"{n} {lang}" for lang, n in languages.items())
 
-        doing = self._progress.get(root)
+        doing = self._progress.get(root) if kept is None else kept.refreshing
+        keeper = (
+            ""
+            if kept is None
+            else f"  kept by  : ish-serve {kept.pid} for {kept.tree}\n"
+        )
         return (
             f"Index for {root}\n"
             f"  refreshing: {doing or 'no'}\n"
+            f"{keeper}"
             f"  chunks   : {status['chunks']}\n"
             f"  files    : {status['files']} with chunks, "
             f"{status['empty_files']} with none\n"
@@ -262,6 +323,23 @@ class IshTools:
             f"  embedder : {self._settings.embedder}\n"
             f"  file     : {bootstrap.catalog(self._settings).path_for(root)}"
         )
+
+    def _status_of(
+        self, root: Path, session: Ish, kept: heartbeat.Status | None
+    ) -> dict[str, Any]:
+        """Return what the index holds, counted again only when it changed.
+
+        Counting by language builds every chunk, which on a root over
+        73,000 chunks costs about a second, and a picker asks while it
+        waits. The count of chunks, and the time ``ish-serve`` last
+        finished, tell a change from a repeat.
+        """
+        key = (session.held(), None if kept is None else kept.last_finished)
+        cached = self._status.get(root)
+        if cached is None or cached[0] != key:
+            cached = (key, session.status())
+            self._status[root] = cached
+        return cached[1]
 
     def complete_filter(self, arguments: Mapping[str, Any]) -> str:
         """Finish the filter word a query ends in, for an editor's picker.
@@ -379,7 +457,7 @@ class IshTools:
         ]
 
 
-def _version() -> str:
+def installed_version() -> str:
     """Return the installed package version."""
     import importlib.metadata
 
@@ -398,7 +476,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(verbosity=settings.verbosity, color=False)
 
     tools = IshTools(settings, root)
-    server = Server(SERVER_NAME, _version(), tools.tools())
+    server = Server(SERVER_NAME, installed_version(), tools.tools())
     try:
         server.serve(sys.stdin, sys.stdout)
     except KeyboardInterrupt:

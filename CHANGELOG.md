@@ -8,8 +8,93 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Remove the stored index of a tree with `ish --forget PATH`. A worktree is
+  made for one branch and deleted with it, and its index outlived it. An
+  index whose tree is gone is now left out of every search and said so
+  once, with the command that removes it. The vectors stay: a checkout at
+  an older commit still needs the vectors of text the main checkout has
+  since changed, and a vector costs a second of embedding to make again.
+- Delete the vectors no index of a repository references with
+  `ish --sweep PATH`, on purpose. Measured on one firmware tree, sweeping
+  them took a worktree from 100 % reuse to 87 %, so nothing sweeps them as
+  a side effect.
+- An index records the repository and the checkout its tree belongs to,
+  as git names them, beside the tree itself. Every worktree of one
+  repository names the same repository, which is what lets a second
+  checkout reuse the work of the first, and an index that has recorded
+  them is opened without asking git again.
+- The vectors of a repository live in one shared store, which every index
+  of the repository attaches. A vector is keyed by the text it stands for,
+  so a second checkout, such as a git worktree, finds the vectors of the
+  first and embeds only what differs. Measured on /Project, the firmware
+  tree of two worktrees shares 100 % of its chunk hashes with the main
+  index. An index from the release before moves its vectors into the
+  shared store on its first opening and embeds nothing again. Chunk rows
+  and file stamps stay in the index of each tree, because a result names
+  a file to open. A sweep of the shared store asks every index of the
+  repository before it deletes a vector.
+- Keep the indexes of a tree current with `ish-serve`, the one process
+  that fills them. It refreshes the tree as soon as it starts, then every
+  `refresh_seconds` or when a client asks, and it answers no query. It
+  writes a status file under `$XDG_RUNTIME_DIR/ish/` every few seconds,
+  and every client reads the index itself: one that finds the status of a
+  live server leaves the refreshing to it, and one that finds none, or a
+  status nobody has written for 30 seconds, brings the index up to date as
+  before. `ish "query" path` then walks and embeds nothing before it
+  answers, and says what the server is doing while a refresh runs.
+  `ish-mcp` starts no refresh thread for a tree the server keeps, and
+  `refresh_index` asks the server instead. One server keeps a whole
+  repository current, the indexes of its worktrees included, wherever
+  they are on disk. A second `ish-serve` for any checkout of the
+  repository exits at once, a server whose tree is deleted stops, and
+  `--once` refreshes once and exits. Measured on a firmware tree of 6,266
+  chunks, a cold query took 691 ms on its own and 274 ms beside a server.
+- `ish "query" path` shows what it is doing while it brings the index up
+  to date: a spinner, the step, and while the model embeds the rate and
+  about how long is left.
+
+### Changed
+
+- `index_status` counts the chunks by language again only when the index
+  changed, or when `ish-serve` finished another refresh. Measured on a root
+  over 8 indexes and 74,459 chunks, a call cost 981 ms and a repeated one
+  now costs 2 ms, which is what a picker polling once a second paid.
+- `ignore` names and `exclude` patterns judge the path from the top of the
+  checkout the tree belongs to, written with a leading slash, never the
+  directories above it. A tree kept inside a directory its own
+  configuration ignores, such as a git worktree under `.claude/worktrees/`,
+  was indexed as empty: every file carried `.claude` in its path. A pattern
+  such as `/vendor/` still matches at any depth, `^/vendor/` names the top
+  of the checkout, and outside a repository the whole path is judged, as
+  before.
+- A search of a parent reads only the indexes of the checkout it starts
+  in. A worktree kept under the main checkout, as `.claude/worktrees/`
+  keeps them, no longer joins a search of the main tree, and a refresh of
+  the main tree leaves the worktrees to their own. A search from a
+  directory above several checkouts of one repository shows each chunk
+  once, from the checkout nearest the path asked about.
+- A search of a parent counts the chunks below it without building each
+  one. The indexes of sibling trees cannot share a chunk, so their counts
+  add up. Measured on a root over 7 indexes and 72,995 chunks, the count
+  cost 0.92 s of a 1.57 s query. A tree indexed inside another still lists
+  its chunks to count each once.
+- The vectors a search scores are kept in a file beside each index, named
+  `-matrix`, and mapped into memory. Every process read every vector out of
+  SQLite and joined the blobs into one matrix, which cost 310 to 460 ms for
+  224 MB of vectors. Mapping the same bytes costs 18 ms. The file carries a
+  stamp of the index state it was built from, so a stale one is read past
+  and written again. SQLite stays the source of truth, and the file holds
+  ids and vectors only.
+
 ### Fixed
 
+- An index of a checkout no longer covers a worktree kept inside it. A
+  search of a worktree under `.claude/worktrees/` read the index of the
+  main checkout, whose tree contains the worktree, and a refresh wrote the
+  worktree's chunks into it. An index covers a path only within one
+  checkout.
 - Say what to do when a remote Ollama daemon does not answer. The message
   told every user to start a daemon with `ollama serve`, which cannot help
   when `OLLAMA_HOST` names another machine. The message now names that

@@ -164,6 +164,12 @@ class CliArgs:
         ):
             path_val = query_val
             query_val = ""
+        # `ish --forget PATH` names a tree that is usually gone, which the
+        # test above cannot move. Neither a forget nor a sweep has a
+        # query, so the one positional is the path.
+        maintenance = getattr(args, "forget", None) or getattr(args, "sweep", None)
+        if maintenance and query_val and path_val == ".":
+            path_val, query_val = query_val, ""
 
         overrides = {f.name: getattr(args, f.name, None) for f in fields(Settings)}
         # The file to read travels with the flags, so a tree below

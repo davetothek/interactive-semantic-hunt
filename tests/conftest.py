@@ -31,6 +31,9 @@ def isolated_config(tmp_path_factory, monkeypatch):
     # The index lives under the data directory, so isolate that too or a
     # test writes into the developer's own indexes.
     monkeypatch.setenv("XDG_DATA_HOME", str(base / "data"))
+    # The status of a running ish-serve lives under the runtime
+    # directory, and a test must never read the developer's server.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(base / "run"))
     for key in list(os.environ):
         if key.startswith("ISH_"):
             monkeypatch.delenv(key, raising=False)

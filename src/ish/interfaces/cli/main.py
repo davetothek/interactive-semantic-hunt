@@ -5,12 +5,10 @@ Parse arguments, delegate wiring to the bootstrap module, format output.
 
 import logging
 import os
-import shutil
 import sys
-import time
 
 from ish import bootstrap
-from ish.application.progress import EMBED, Progress
+from ish.interfaces.busy import ProgressLine
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.format import format_selection, render
 from ish.interfaces.log import resolve_color, setup_logging
@@ -19,56 +17,21 @@ from ish.interfaces.python.api import Ish
 log = logging.getLogger("ish.cli")
 
 
-class ProgressLine:
-    """Show what a long refresh is doing, on one line of the terminal.
-
-    A first index of a large tree runs for minutes, and a command that
-    prints nothing cannot be told from one that has stopped. Keep it to
-    stderr, so a piped stdout still holds only results. Say how fast
-    the embedding goes, because a blocked run and a slow one otherwise
-    look the same.
-    """
-
-    def __init__(self) -> None:
-        self._embedding_began: float | None = None
-
-    def show(self, step: Progress) -> None:
-        """Rewrite the line with *step*."""
-        if not sys.stderr.isatty():
-            # Not a terminal, so the log already carries it at -v.
-            return
-        sys.stderr.write(f"\r\033[2K{self.render(step)[: _width() - 1]}")
-        sys.stderr.flush()
-
-    def render(self, step: Progress) -> str:
-        """Return the line for *step*, with a rate while embedding."""
-        text = str(step)
-        if step.stage != EMBED:
-            self._embedding_began = None
-            return text
-        if step.done == 0 or self._embedding_began is None:
-            self._embedding_began = time.monotonic()
-            return text
-        elapsed = time.monotonic() - self._embedding_began
-        if elapsed <= 0:
-            return text
-        return f"{text}, {step.done / elapsed:.1f} chunks/s"
-
-    def clear(self) -> None:
-        """Clear the line, leaving the output as it would be."""
-        if sys.stderr.isatty():
-            sys.stderr.write("\r\033[2K")
-            sys.stderr.flush()
-
-
-def _width() -> int:
-    """Return the terminal width, or a sensible guess."""
-    return shutil.get_terminal_size((80, 24)).columns
-
-
 def _run_query(args: CliArgs) -> int:
-    """Search for the query and print the ranked results."""
+    """Search for the query and print the ranked results.
+
+    Bring the index up to date first, behind a line that says what is
+    happening, unless ``ish-serve`` keeps it current. The run then reads
+    what the server wrote, and says so while the server is mid-refresh,
+    because the answer may not hold the latest edit yet.
+    """
+    line = ProgressLine()
     with Ish(args.path, settings=args.settings) as ish:
+        ish.index(on_progress=line.show)
+        line.clear()
+        kept = ish.kept_by()
+        if kept is not None and kept.refreshing:
+            line.note(f"ish-serve: {kept.refreshing}")
         for chunk, score in ish.search(args.query):
             sys.stdout.write(f"{render(chunk, args.settings.format, score)}\n")
     return 0
@@ -129,6 +92,32 @@ def _run_scan(args: CliArgs) -> int:
     return 0
 
 
+def _run_forget(args: CliArgs) -> int:
+    """Remove the stored index of the path, and say what went.
+
+    Run before the path is looked for on disk. The tree is usually gone,
+    which is the reason to forget its index.
+    """
+    try:
+        removed = bootstrap.forget_index(args.settings, args.path)
+    except LookupError as exc:
+        log.error("%s", exc)
+        return 1
+    print(f"Removed the index of {args.path}: {len(removed)} file(s).", file=sys.stderr)
+    return 0
+
+
+def _run_sweep(args: CliArgs) -> int:
+    """Delete the vectors no index of the repository references, and say how many."""
+    try:
+        swept = bootstrap.sweep_vectors(args.settings, args.path)
+    except LookupError as exc:
+        log.error("%s", exc)
+        return 1
+    print(f"Swept {swept} vector(s) no index references.", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run ish from the command line. Return an exit code.
 
@@ -145,6 +134,10 @@ def main(argv: list[str] | None = None) -> int:
         verbosity=args.settings.verbosity, color=resolve_color(args.settings.color)
     )
 
+    if args.settings.forget:
+        return _run_forget(args)
+    if args.settings.sweep:
+        return _run_sweep(args)
     if not args.path.exists():
         log.error("Path does not exist: %s", args.path)
         return 1

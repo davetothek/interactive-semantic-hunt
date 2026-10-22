@@ -33,9 +33,12 @@ blocks a version bump outside a release branch. `poe hooks` tests them.
 | MCP | `ish-mcp` | resident, ~58 ms a call, for an agent or an editor |
 | Python | `from ish.interfaces.python.api import Ish` | holds the index open |
 
-`ish-complete` is a fifth entry point. It finishes a filter word rather than
-searching. `Ish` is the session the other three are built on. Nothing beyond
-these is built, and an HTTP API stays out by decision.
+`ish-complete` and `ish-serve` are two more entry points, not interfaces.
+The first finishes a filter word rather than searching. The second keeps
+the indexes of a tree current and answers no query: it writes a status
+file the clients read, and a client that finds a live one refreshes
+nothing itself. `Ish` is the session the other three are built on. Nothing
+beyond these is built, and an HTTP API stays out by decision.
 
 ## Architecture
 
@@ -78,6 +81,9 @@ one module that joins them.
 | Interface | `src/ish/interfaces/python/api.py` | `Ish`, the session every interface shares |
 | Interface | `src/ish/interfaces/format.py` | Shared output formatting |
 | Interface | `src/ish/interfaces/log.py` | Logging setup, shared by every entry point |
+| Interface | `src/ish/interfaces/busy.py` | The busy line: spinner, step, rate, and time left |
+| Interface | `src/ish/interfaces/heartbeat.py` | The status file of `ish-serve`, and the nudge beside it |
+| Interface | `src/ish/interfaces/daemon.py` | `ish-serve`, the one process that fills an index |
 | Interface | `src/ish/interfaces/completion.py` | Finish a filter word |
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
@@ -178,6 +184,26 @@ something broke. This is that record, so a rule is never argued from taste.
   with llama.cpp. A real firmware project (10k files, 30,317 chunks): 14 s to
   scan and parse, then about one chunk per second to embed. A whole tree is
   hours. Index the subtrees that matter and federate.
+- A matrix file stamped with row counts alone cannot tell a replaced file:
+  swapping the vectors behind two chunks leaves every count the same, and
+  SQLite's own change counter does not move in WAL mode. Hence the
+  `generation` row in `meta`, bumped by every write transaction.
+- On /Project, the firmware tree of two worktrees, 6260 and 6266 chunks,
+  shares 100 % of its chunk hashes with the main index: 0 to embed, 0.9 s
+  to parse. A vector was shared only inside one index file, so each would
+  have embedded for hours. Hence one vectors store per repository, keyed by
+  the common directory every worktree reports alike. Moving 81,958 vectors
+  of the 7 main indexes into it took one query of 2.4 s, and the
+  50.Testing index went from 163 MB to 19 MB.
+- A scan rooted under `.claude/worktrees/` found 0 of 6260 chunks while
+  `ignore` and `exclude` judged the whole path. Judged from the scan root
+  instead, the main firmware tree grew from 6266 to 8152 chunks, because
+  patterns that name the tree, such as `30\.Firmware/include/HW`, stopped
+  matching when that tree was the one scanned. Hence the top of the
+  checkout as the anchor, which gives 6260 and 6266.
+- A worktree index under /Project joined every root search and nested
+  under the main tree, which put the count of a root query back on the
+  listing path. Hence a search reads the indexes of its own checkout.
 
 ### Embedding
 
@@ -236,6 +262,19 @@ Profiled against a real 7,834-chunk index across three federated indexes:
 - MCP: ~58 ms per `search_code`, against ~190 ms for the same query through
   the CLI. A resident server answers in about 130 ms. `build_index` per call
   once cost 390 ms through Neovim against 135 now.
+- On /Project, 7 sibling indexes, 9,231 files, 72,995 chunks, 224 MB of
+  vectors, a root query through the CLI, cold, median of 5: 1110 ms → 629 ms
+  when the federated count became a sum of counts rather than a listing of
+  73,000 chunks; 670 ms → 213 ms when the matrix came from a mapped file
+  beside each index rather than from the blobs. The mapped file loads in
+  18 ms against 310 to 460 ms for the blobs, and the first run after a
+  change writes it in about 1.2 s.
+- A query inside the firmware tree of 6,266 chunks walked the tree before
+  it answered: 691 ms cold, median of 5. Beside an `ish-serve` that keeps
+  the tree it reads what is stored, 274 ms. At the root, which never
+  walked, 323 ms against 329 ms. `index_status` at the root built 74,459
+  chunks to count them by language, 981 ms a call, and a repeated call
+  costs 2 ms while the count and the last finish of the server stand.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
 
@@ -251,3 +290,19 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   as code until `type_patterns` let a repository say what its paths hold.
 - Reading only the nearest config file made a `git = false` for one tree
   drop the `type_patterns` the repository above had set.
+- One socket server for every client of /Project serialized them. A
+  refresh asked for by one client embedded 696 chunks inside the server,
+  342 s in all, while the picker polled `index_status` every second at
+  1.2 to 1.9 s a call, and each query embedding waited behind a document
+  batch of the one Ollama slot. Searches took 3 to 9 s against 128 to
+  279 ms in-process. Hence `ish-serve` fills the index and answers
+  nothing, and every client reads the index itself.
+- A server refreshed only the indexes under its path, and a client found
+  one only by walking up from the path it asked about. A worktree inside
+  the main checkout walked its 669 files on every run beside a server
+  that never touched it, and a worktree beside the checkout, where git
+  puts one unless told otherwise, could not reach that server at all.
+  Hence one server per repository, and clients that read every status
+  under the runtime directory. A server whose tree was deleted went on,
+  pruned every file from the index, and wrote its status for ever. Hence
+  a server stops when its tree is gone.
