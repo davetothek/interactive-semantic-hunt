@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from ish import bootstrap
 from ish.application.progress import DISCOVER, READ, REFRESH, Progress
+from ish.interfaces import heartbeat
 from ish.interfaces.mcp.server import IshTools, main
 from ish.settings import Settings
 
@@ -309,20 +311,20 @@ class TestVersionReporting:
     """Verify the version handed to the host."""
 
     def test_reports_the_installed_version(self) -> None:
-        from ish.interfaces.mcp.server import _version
+        from ish.interfaces.mcp.server import installed_version
 
-        assert _version() != ""
+        assert installed_version() != ""
 
     def test_falls_back_when_not_installed(self, monkeypatch) -> None:
         import importlib.metadata
 
-        from ish.interfaces.mcp.server import _version
+        from ish.interfaces.mcp.server import installed_version
 
         def missing(name):
             raise importlib.metadata.PackageNotFoundError(name)
 
         monkeypatch.setattr(importlib.metadata, "version", missing)
-        assert _version() == "unknown"
+        assert installed_version() == "unknown"
 
 
 class TestInterrupt:
@@ -490,6 +492,25 @@ class TestOutputShape:
     def test_listing_honours_the_shape(self, tools: IshTools, project: Path) -> None:
         out = tools.list_chunks({"path": str(project), "format": "grep"})
         assert all(line.split(":")[2] == "1" for line in out.splitlines())
+
+    def test_paths_are_written_from_the_path_asked_about(
+        self,
+        tools: IshTools,
+        stub_backend,
+        project: Path,
+        monkeypatch,
+        tmp_path_factory,
+    ) -> None:
+        """A shared server answers callers in other directories.
+
+        Its own working directory means nothing to them, and an editor
+        resolves a result against the directory it asked about.
+        """
+        monkeypatch.chdir(tmp_path_factory.mktemp("elsewhere"))
+        out = tools.search({"query": "config", "path": str(project), "format": "grep"})
+        assert out.splitlines()[0].startswith("app.py:")
+        listed = tools.list_chunks({"path": str(project)})
+        assert all(line.startswith("app.py:") for line in listed.splitlines())
 
     def test_the_shape_is_offered_by_the_tools(self, tools: IshTools) -> None:
         search = next(t for t in tools.tools() if t.name == "search_code")
@@ -737,3 +758,144 @@ class TestAnEditBecomesSearchable:
             assert rounds
         finally:
             tools.close()
+
+    def test_many_threads_open_one_session(
+        self, quick: IshTools, project: Path
+    ) -> None:
+        seen = []
+
+        def open_one() -> None:
+            seen.append(quick._session_for(project.resolve()))
+
+        threads = [threading.Thread(target=open_one) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+        quick.close()
+        assert len({id(session) for session in seen}) == 1
+
+
+def _until(ready, seconds: float = 5.0) -> bool:
+    """Wait for *ready* to hold, and say whether it did in time."""
+    deadline = time.monotonic() + seconds
+    while not ready() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return ready()
+
+
+class TestBesideAServer:
+    """Verify the server leaves the refresh to ish-serve when one keeps the tree.
+
+    A thread here would walk and embed the same files beside it, and
+    the embedding of one would hold the queries of the other.
+    """
+
+    @pytest.fixture()
+    def kept(self, project: Path) -> heartbeat.Status:
+        status = heartbeat.Status(
+            tree=project.resolve(),
+            pid=4242,
+            updated=time.time(),
+            refreshing="Embedded 8 of 16 chunks",
+            last_finished=100.0,
+        )
+        heartbeat.write(heartbeat.status_for(project), status)
+        return status
+
+    def test_no_watch_starts(
+        self, tools: IshTools, stub_backend, project: Path, kept
+    ) -> None:
+        tools.search({"query": "config", "path": str(project)})
+        tools.index_status({"path": str(project)})
+        assert tools._watched == {}
+        assert tools._watchers == []
+
+    def test_a_refresh_request_is_passed_on(
+        self, tools: IshTools, stub_backend, project: Path, kept
+    ) -> None:
+        said = tools.refresh({"path": str(project)})
+        assert "ish-serve" in said
+        assert "background" in said
+        assert heartbeat.nudge_for(project).exists()
+        assert tools._watched == {}
+
+    def test_the_status_says_what_the_server_does(
+        self, tools: IshTools, stub_backend, project: Path, kept
+    ) -> None:
+        out = tools.index_status({"path": str(project)})
+        assert "refreshing: Embedded 8 of 16 chunks" in out
+        assert f"kept by  : ish-serve 4242 for {project.resolve()}" in out
+
+    def test_the_breakdown_is_counted_once_while_nothing_changes(
+        self, tools: IshTools, stub_backend, project: Path, kept, monkeypatch
+    ) -> None:
+        """Counting by language builds every chunk, and a picker asks while it waits."""
+        from ish.interfaces.python.api import Ish
+
+        counted: list[int] = []
+        original = Ish.status
+        monkeypatch.setattr(
+            Ish, "status", lambda self: counted.append(1) or original(self)
+        )
+        for _ in range(3):
+            tools.index_status({"path": str(project)})
+        assert counted == [1]
+
+    def test_the_breakdown_is_counted_again_when_something_changed(
+        self, tools: IshTools, stub_backend, project: Path, kept, monkeypatch
+    ) -> None:
+        from ish.interfaces.python.api import Ish
+
+        counted: list[int] = []
+        original = Ish.status
+        monkeypatch.setattr(
+            Ish, "status", lambda self: counted.append(1) or original(self)
+        )
+        tools.index_status({"path": str(project)})
+        # The index grew, as it does when the server writes to it.
+        tools._session_for(project.resolve())._use_case.build_index(project.resolve())
+        tools.index_status({"path": str(project)})
+        # The server finished another refresh.
+        heartbeat.write(
+            heartbeat.status_for(project),
+            heartbeat.Status(
+                tree=project.resolve(),
+                pid=4242,
+                updated=time.time(),
+                last_finished=200.0,
+            ),
+        )
+        tools.index_status({"path": str(project)})
+        tools.index_status({"path": str(project)})
+        assert counted == [1, 1, 1]
+
+    def test_a_watch_leaves_a_cycle_to_a_server_that_appeared(
+        self, project: Path, stub_backend, monkeypatch, caplog
+    ) -> None:
+        rounds: list[int] = []
+        monkeypatch.setattr(
+            bootstrap, "refresh_indexes", lambda *a, **k: rounds.append(1)
+        )
+        tools = IshTools(Settings(git=False, no_cache=True, refresh_seconds=0), project)
+        try:
+            tools.search({"query": "config", "path": str(project)})
+            assert project.resolve() in tools._watched
+            heartbeat.write(
+                heartbeat.status_for(project),
+                heartbeat.Status(tree=project.resolve(), pid=4242, updated=time.time()),
+            )
+            with caplog.at_level("INFO", logger="ish"):
+                tools._watched[project.resolve()].set()
+                assert _until(lambda: "Leaving it the refresh" in caplog.text)
+            assert rounds == []
+        finally:
+            tools.close()
+
+    def test_a_refresh_clears_the_counted_breakdown(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        tools.index_status({"path": str(project)})
+        assert project.resolve() in tools._status
+        tools._refresh_once(project.resolve())
+        assert project.resolve() not in tools._status

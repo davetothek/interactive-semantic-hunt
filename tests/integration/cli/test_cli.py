@@ -1,12 +1,13 @@
 """Integration test — run the CLI against a temporary project."""
 
 import os
+import time
 from pathlib import Path
 
 import pytest
 
 from ish import bootstrap
-from ish.application.progress import EMBED, READY, REFRESH, Progress
+from ish.application.progress import Progress
 from ish.interfaces.cli.main import main
 from ish.settings import Settings
 
@@ -430,70 +431,11 @@ class TestGrepFormat:
 
 
 class TestRefreshReportsProgress:
-    """Verify a long refresh says what it is doing.
+    """Verify a refresh of several trees names each one.
 
-    A command that prints nothing for minutes cannot be told from one
-    that has stopped.
+    The line itself is tested with the busy module. Here the steps a
+    refresh reports must carry the tree they belong to.
     """
-
-    @staticmethod
-    def _step() -> Progress:
-        return Progress(REFRESH).within(Path("/p/specification"), 2, 8)
-
-    def test_a_terminal_sees_a_progress_line(self, monkeypatch, capsys) -> None:
-        from ish.interfaces.cli import main as cli
-
-        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
-        line = cli.ProgressLine()
-        line.show(self._step())
-        line.clear()
-        assert "Refreshing 2 of 8: specification" in capsys.readouterr().err
-
-    def test_a_pipe_stays_quiet(self, monkeypatch, capsys) -> None:
-        """The log already carries it, so do not write it twice."""
-        from ish.interfaces.cli import main as cli
-
-        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: False, raising=False)
-        line = cli.ProgressLine()
-        line.show(self._step())
-        line.clear()
-        assert capsys.readouterr().err == ""
-
-    def test_the_line_fits_the_terminal(self, monkeypatch, capsys) -> None:
-        from ish.interfaces.cli import main as cli
-
-        monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True, raising=False)
-        monkeypatch.setattr(cli, "_width", lambda: 20)
-        cli.ProgressLine().show(Progress(EMBED, total=10**9, reused=10**9))
-        written = capsys.readouterr().err
-        assert len(written.replace("\r", "").replace("\033[2K", "")) < 20
-
-    def test_the_embedding_rate_is_shown(self, monkeypatch) -> None:
-        """A blocked run and a slow one must not look the same."""
-        from ish.interfaces.cli import main as cli
-
-        clock = iter([100.0, 110.0])
-        monkeypatch.setattr(cli.time, "monotonic", lambda: next(clock))
-        line = cli.ProgressLine()
-
-        assert (
-            line.render(Progress(EMBED, total=40)) == "Embedding 40 chunks (0 reused)"
-        )
-        assert (
-            line.render(Progress(EMBED, done=25, total=40))
-            == "Embedded 25 of 40 chunks, 2.5 chunks/s"
-        )
-        # Another stage ends the measurement.
-        assert line.render(Progress(READY, total=3)) == "Index ready: 3 files"
-
-    def test_a_rate_needs_a_beginning(self, monkeypatch) -> None:
-        """Progress that starts mid-way is shown without a rate, not a wrong one."""
-        from ish.interfaces.cli import main as cli
-
-        monkeypatch.setattr(cli.time, "monotonic", lambda: 5.0)
-        line = cli.ProgressLine()
-        assert line.render(Progress(EMBED, done=3, total=9)) == "Embedded 3 of 9 chunks"
-        assert line.render(Progress(EMBED, done=4, total=9)) == "Embedded 4 of 9 chunks"
 
     def test_every_tree_is_announced(self, tmp_path, monkeypatch) -> None:
         from ish import bootstrap
@@ -519,6 +461,85 @@ class TestRefreshReportsProgress:
         bootstrap.refresh_indexes(Settings(git=False), root, on_progress=said.append)
         assert any("Refreshing 1 of 1: proj" == str(step) for step in said)
         assert all(step.tree == root.resolve() for step in said)
+
+
+class TestAQueryBesideAServer:
+    """Verify a query reads what ish-serve wrote, and says when it is still writing.
+
+    A run that refreshed the index itself would walk and embed beside
+    the server. One that said nothing would answer from an index that
+    is still catching up and look complete.
+    """
+
+    @pytest.fixture()
+    def offline(self, monkeypatch) -> None:
+        class Fake:
+            model_name = "fake"
+
+            def embed_documents(self, texts):
+                return [[float(len(t)), 1.0] for t in texts]
+
+            def embed_query(self, text):
+                return [float(len(text)), 1.0]
+
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda settings: Fake())
+
+    @staticmethod
+    def _keep(project: Path, refreshing: str | None) -> None:
+        from ish.interfaces import heartbeat
+
+        heartbeat.write(
+            heartbeat.status_for(project),
+            heartbeat.Status(
+                tree=project.resolve(),
+                pid=4242,
+                updated=time.time(),
+                refreshing=refreshing,
+            ),
+        )
+
+    @staticmethod
+    def _terminal(monkeypatch) -> None:
+        from ish.interfaces import busy
+
+        monkeypatch.setattr(busy.sys.stderr, "isatty", lambda: True, raising=False)
+
+    def test_the_run_refreshes_nothing_and_names_the_step(
+        self, project: Path, offline, monkeypatch, capsys
+    ) -> None:
+        from ish.application.search import Search
+
+        self._keep(project, "Refreshing 1 of 1: proj, Embedded 8 of 16 chunks")
+        self._terminal(monkeypatch)
+        walked: list[Path] = []
+        monkeypatch.setattr(
+            Search,
+            "build_index",
+            lambda self, root, on_progress=None: walked.append(root) or 0,
+        )
+        assert main(["config", str(project), "--no-cache"]) == 0
+        err = capsys.readouterr().err
+        assert walked == []
+        assert "ish-serve: Refreshing 1 of 1: proj, Embedded 8 of 16 chunks" in err
+
+    def test_a_server_between_refreshes_is_not_mentioned(
+        self, project: Path, offline, monkeypatch, capsys
+    ) -> None:
+        self._keep(project, None)
+        self._terminal(monkeypatch)
+        assert main(["config", str(project), "--no-cache"]) == 0
+        assert "ish-serve" not in capsys.readouterr().err
+
+    def test_without_a_server_the_run_shows_its_own_progress(
+        self, project: Path, offline, monkeypatch, capsys
+    ) -> None:
+        self._terminal(monkeypatch)
+        assert main(["config", str(project), "--no-cache"]) == 0
+        captured = capsys.readouterr()
+        assert "Looking for source files" in captured.err
+        assert "Embedded 4 of 4 chunks" in captured.err
+        assert "ish-serve" not in captured.err
+        assert "load_config" in captured.out
 
 
 class TestTerminalSizeForPiping:

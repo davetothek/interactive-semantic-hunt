@@ -1,18 +1,74 @@
-"""Ask git which files it ignores.
+"""Ask git which files it ignores, and which repository a tree belongs to.
 
 Indexing what a repository deliberately ignores fills the index with
 build output and vendored code. Git already knows the answer, including
 every nested ``.gitignore`` and the user's global excludes, so ask it
 rather than reimplementing the rules.
+
+Git also knows which checkouts are one repository. Every worktree
+reports the same common directory, which is what lets two checkouts of
+one project share the work of embedding.
 """
 
 import logging
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 10
+
+
+@dataclass(frozen=True, slots=True)
+class Repository:
+    """Name the repository a tree belongs to, and the checkout it is in.
+
+    Every worktree of one repository reports the same ``common_dir``,
+    where the objects live. Each reports its own ``checkout``, the top
+    of the working tree it belongs to.
+    """
+
+    common_dir: Path
+    checkout: Path
+
+
+def repository_of(root: Path) -> Repository | None:
+    """Return the repository *root* belongs to, or None.
+
+    None means the path is in no repository, or git cannot run. A
+    caller then treats the tree as a repository of its own.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "rev-parse",
+                "--git-common-dir",
+                "--show-toplevel",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.debug("git is unavailable: %s", exc)
+        return None
+    if result.returncode != 0:
+        log.debug("git rev-parse failed: %s", result.stderr.strip())
+        return None
+    lines = result.stdout.splitlines()
+    if len(lines) < 2:
+        return None
+    # The main checkout reports its common directory as a relative
+    # path, so resolve it against the directory git was asked in.
+    common = Path(lines[0])
+    if not common.is_absolute():
+        common = root / common
+    return Repository(common_dir=common.resolve(), checkout=Path(lines[1]).resolve())
 
 
 class GitVisibleFiles:

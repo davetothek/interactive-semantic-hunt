@@ -11,7 +11,7 @@ the recipe for adding one. This module only selects from them.
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +24,7 @@ from ish.adapters.parser import (
     categories,
     spellings,
 )
-from ish.adapters.vector_store.catalog import IndexCatalog
+from ish.adapters.vector_store.catalog import IndexCatalog, IndexEntry
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
@@ -45,6 +45,10 @@ from ish.domain.chunk import Chunk
 from ish.settings import Settings
 
 log = logging.getLogger(__name__)
+
+# The repository a tree belongs to and the checkout it is in, as git
+# names them, or None for each when it is in none or git cannot run.
+Identity = tuple[Path | None, Path | None]
 
 
 def all_parsers(settings: Settings) -> dict[str, Language]:
@@ -194,7 +198,11 @@ def catalog(settings: Settings) -> IndexCatalog:
 
 
 def build_stores(
-    settings: Settings, root: Path, embedder: Embedder
+    settings: Settings,
+    root: Path,
+    embedder: Embedder,
+    identity: Identity | None = None,
+    kept: bool = False,
 ) -> tuple[VectorStore | None, VectorReader]:
     """Build what a search of *root* reads, and what a refresh of it writes.
 
@@ -204,6 +212,10 @@ def build_stores(
     reader releases everything.
 
     Persist to disk unless the caller asked for a run that leaves none.
+    *identity* is the repository and the checkout *root* belongs to,
+    when the caller knows them. They are asked of git otherwise. *kept*
+    says another process keeps the indexes current, so a read of
+    several needs no warning.
     """
     if settings.no_cache:
         from ish.adapters.vector_store.pure_python import PurePythonVectorStore
@@ -214,20 +226,56 @@ def build_stores(
     from ish.adapters.vector_store.federated import FederatedReader
     from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
-    identity = model_id(settings, embedder)
+    model = model_id(settings, embedder)
     resolved = root.resolve()
     indexes = catalog(settings)
-    existing = indexes.below(resolved) if settings.federate else {}
+    known = indexes.entries()
+    checkout = None if identity is None else identity[1]
+    entries = (
+        indexes_for(indexes, resolved, known, identity=identity)
+        if settings.federate
+        else []
+    )
+    existing = {entry.tree: entry.path for entry in entries}
+    recorded = {entry.tree: entry for entry in known}
+    scopes: dict[Path, tuple[Path | None, Path | None]] = {}
+
+    def identity_of(tree: Path) -> tuple[Path | None, Path | None]:
+        # An index records the repository and the checkout it belongs
+        # to. Ask git only for a tree that has not recorded them.
+        entry = recorded.get(tree)
+        if entry is not None and entry.repository is not None:
+            return entry.repository, entry.checkout
+        return repository_identity(tree)
 
     def open_index(path: Path, tree: Path) -> SqliteVectorStore:
-        return SqliteVectorStore(path, model_id=identity, root=tree)
+        # The vectors of a repository live in one shared store, which
+        # every index of the repository attaches, and a sweep of that
+        # store asks every sibling index before it deletes anything.
+        repository, checkout = scopes.setdefault(tree, identity_of(tree))
+        shared = None
+        siblings: list[Path] = []
+        if repository is not None:
+            shared = indexes.shared_store_for(repository)
+            siblings = [
+                e.path for e in known if e.repository == repository and e.path != path
+            ]
+        return SqliteVectorStore(
+            path,
+            model_id=model,
+            root=tree,
+            repository=repository,
+            checkout=checkout,
+            shared=shared,
+            siblings=siblings,
+        )
 
     # Write to the index of the named tree. Build one only when nothing
     # below already covers the search, so asking about a parent of
     # several indexes reads them rather than starting a new one.
     primary = None
     if resolved in existing or not existing:
-        covering = None if existing else indexes.covering(resolved)
+        covering = None if existing else indexes.covering(resolved, checkout)
         if covering is not None:
             tree, db_path = covering
             log.info(
@@ -256,11 +304,12 @@ def build_stores(
         # Nothing below, so the named tree's own index is the whole search.
         return primary, primary
 
-    if primary is None and not settings.refresh:
+    if primary is None and not settings.refresh and not kept:
         # Nothing here may be written, so a search reads whatever the
         # indexes below already hold. Say so: a stale answer and a fresh
         # one look the same. Stay quiet when a refresh has just run,
-        # which is the very thing the warning asks for.
+        # which is the very thing the warning asks for, and when a
+        # server keeps the indexes current.
         log.warning(
             "Reading %d stored indexes under %s without refreshing them. "
             "Pass --refresh to bring them up to date first.",
@@ -268,10 +317,154 @@ def build_stores(
             resolved,
         )
     readers: list[VectorReader] = [*others]
+    trees = [tree for tree in existing if tree != resolved]
     if primary is not None:
         readers.insert(0, primary)
+        trees.insert(0, resolved)
     log.info("Searching %d indexes under %s", len(readers), resolved)
-    return primary, FederatedReader(readers)
+    return primary, FederatedReader(
+        readers,
+        disjoint=not _nests(trees),
+        scopes=[scopes[tree] for tree in trees],
+    )
+
+
+def indexes_for(
+    indexes: IndexCatalog,
+    path: Path,
+    known: Sequence[IndexEntry] | None = None,
+    identity: Identity | None = None,
+) -> list[IndexEntry]:
+    """Return the stored indexes a search of *path* reads.
+
+    Take every index whose tree sits at or below *path*, except the
+    indexes of another checkout of the same repository. A worktree kept
+    under the main checkout, as ``.claude/worktrees/`` keeps them, would
+    otherwise join every search of the main tree and answer with the
+    same chunk once more for each checkout. An index of another
+    repository inside the tree, such as a submodule, stays: it holds
+    other text. A path inside no checkout reads them all, and the reader
+    shows each chunk once.
+
+    *identity* is the repository and the checkout *path* belongs to,
+    when the caller knows them. They are asked of git otherwise.
+    """
+    resolved = path.resolve()
+    entries = indexes.entries() if known is None else known
+    below = [
+        e
+        for e in entries
+        if e.present and (e.tree == resolved or resolved in e.tree.parents)
+    ]
+    repository, checkout = (
+        repository_identity(resolved) if identity is None else identity
+    )
+    if checkout is None:
+        return below
+    return [
+        e
+        for e in below
+        if e.checkout is None or e.checkout == checkout or e.repository != repository
+    ]
+
+
+def forget_index(settings: Settings, path: Path) -> list[Path]:
+    """Remove the stored index of the tree at *path*. Return the files removed.
+
+    Raise ``LookupError`` when no index describes the tree. Leave the
+    vectors where they are. A checkout at an older commit still needs
+    the vectors of text the main checkout has since changed, and a
+    vector costs a second of embedding to make again. Sweeping is a
+    separate act, through ``sweep_vectors()``.
+    """
+
+    resolved = path.resolve()
+    indexes = catalog(settings)
+    known = indexes.entries()
+    entry = next((e for e in known if e.tree == resolved), None)
+    if entry is None:
+        raise LookupError(f"No stored index describes {resolved}.")
+    removed = indexes.forget(entry)
+    log.info("Removed the index of %s: %d file(s).", resolved, len(removed))
+    if entry.repository is not None:
+        log.info(
+            "The vectors stay in %s. Sweep them on purpose with --sweep.",
+            indexes.shared_store_for(entry.repository),
+        )
+    return removed
+
+
+def sweep_vectors(settings: Settings, path: Path) -> int:
+    """Delete the vectors no index of the repository of *path* references.
+
+    Return how many went. Raise ``LookupError`` when no index belongs to
+    that repository, or, outside one, when no index describes the tree.
+    Every index of the repository is asked first, those whose tree is
+    gone included, so nothing an index still names is taken. Measured
+    on one firmware tree, the vectors no index referenced were what a
+    worktree at an older commit reused: sweeping them took its reuse
+    from 100 % to 87 %. Hence a sweep happens only when asked for.
+    """
+    from ish.adapters.vector_store.sqlite import SqliteVectorStore
+
+    resolved = path.resolve()
+    indexes = catalog(settings)
+    known = indexes.entries()
+    repository, _checkout = repository_identity(resolved)
+    if repository is None:
+        members = [e for e in known if e.tree == resolved]
+        if not members:
+            raise LookupError(
+                f"No stored index describes {resolved}, and it is in no repository."
+            )
+    else:
+        members = [e for e in known if e.repository == repository]
+        if not members:
+            raise LookupError(
+                f"No stored index belongs to the repository of {resolved}."
+            )
+    # The keeper names the store it uses, so none is passed.
+    keeper, *others = members
+    store = SqliteVectorStore(
+        keeper.path,
+        model_id=model_id(settings, build_embedder(settings)),
+        root=keeper.tree,
+        repository=keeper.repository,
+        checkout=keeper.checkout,
+        siblings=[e.path for e in others],
+    )
+    try:
+        swept = store.prune_vectors()
+    finally:
+        store.close()
+    log.info("Swept %d vector(s) no index references.", swept)
+    return swept
+
+
+def _nests(trees: Sequence[Path]) -> bool:
+    """Return True when one of *trees* sits inside another.
+
+    Only then can two indexes hold the same chunk, which is what makes
+    a count of the lot cost a listing of the lot.
+    """
+    return any(
+        inner != outer and outer in inner.parents for inner in trees for outer in trees
+    )
+
+
+def repository_identity(root: Path) -> tuple[Path | None, Path | None]:
+    """Return the repository *root* belongs to and the checkout it is in.
+
+    Return a pair of None outside a repository, or when git cannot run.
+    The application never learns what git is: the answer travels as two
+    paths, and the index records them.
+    """
+    from ish.adapters.vcs.git import repository_of
+
+    found = repository_of(root)
+    if found is None:
+        return None, None
+    return found.common_dir, found.checkout
 
 
 def build_ignored_by(settings: Settings, root: Path):
@@ -284,8 +477,20 @@ def build_ignored_by(settings: Settings, root: Path):
     return GitVisibleFiles(root).ignores
 
 
-def build_scan(settings: Settings, root: Path) -> Scan:
-    """Wire the scan use case."""
+def build_scan(
+    settings: Settings, root: Path, identity: Identity | None = None
+) -> Scan:
+    """Wire the scan use case.
+
+    An exclude pattern and an ignored name are judged from the top of
+    the checkout *root* belongs to, so a tree is never rejected for
+    where it sits. *identity* is the repository and the checkout, when
+    the caller knows them. They are asked of git otherwise, and a pair
+    of None means a tree outside any repository.
+    """
+    if identity is None:
+        identity = repository_identity(root)
+    _repository, checkout = identity
     return Scan(
         parsers=build_parsers(settings),
         ignored_dirs=settings.ignore,
@@ -294,25 +499,45 @@ def build_scan(settings: Settings, root: Path) -> Scan:
         ignored_by=build_ignored_by(settings, root),
         unignore=settings.unignore,
         root=root,
+        anchor=checkout,
     )
 
 
-def build_search(settings: Settings, root: Path) -> Search:
-    """Wire the full search use case for one scanned tree."""
+def build_search(
+    settings: Settings,
+    root: Path,
+    identity: Identity | None = None,
+    kept: bool = False,
+) -> Search:
+    """Wire the full search use case for one scanned tree.
+
+    Ask git once for the repository and the checkout *root* belongs to,
+    unless the caller names them, and hand the answer to the scan and
+    to the stores. *kept* says another process keeps the indexes
+    current.
+    """
     embedder = build_embedder(settings)
     resolved = root.resolve()
+    if identity is None:
+        identity = repository_identity(resolved)
+    _repository, checkout = identity
     keep = build_result_filter(settings, settings_filters(settings))
 
     # An index that belongs to a tree above this one holds more than was
     # asked for, so keep the answers inside the path.
-    if not settings.no_cache and catalog(settings).covering(resolved) is not None:
+    if (
+        not settings.no_cache
+        and catalog(settings).covering(resolved, checkout) is not None
+    ):
         keep = _inside(resolved, keep)
 
-    primary, reader = build_stores(settings, root, embedder)
+    primary, reader = build_stores(
+        settings, root, embedder, identity=identity, kept=kept
+    )
     index = None
     if primary is not None:
         index = Index(
-            scan=build_scan(settings, root),
+            scan=build_scan(settings, root, identity=identity),
             embedder=embedder,
             vector_store=primary,
             rebuild=settings.reindex,
@@ -342,6 +567,8 @@ def refresh_indexes(
     root: Path,
     on_progress: ProgressCallback | None = None,
     overrides: Mapping[str, Any] | None = None,
+    *,
+    checkouts: bool = False,
 ) -> list[Path]:
     """Bring every stored index at or below *root* up to date.
 
@@ -355,13 +582,29 @@ def refresh_indexes(
     so refreshing a tree under the parent's options would prune
     everything those options reject: a tree that git ignores, kept by a
     ``git = false`` of its own, would lose every chunk it holds.
+
+    With *checkouts*, visit the indexes of every other checkout of the
+    repository *root* belongs to as well, wherever on disk they are. One
+    server then keeps a repository current, its worktrees included.
     """
     from dataclasses import replace
 
     from ish.settings import load_settings
 
     resolved = root.resolve()
-    trees = sorted(catalog(settings).below(resolved)) or [resolved]
+    indexes = catalog(settings)
+    known = indexes.entries()
+    identity = repository_identity(resolved)
+    entries = indexes_for(indexes, resolved, known, identity=identity)
+    if checkouts and identity[0] is not None:
+        visited = {e.tree for e in entries}
+        entries += [
+            e
+            for e in known
+            if e.present and e.repository == identity[0] and e.tree not in visited
+        ]
+    identities = {e.tree: (e.repository, e.checkout) for e in entries}
+    trees = sorted(identities) or [resolved]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)
         within = None
@@ -374,7 +617,7 @@ def refresh_indexes(
             federate=False,
             refresh=False,
         )
-        search = build_search(per_tree, tree)
+        search = build_search(per_tree, tree, identity=identities.get(tree))
         try:
             search.build_index(tree, within)
         finally:

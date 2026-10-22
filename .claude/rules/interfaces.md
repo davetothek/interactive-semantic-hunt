@@ -28,7 +28,9 @@ finishes a filter word. Nothing else is added.
 
 - Output one line per chunk: `path:start-end  kind  symbol`.
 - Write the refresh line to stderr, rewritten in place and cleared at the
-  end. stdout holds only results.
+  end. stdout holds only results. The line lives in `interfaces/busy.py`,
+  the one place a step is rendered with a rate and a time left, and
+  `ish-serve` writes the same text into its status.
 - Count skipped files in one line at WARNING. Name them at `-v`.
 
 ## TUI
@@ -56,6 +58,20 @@ finishes a filter word. Nothing else is added.
 - An index another process holds is left out of a search above it, with a
   warning that names it. A search of the held tree itself raises `StoreBusy`.
 - Report a tool failure through `isError`, not a JSON-RPC error.
+- `ish-serve` fills the index and answers nothing. It refreshes its tree
+  and every index of its repository in any checkout, from the start, then
+  on the interval or when nudged. It writes its status under the runtime
+  directory every few seconds, steps aside when a live server already
+  reaches its tree, and stops when its tree is gone. Nothing connects a
+  client to it.
+- A client reads the status through `Ish.kept_by()`. A server reaches a
+  path from the same repository, wherever the checkout is, or from a tree
+  above it. With a live one, `Ish.index()` reads what is stored,
+  `IshTools` starts no watch thread, and `refresh_index` touches the nudge
+  file. A status nobody has written for `STALE_SECONDS` is a dead server,
+  and the client refreshes itself again. Editor clients know nothing of
+  the status file.
+- `ish-mcp` serves stdio and nothing else.
 
 ## Neovim
 

@@ -70,6 +70,10 @@ class Search:
             log.warning("No chunks found to index.")
         return held
 
+    def held(self) -> int:
+        """Return how many chunks the reader holds now, without refreshing."""
+        return self._reader.count()
+
     def warm(self) -> None:
         """Load the model behind the backend before anyone waits on it.
 
