@@ -141,8 +141,8 @@ class Ish:
         status names what the server is doing, so an interface can say
         when the index is still catching up.
         """
-        repository, checkout = self.identity
-        return heartbeat.find(self.path, repository, checkout)
+        repository, _checkout = self.identity
+        return heartbeat.find(self.path, repository)
 
     def index(self, on_progress: ProgressCallback | None = None) -> int:
         """Bring this tree's index up to date. Return the chunks it holds.

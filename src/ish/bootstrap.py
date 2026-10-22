@@ -567,6 +567,8 @@ def refresh_indexes(
     root: Path,
     on_progress: ProgressCallback | None = None,
     overrides: Mapping[str, Any] | None = None,
+    *,
+    checkouts: bool = False,
 ) -> list[Path]:
     """Bring every stored index at or below *root* up to date.
 
@@ -580,16 +582,28 @@ def refresh_indexes(
     so refreshing a tree under the parent's options would prune
     everything those options reject: a tree that git ignores, kept by a
     ``git = false`` of its own, would lose every chunk it holds.
+
+    With *checkouts*, visit the indexes of every other checkout of the
+    repository *root* belongs to as well, wherever on disk they are. One
+    server then keeps a repository current, its worktrees included.
     """
     from dataclasses import replace
 
     from ish.settings import load_settings
 
     resolved = root.resolve()
-    identities = {
-        e.tree: (e.repository, e.checkout)
-        for e in indexes_for(catalog(settings), resolved)
-    }
+    indexes = catalog(settings)
+    known = indexes.entries()
+    identity = repository_identity(resolved)
+    entries = indexes_for(indexes, resolved, known, identity=identity)
+    if checkouts and identity[0] is not None:
+        visited = {e.tree for e in entries}
+        entries += [
+            e
+            for e in known
+            if e.present and e.repository == identity[0] and e.tree not in visited
+        ]
+    identities = {e.tree: (e.repository, e.checkout) for e in entries}
     trees = sorted(identities) or [resolved]
     for number, tree in enumerate(trees, start=1):
         log.info("Refreshing the index for %s", tree)

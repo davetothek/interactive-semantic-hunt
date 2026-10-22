@@ -1041,6 +1041,33 @@ class TestRefreshIndexes:
         found = bootstrap.catalog(settings).below(nested)
         assert list(found) == [nested / "a"]
 
+    def test_the_checkouts_of_the_repository_join_on_request(
+        self, nested: Path, offline, tmp_path: Path, monkeypatch
+    ) -> None:
+        """One server keeps a repository current, a worktree beside it included."""
+        repository = tmp_path / "repo" / ".git"
+        other = tmp_path / "other"
+
+        def identity(root: Path) -> tuple[Path, Path]:
+            # Two checkouts of one repository: the nested tree, and the
+            # other one beside it.
+            inside_other = root == other or other in root.parents
+            return repository, (other if inside_other else nested)
+
+        monkeypatch.setattr(bootstrap, "repository_identity", identity)
+        other.mkdir()
+        (other / "three.py").write_text("def three():\n    pass\n")
+        settings = self._settings()
+        for tree in (nested / "a", other):
+            search = bootstrap.build_search(replace(settings, federate=False), tree)
+            search.build_index(tree)
+            search.close()
+
+        assert bootstrap.refresh_indexes(settings, nested) == [nested / "a"]
+        assert bootstrap.refresh_indexes(settings, nested, checkouts=True) == sorted(
+            [nested / "a", other]
+        )
+
 
 class TestRefreshReadsEachTreeConfig:
     """Verify a refresh honours the configuration beside each tree.

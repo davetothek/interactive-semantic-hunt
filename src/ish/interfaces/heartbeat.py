@@ -62,22 +62,17 @@ class Status:
         at = time.time() if now is None else now
         return at - self.updated < STALE_SECONDS
 
-    def covers(
-        self, path: Path, repository: Path | None, checkout: Path | None
-    ) -> bool:
+    def covers(self, path: Path, repository: Path | None) -> bool:
         """Return True when the refresh of the server reaches *path*.
 
-        The server refreshes every index at or below its tree, except
-        the indexes of another checkout of its own repository. A
-        client in such a checkout, or in a tree the server does not
-        hold, keeps its index current itself. *repository* and
-        *checkout* are what git says of *path*.
+        The server refreshes every index at or below its tree, and every
+        index of its own repository in any other checkout, wherever that
+        checkout is. A path in another repository is reached only under
+        the tree of the server. *repository* is what git says of *path*.
         """
-        if path != self.tree and self.tree not in path.parents:
-            return False
-        if self.checkout is None or checkout is None or checkout == self.checkout:
+        if repository is not None and repository == self.repository:
             return True
-        return repository != self.repository
+        return path == self.tree or self.tree in path.parents
 
 
 def runtime_dir(environ: Mapping[str, str] | None = None) -> Path:
@@ -154,29 +149,44 @@ def _path_or_none(value: object) -> Path | None:
     return None if value is None else Path(str(value))
 
 
+def statuses(environ: Mapping[str, str] | None = None) -> list[Status]:
+    """Return every status written under the runtime directory, stale ones included.
+
+    There is one file per server, and a few servers at most, so reading
+    them all costs less than asking git which one to read.
+    """
+    directory = runtime_dir(environ)
+    if not directory.is_dir():
+        return []
+    found = []
+    for path in sorted(directory.glob(f"*{STATUS_SUFFIX}")):
+        status = read(path)
+        if status is not None:
+            found.append(status)
+    return found
+
+
 def find(
     path: Path,
     repository: Path | None = None,
-    checkout: Path | None = None,
     environ: Mapping[str, str] | None = None,
     now: float | None = None,
 ) -> Status | None:
     """Return the status of the live server whose refresh reaches *path*.
 
-    Walk up from *path*, so a question about a subdirectory finds the
-    server of the tree that holds it. *repository* and *checkout* are
-    what git says of *path*.
+    A server of the repository *path* belongs to reaches it from any
+    checkout, and a server of a tree above *path* reaches it too. When
+    several do, take the one of the nearest tree. *repository* is what
+    git says of *path*.
     """
     resolved = path.resolve()
-    for candidate in (resolved, *resolved.parents):
-        status = read(status_for(candidate, environ))
-        if (
-            status is not None
-            and status.fresh(now)
-            and status.covers(resolved, repository, checkout)
-        ):
-            return status
-    return None
+    best: Status | None = None
+    for status in statuses(environ):
+        if not status.fresh(now) or not status.covers(resolved, repository):
+            continue
+        if best is None or len(status.tree.parts) > len(best.tree.parts):
+            best = status
+    return best
 
 
 def nudge(root: Path, environ: Mapping[str, str] | None = None) -> Path:

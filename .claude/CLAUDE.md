@@ -297,3 +297,12 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   batch of the one Ollama slot. Searches took 3 to 9 s against 128 to
   279 ms in-process. Hence `ish-serve` fills the index and answers
   nothing, and every client reads the index itself.
+- A server refreshed only the indexes under its path, and a client found
+  one only by walking up from the path it asked about. A worktree inside
+  the main checkout walked its 669 files on every run beside a server
+  that never touched it, and a worktree beside the checkout, where git
+  puts one unless told otherwise, could not reach that server at all.
+  Hence one server per repository, and clients that read every status
+  under the runtime directory. A server whose tree was deleted went on,
+  pruned every file from the index, and wrote its status for ever. Hence
+  a server stops when its tree is gone.

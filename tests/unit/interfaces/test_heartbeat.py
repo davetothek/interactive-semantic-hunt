@@ -121,45 +121,55 @@ class TestFreshness:
 
 
 class TestWhatTheRefreshReaches:
-    """Mirror the rule of a refresh: every tree below, except another checkout.
+    """Mirror the rule of a refresh: every tree below, and every checkout.
 
-    The server refreshes the indexes `indexes_for()` returns for its
-    tree, so a client inside a worktree of the same repository must
-    not take the server for its own.
+    One server keeps a repository current, worktrees included, wherever
+    they are. A path in another repository is reached only under the
+    tree of the server.
     """
 
     def test_the_tree_and_what_is_below_it(self, tmp_path: Path) -> None:
         status = _status(tmp_path)
-        assert status.covers(tmp_path, None, None)
-        assert status.covers(tmp_path / "a" / "b", None, None)
-        assert not status.covers(tmp_path.parent, None, None)
-        assert not status.covers(tmp_path.parent / "other", None, None)
+        assert status.covers(tmp_path, None)
+        assert status.covers(tmp_path / "a" / "b", None)
+        assert not status.covers(tmp_path.parent, None)
+        assert not status.covers(tmp_path.parent / "other", None)
 
     def test_the_same_checkout(self, tmp_path: Path) -> None:
         status = _status(tmp_path, repository=tmp_path / ".git", checkout=tmp_path)
-        assert status.covers(tmp_path / "src", tmp_path / ".git", tmp_path)
+        assert status.covers(tmp_path / "src", tmp_path / ".git")
 
-    def test_another_checkout_of_the_same_repository_is_left_out(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_worktree_under_the_tree_is_reached(self, tmp_path: Path) -> None:
         worktree = tmp_path / ".claude" / "worktrees" / "feature"
         status = _status(tmp_path, repository=tmp_path / ".git", checkout=tmp_path)
-        assert not status.covers(worktree / "src", tmp_path / ".git", worktree)
+        assert status.covers(worktree / "src", tmp_path / ".git")
 
-    def test_a_nested_repository_is_reached(self, tmp_path: Path) -> None:
-        sub = tmp_path / "spec"
+    def test_a_worktree_beside_the_tree_is_reached(self, tmp_path: Path) -> None:
+        """git puts a worktree beside the checkout unless told otherwise."""
+        main = tmp_path / "main"
+        status = _status(main, repository=main / ".git", checkout=main)
+        assert status.covers(tmp_path / "feature" / "src", main / ".git")
+
+    def test_another_repository_is_reached_only_under_the_tree(
+        self, tmp_path: Path
+    ) -> None:
         status = _status(tmp_path, repository=tmp_path / ".git", checkout=tmp_path)
-        assert status.covers(sub, tmp_path / ".git" / "modules" / "spec", sub)
+        assert status.covers(tmp_path / "spec", tmp_path / ".git" / "modules" / "spec")
+        other = tmp_path.parent / "other"
+        assert not status.covers(other, other / ".git")
 
-    def test_a_server_outside_git_reaches_everything_below(
+    def test_a_server_outside_git_reaches_only_what_is_below(
         self, tmp_path: Path
     ) -> None:
         repo = tmp_path / "repo"
-        assert _status(tmp_path).covers(repo / "src", repo / ".git", repo)
+        assert _status(tmp_path).covers(repo / "src", repo / ".git")
+        other = tmp_path.parent / "other"
+        assert not _status(tmp_path).covers(other, other / ".git")
 
-    def test_a_path_outside_git_is_reached(self, tmp_path: Path) -> None:
+    def test_a_path_outside_git_is_reached_under_the_tree(self, tmp_path: Path) -> None:
         status = _status(tmp_path, repository=tmp_path / ".git", checkout=tmp_path)
-        assert status.covers(tmp_path / "plain", None, None)
+        assert status.covers(tmp_path / "plain", None)
+        assert not status.covers(tmp_path.parent / "plain", None)
 
 
 class TestFind:
@@ -170,21 +180,45 @@ class TestFind:
         assert found.tree == tmp_path
         assert heartbeat.find(tmp_path) is not None
 
+    def test_the_server_of_the_repository_is_found_from_another_checkout(
+        self, tmp_path: Path
+    ) -> None:
+        main, feature = tmp_path / "main", tmp_path / "feature"
+        status = _status(main, repository=main / ".git", checkout=main)
+        heartbeat.write(status_for(main), status)
+        found = heartbeat.find(feature / "src", main / ".git")
+        assert found is not None
+        assert found.tree == main
+        assert heartbeat.find(feature / "src", feature / ".git") is None
+
+    def test_the_nearest_tree_wins(self, tmp_path: Path) -> None:
+        heartbeat.write(status_for(tmp_path), _status(tmp_path, pid=1))
+        heartbeat.write(status_for(tmp_path / "a"), _status(tmp_path / "a", pid=2))
+        below = heartbeat.find(tmp_path / "a" / "b")
+        beside = heartbeat.find(tmp_path / "c")
+        assert below is not None and below.pid == 2
+        assert beside is not None and beside.pid == 1
+
     def test_a_stale_server_is_read_past(self, tmp_path: Path) -> None:
         heartbeat.write(status_for(tmp_path), _status(tmp_path, updated=0.0))
         assert heartbeat.find(tmp_path / "a") is None
 
-    def test_a_server_whose_refresh_misses_the_path_is_read_past(
-        self, tmp_path: Path
-    ) -> None:
-        worktree = tmp_path / "wt"
-        status = _status(tmp_path, repository=tmp_path / ".git", checkout=tmp_path)
-        heartbeat.write(status_for(tmp_path), status)
-        assert heartbeat.find(worktree, tmp_path / ".git", worktree) is None
-        assert heartbeat.find(worktree, tmp_path / ".git", tmp_path) is not None
-
     def test_nothing_is_found_without_a_server(self, tmp_path: Path) -> None:
         assert heartbeat.find(tmp_path) is None
+
+
+class TestStatuses:
+    def test_without_the_directory_there_is_nothing(self, tmp_path: Path) -> None:
+        env = {"XDG_RUNTIME_DIR": str(tmp_path / "none")}
+        assert heartbeat.statuses(env) == []
+
+    def test_every_readable_status_is_listed(self, tmp_path: Path) -> None:
+        env = {"XDG_RUNTIME_DIR": str(tmp_path)}
+        heartbeat.write(status_for(tmp_path / "a", env), _status(tmp_path / "a"))
+        heartbeat.write(status_for(tmp_path / "b", env), _status(tmp_path / "b"))
+        (heartbeat.runtime_dir(env) / "broken.status").write_text("{")
+        trees = {status.tree for status in heartbeat.statuses(env)}
+        assert trees == {tmp_path / "a", tmp_path / "b"}
 
 
 class TestNudge:
