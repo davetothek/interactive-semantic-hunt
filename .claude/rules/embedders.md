@@ -40,8 +40,9 @@ with task prefixes. The `add-embedder` skill walks through it.
 - Send a batch again only when the daemon did not answer: a timeout, or an
   unreachable host. A refused request is not sent again. A query is sent
   once.
-- Keep `DEFAULT_BATCH_SIZE` small. It sets how long a search waits behind an
-  index run, and it carries no accuracy cost.
+- `DEFAULT_BATCH_SIZE` is one text a request. It bounds how long a search
+  waits behind an index run to one text, and it carries no accuracy cost:
+  the vectors are the same bit for bit at any size.
 - A query leaves the marker in `turn.py` before it is sent, and an index run
   waits between requests while the marker is fresh. A query never waits for
   the marker. A backend that embeds in its own process needs neither.

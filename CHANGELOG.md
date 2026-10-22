@@ -63,8 +63,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `$XDG_RUNTIME_DIR/ish/`, and an index run holds its next request back for
   2 seconds after the last query. Measured with 64 chunks embedding in
   requests of 8 beside a picker typing 0.3 s apart, a keystroke after the
-  first cost 605 ms and now costs 23 ms. The first keystroke still waits for
-  the request in flight, 0.6 s for chunks of about 250 tokens.
+  first cost 605 ms and now costs 23 ms. An index run also sends one text a
+  request instead of 8, so the first keystroke waits for one text at most:
+  601 ms → 115 ms beside chunks of about 250 tokens, and 3.5 s → 45 ms
+  beside chunks of about 1000 tokens. The vectors are the same bit for bit
+  at any request size. The run pays about a fifth of its throughput on
+  small chunks, 64 chunks of about 250 tokens in 9.1 s against 7.5 s, and
+  nothing on large ones.
 - `index_status` counts the chunks by language again only when the index
   changed, or when `ish-serve` finished another refresh. Measured on a root
   over 8 indexes and 74,459 chunks, a call cost 981 ms and a repeated one
