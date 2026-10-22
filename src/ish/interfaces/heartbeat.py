@@ -17,13 +17,13 @@ import contextlib
 import hashlib
 import json
 import os
-import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-DIRNAME = "ish"
+from ish.runtime import runtime_dir
+
 STATUS_SUFFIX = ".status"
 NUDGE_SUFFIX = ".refresh"
 
@@ -73,16 +73,6 @@ class Status:
         if repository is not None and repository == self.repository:
             return True
         return path == self.tree or self.tree in path.parents
-
-
-def runtime_dir(environ: Mapping[str, str] | None = None) -> Path:
-    """Return the directory the status files live in."""
-    env = os.environ if environ is None else environ
-    base = env.get("XDG_RUNTIME_DIR")
-    if base:
-        return Path(base) / DIRNAME
-    uid = os.getuid() if hasattr(os, "getuid") else 0
-    return Path(tempfile.gettempdir()) / f"{DIRNAME}-{uid}"
 
 
 def _named(root: Path, suffix: str, environ: Mapping[str, str] | None) -> Path:

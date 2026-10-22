@@ -42,3 +42,6 @@ with task prefixes. The `add-embedder` skill walks through it.
   once.
 - Keep `DEFAULT_BATCH_SIZE` small. It sets how long a search waits behind an
   index run, and it carries no accuracy cost.
+- A query leaves the marker in `turn.py` before it is sent, and an index run
+  waits between requests while the marker is fresh. A query never waits for
+  the marker. A backend that embeds in its own process needs neither.
