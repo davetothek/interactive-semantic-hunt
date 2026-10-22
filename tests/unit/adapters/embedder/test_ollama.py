@@ -2,14 +2,17 @@
 
 import io
 import json
+import logging
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
 from ish.adapters.embedder import ollama
 from ish.adapters.embedder.ollama import DEFAULT_MODEL, OllamaEmbedder
+from ish.adapters.embedder.turn import Turn
 
 
 @pytest.fixture(autouse=True)
@@ -468,3 +471,56 @@ class TestContextWindow:
 
     def test_the_default_leaves_the_daemon_to_its_own(self) -> None:
         assert OllamaEmbedder.from_option("").context_tokens is None
+
+
+class FakeTurn(Turn):
+    """Count the marks and the waits instead of touching a file."""
+
+    def __init__(self) -> None:
+        super().__init__(Path("/nowhere/query"))
+        self.marks = 0
+        self.waits = 0
+        self.waited = 0.0
+
+    def mark(self) -> None:
+        self.marks += 1
+
+    def wait(self) -> float:
+        self.waits += 1
+        return self.waited
+
+
+class TestTakingTurns:
+    """A query goes first. A stored text waits for it between requests."""
+
+    def test_a_query_leaves_the_marker(
+        self, recorder: Recorder, tmp_path: Path
+    ) -> None:
+        turn = Turn(tmp_path / "query")
+        OllamaEmbedder(turn=turn).embed_query("where is the socket closed")
+        assert turn.held()
+        assert len(recorder.requests) == 1
+
+    def test_a_query_never_waits(self, recorder: Recorder) -> None:
+        turn = FakeTurn()
+        OllamaEmbedder(turn=turn).embed_query("where")
+        assert (turn.marks, turn.waits) == (1, 0)
+
+    def test_a_stored_text_waits_before_each_request(self, recorder: Recorder) -> None:
+        turn = FakeTurn()
+        OllamaEmbedder(batch_size=2, turn=turn).embed_documents(list("abcde"))
+        assert (turn.marks, turn.waits) == (0, 3)
+        assert len(recorder.requests) == 3
+
+    def test_the_wait_is_logged(self, recorder: Recorder, caplog) -> None:
+        turn = FakeTurn()
+        turn.waited = 0.5
+        with caplog.at_level(logging.DEBUG, logger="ish.adapters.embedder.ollama"):
+            OllamaEmbedder(turn=turn).embed_documents(["a"])
+        assert "Waited 0.5 s for a search to go first." in caplog.text
+
+    def test_every_process_of_the_user_shares_one_marker(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+        assert OllamaEmbedder().turn.path == tmp_path / "ish" / "query"
