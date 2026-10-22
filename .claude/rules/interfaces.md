@@ -59,11 +59,14 @@ finishes a filter word. Nothing else is added.
   warning that names it. A search of the held tree itself raises `StoreBusy`.
 - Report a tool failure through `isError`, not a JSON-RPC error.
 - `ish-serve` fills the index and answers nothing. It refreshes its tree
-  from the start, then on the interval or when nudged, writes its status
-  under the runtime directory every few seconds, and steps aside when a
-  live server already keeps the tree. Nothing connects a client to it.
-- A client reads the status through `Ish.kept_by()`. With a live server
-  whose refresh reaches the path, `Ish.index()` reads what is stored,
+  and every index of its repository in any checkout, from the start, then
+  on the interval or when nudged. It writes its status under the runtime
+  directory every few seconds, steps aside when a live server already
+  reaches its tree, and stops when its tree is gone. Nothing connects a
+  client to it.
+- A client reads the status through `Ish.kept_by()`. A server reaches a
+  path from the same repository, wherever the checkout is, or from a tree
+  above it. With a live one, `Ish.index()` reads what is stored,
   `IshTools` starts no watch thread, and `refresh_index` touches the nudge
   file. A status nobody has written for `STALE_SECONDS` is a dead server,
   and the client refreshes itself again. Editor clients know nothing of

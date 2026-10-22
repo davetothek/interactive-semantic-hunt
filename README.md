@@ -297,10 +297,11 @@ and refresh themselves again. A second `ish-serve` for the same tree exits
 at once, so a shell hook may start one without checking first, and one that
 finds the status of a dead server takes its place.
 
-`--once` refreshes once and exits, for a cron job or a hook. A server
-refreshes what `ish --refresh` would from the same path: every index at or
-below its tree, except the indexes of another checkout of the same
-repository, so a worktree wants a server of its own.
+One server keeps a whole repository current: every index at or below its
+tree, and every index of another checkout of the same repository, wherever
+that worktree is on disk. A second `ish-serve` for any checkout of the
+repository exits at once, and a server whose own tree is deleted stops.
+`--once` refreshes once and exits, for a cron job or a hook.
 
 ## Index
 

@@ -72,17 +72,20 @@ class Keeper:
         self._embedder: Embedder | None = None
 
     def other(self) -> heartbeat.Status | None:
-        """Return the status of another live server for this tree, or None.
+        """Return the status of another live server that reaches this tree, or None.
 
-        Two shells may start a server at once. The second one finds the
-        status of the first and leaves. A status whose server has died
-        is taken over.
+        Two shells may start a server at once, and the checkouts of one
+        repository need one server between them. The second one finds
+        the status of the first and leaves. A status whose server has
+        died is taken over.
         """
-        found = heartbeat.read(self.status_path)
-        if found is None or found.pid == os.getpid():
-            return None
-        if found.fresh() and heartbeat.alive(found.pid):
-            return found
+        for found in heartbeat.statuses():
+            if found.pid == os.getpid() or not found.fresh():
+                continue
+            if not heartbeat.alive(found.pid):
+                continue
+            if found.covers(self._root, self._repository):
+                return found
         return None
 
     def start(self) -> None:
@@ -135,12 +138,16 @@ class Keeper:
             self.write()
 
     def refresh(self) -> None:
-        """Bring every index under the tree up to date, now."""
+        """Bring every index of the tree, and of its repository, up to date now.
+
+        A worktree of the repository is kept current too, wherever it
+        is, so one server serves the main checkout and its worktrees.
+        """
         self._doing = "starting"
         self.write()
         try:
             bootstrap.refresh_indexes(
-                self._settings, self._root, on_progress=self._note
+                self._settings, self._root, on_progress=self._note, checkouts=True
             )
             self._last_finished = time.time()
             self._warm()
@@ -164,8 +171,15 @@ class Keeper:
             log.info("Cannot warm the backend: %s", exc)
 
     def serve_forever(self) -> None:
-        """Refresh now, then on the interval or when asked, until stopped."""
+        """Refresh now, then on the interval or when asked, until stopped.
+
+        Stop when the tree itself is gone. A server that went on would
+        prune every file from the index and write its status for ever.
+        """
         while not self._stopping.is_set():
+            if not self._root.is_dir():
+                log.warning("The tree %s is gone. Stopping.", self._root)
+                return
             self.refresh()
             self._wait()
 
@@ -230,7 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     keeper = Keeper(settings, root)
     other = keeper.other()
     if other is not None:
-        log.info("ish-serve %d already keeps %s current", other.pid, root)
+        log.info(
+            "ish-serve %d already keeps %s current, which reaches %s",
+            other.pid,
+            other.tree,
+            root,
+        )
         return 0
 
     # A signal handler is a main-thread thing. A test runs this on

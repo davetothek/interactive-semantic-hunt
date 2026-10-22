@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import threading
 import time
 from itertools import count
@@ -94,7 +95,7 @@ class TestTheStatusFile:
         monkeypatch.setattr(daemon, "WRITE_SECONDS", 0.0)
         seen: list[str | None] = []
 
-        def talky(settings, root, on_progress=None, overrides=None):
+        def talky(settings, root, on_progress=None, overrides=None, **kwargs):
             on_progress(Progress(READ, 3, 9).within(root, 1, 1))
             status = heartbeat.read(keeper.status_path)
             seen.append(None if status is None else status.refreshing)
@@ -113,7 +114,7 @@ class TestTheStatusFile:
             heartbeat, "write", lambda path, status: written.append(status.refreshing)
         )
 
-        def talky(settings, root, on_progress=None, overrides=None):
+        def talky(settings, root, on_progress=None, overrides=None, **kwargs):
             for done in range(0, 80, 8):
                 on_progress(Progress(EMBED, done, 80))
             return [root]
@@ -341,3 +342,98 @@ class TestEntryPoint:
         monkeypatch.setattr(bootstrap, "refresh_indexes", lambda *a, **k: [tree])
         assert daemon.main(["-v", "--once"]) == 0
         assert logging.getLogger("ish").level < quiet
+
+
+class TestOneServerPerRepository:
+    """Verify the checkouts of one repository get one server between them.
+
+    A worktree is a second checkout, inside the main tree or beside it.
+    The server of either keeps both current, and a second server for
+    any checkout of the repository leaves.
+    """
+
+    @pytest.fixture()
+    def repository(self, tree: Path, monkeypatch) -> Path:
+        """Make the tree a checkout of a repository, without git."""
+        common = tree.parent / "main" / ".git"
+        monkeypatch.setattr(
+            bootstrap, "repository_identity", lambda root: (common, root)
+        )
+        return common
+
+    def test_a_server_of_another_checkout_keeps_this_tree(
+        self, tree: Path, repository: Path, monkeypatch
+    ) -> None:
+        rounds: list[int] = []
+        monkeypatch.setattr(
+            bootstrap, "refresh_indexes", lambda *a, **k: rounds.append(1) or [tree]
+        )
+        monkeypatch.setattr(heartbeat, "alive", lambda pid: True)
+        main = tree.parent / "main"
+        heartbeat.write(
+            heartbeat.status_for(main),
+            heartbeat.Status(
+                tree=main,
+                pid=os.getpid() + 1,
+                updated=time.time(),
+                repository=repository,
+                checkout=main,
+            ),
+        )
+        assert daemon.main(["--once"]) == 0
+        assert rounds == []
+
+    def test_a_server_of_another_repository_does_not(
+        self, tree: Path, repository: Path, monkeypatch
+    ) -> None:
+        rounds: list[int] = []
+        monkeypatch.setattr(
+            bootstrap, "refresh_indexes", lambda *a, **k: rounds.append(1) or [tree]
+        )
+        monkeypatch.setattr(heartbeat, "alive", lambda pid: True)
+        other = tree.parent / "other"
+        heartbeat.write(
+            heartbeat.status_for(other),
+            heartbeat.Status(
+                tree=other,
+                pid=os.getpid() + 1,
+                updated=time.time(),
+                repository=other / ".git",
+                checkout=other,
+            ),
+        )
+        assert daemon.main(["--once"]) == 0
+        assert rounds == [1]
+
+    def test_the_refresh_visits_every_checkout(
+        self, keeper: Keeper, monkeypatch
+    ) -> None:
+        asked: dict = {}
+
+        def record(settings, root, on_progress=None, overrides=None, **kwargs):
+            asked.update(kwargs)
+            return [root]
+
+        monkeypatch.setattr(bootstrap, "refresh_indexes", record)
+        keeper.refresh()
+        assert asked == {"checkouts": True}
+
+    def test_a_server_stops_when_its_tree_is_gone(
+        self, tree: Path, monkeypatch, caplog
+    ) -> None:
+        """A server that went on would prune the index and write for ever."""
+        _quick(monkeypatch)
+        monkeypatch.chdir(tree.parent)
+        monkeypatch.setattr(bootstrap, "refresh_indexes", lambda *a, **k: [tree])
+        keeper = Keeper(Settings(no_cache=True, git=False, refresh_seconds=0), tree)
+        thread = threading.Thread(target=keeper.serve_forever, daemon=True)
+        try:
+            with caplog.at_level("WARNING", logger="ish"):
+                thread.start()
+                shutil.rmtree(tree)
+                heartbeat.nudge(tree)
+                thread.join(5)
+            assert not thread.is_alive()
+            assert "is gone. Stopping" in caplog.text
+        finally:
+            keeper.close()

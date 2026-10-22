@@ -45,10 +45,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   before. `ish "query" path` then walks and embeds nothing before it
   answers, and says what the server is doing while a refresh runs.
   `ish-mcp` starts no refresh thread for a tree the server keeps, and
-  `refresh_index` asks the server instead. A second `ish-serve` for the
-  same tree exits at once, and `--once` refreshes once and exits. Measured
-  on a firmware tree of 6,266 chunks, a cold query took 691 ms on its own
-  and 274 ms beside a server.
+  `refresh_index` asks the server instead. One server keeps a whole
+  repository current, the indexes of its worktrees included, wherever
+  they are on disk. A second `ish-serve` for any checkout of the
+  repository exits at once, a server whose tree is deleted stops, and
+  `--once` refreshes once and exits. Measured on a firmware tree of 6,266
+  chunks, a cold query took 691 ms on its own and 274 ms beside a server.
 - `ish "query" path` shows what it is doing while it brings the index up
   to date: a spinner, the step, and while the model embeds the rate and
   about how long is left.
