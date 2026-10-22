@@ -11,6 +11,7 @@ import time
 from collections.abc import Sequence
 
 from ish.adapters.embedder.prefixes import PrefixingEmbedder
+from ish.adapters.embedder.turn import Turn, default_turn
 
 log = logging.getLogger(__name__)
 
@@ -18,12 +19,14 @@ DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "nomic-embed-text"
 
 # Send this many texts per request. The daemon serves one embedding
-# request at a time, so this is also how long a search waits when an
-# index run is going: a query queues behind the request in flight and
-# nothing else. Measured with nomic-embed-text over 64 definitions, the
-# whole run costs the same at every size while the wait tracks the
-# batch: 97 s at 64, 23 s at 16, 12 s at 8. The vectors are unchanged,
-# bit for bit, so a smaller batch buys the wait for nothing.
+# request at a time, so this is also how long a search waits when it
+# arrives during an index run: a query queues behind the request in
+# flight and nothing else, because the run reads the marker the query
+# leaves and holds its next request back. Measured with nomic-embed-text
+# over 64 definitions, the whole run costs the same at every size while
+# the wait tracks the batch: 97 s at 64, 23 s at 16, 12 s at 8. The
+# vectors are unchanged, bit for bit, so a smaller batch buys the wait
+# for nothing.
 DEFAULT_BATCH_SIZE = 8
 # A batch of large definitions can take minutes on a busy daemon.
 TIMEOUT_SECONDS = 600
@@ -88,11 +91,16 @@ class OllamaEmbedder(PrefixingEmbedder):
         host: str | None = None,
         batch_size: int = DEFAULT_BATCH_SIZE,
         context_tokens: int | None = None,
+        turn: Turn | None = None,
     ) -> None:
         super().__init__(model_name)
         chosen = host or os.environ.get("OLLAMA_HOST") or DEFAULT_HOST
         self.host = _normalize_host(chosen)
         self._batch_size = max(1, batch_size)
+        # The marker a query leaves, which holds a document request back.
+        # Every process of the user shares one, because they share the
+        # one slot of the daemon.
+        self.turn = turn if turn is not None else default_turn()
         # The window the daemon reads of each text, or None for its own
         # default. The daemon launches an embedding model with 2048 and
         # drops what lies past the window with no signal.
@@ -110,11 +118,21 @@ class OllamaEmbedder(PrefixingEmbedder):
         texts: Sequence[str],
         timeout: float = TIMEOUT_SECONDS,
         attempts: int = RETRY_ATTEMPTS,
+        *,
+        take_turns: bool = True,
     ) -> Sequence[Sequence[float]]:
-        """Encode texts into vectors, one batch of requests at a time."""
+        """Encode texts into vectors, one batch of requests at a time.
+
+        Before each request, wait while somebody embeds a query, so a
+        person typing in a picker gets the slot of the daemon first.
+        """
         items = list(texts)
         vectors: list[Sequence[float]] = []
         for start in range(0, len(items), self._batch_size):
+            if take_turns:
+                waited = self.turn.wait()
+                if waited:
+                    log.debug("Waited %.1f s for a search to go first.", waited)
             batch = items[start : start + self._batch_size]
             vectors.extend(self._sent(batch, timeout, attempts))
         return vectors
@@ -122,10 +140,14 @@ class OllamaEmbedder(PrefixingEmbedder):
     def _embed_interactive(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         """Encode a query, waiting only as long as a person will.
 
-        Send it once. Somebody is watching, and a second wait of a minute
-        is worse than a message that says what went wrong.
+        Leave the marker first, so an index run holds its next request
+        back. Then send once. Somebody is watching, and a second wait of
+        a minute is worse than a message that says what went wrong.
         """
-        return self._embed(texts, timeout=QUERY_TIMEOUT_SECONDS, attempts=1)
+        self.turn.mark()
+        return self._embed(
+            texts, timeout=QUERY_TIMEOUT_SECONDS, attempts=1, take_turns=False
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

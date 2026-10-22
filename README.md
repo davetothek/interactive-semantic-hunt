@@ -289,6 +289,15 @@ it leaves the refreshing to the server and reads what is stored:
   what the server is doing.
 - Nothing in the editor clients changes.
 
+A search goes first. Ollama serves one embedding request at a time, so a
+query that arrives while the server embeds waits for the request in flight,
+and for nothing else: the query leaves a marker under the runtime directory,
+and the server holds its next request back for 2 seconds after the last
+query. Measured with 64 chunks embedding in requests of 8 beside a picker
+typing 0.3 s apart, a keystroke after the first cost 605 ms and now costs
+23 ms, which is what it costs beside an idle daemon. The first keystroke
+still waits for one request, 0.6 s for chunks of about 250 tokens.
+
 Without a server everything works as before: `ish` brings the index up to
 date in front of the answer, behind a line that shows what it is doing, and
 `ish-mcp` refreshes on a thread of its own. A server that was killed leaves
