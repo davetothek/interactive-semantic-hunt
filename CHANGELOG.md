@@ -57,6 +57,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A search goes first while an index run embeds. Ollama serves one embedding
+  request at a time, and every keystroke in a picker waited for the request
+  `ish-serve` had in flight. A query now leaves a marker under
+  `$XDG_RUNTIME_DIR/ish/`, and an index run holds its next request back for
+  2 seconds after the last query. Measured with 64 chunks embedding in
+  requests of 8 beside a picker typing 0.3 s apart, a keystroke after the
+  first cost 605 ms and now costs 23 ms. The first keystroke still waits for
+  the request in flight, 0.6 s for chunks of about 250 tokens.
 - `index_status` counts the chunks by language again only when the index
   changed, or when `ish-serve` finished another refresh. Measured on a root
   over 8 indexes and 74,459 chunks, a call cost 981 ms and a repeated one

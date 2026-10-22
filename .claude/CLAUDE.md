@@ -52,6 +52,7 @@ one module that joins them.
 | Domain | `src/ish/domain/match.py` | `Match`, a chunk with its score |
 | Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the two registries |
 | Composition | `src/ish/settings.py` | Option set — one source of truth for CLI flags and TOML keys |
+| Composition | `src/ish/runtime.py` | The directory where the processes of one user share files while they run |
 | Port | `src/ish/application/ports/parser.py` | `Parser` Protocol and `ParseError` |
 | Port | `src/ish/application/ports/embedder.py` | `Embedder` Protocol |
 | Port | `src/ish/application/ports/vector_store.py` | `VectorReader` and `VectorStore` Protocols |
@@ -73,6 +74,7 @@ one module that joins them.
 | Adapter | `src/ish/adapters/parser/_plugins.py` | Parsers a user wrote |
 | Adapter | `src/ish/adapters/embedder/__init__.py` | `EMBEDDERS` — every backend, and the recipe for adding one |
 | Adapter | `src/ish/adapters/embedder/prefixes.py` | `PrefixingEmbedder`, task prefixes, query cache |
+| Adapter | `src/ish/adapters/embedder/turn.py` | The marker a query leaves, and the wait a document batch takes |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
@@ -275,6 +277,13 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   walked, 323 ms against 329 ms. `index_status` at the root built 74,459
   chunks to count them by language, 981 ms a call, and a repeated call
   costs 2 ms while the count and the last finish of the server stand.
+- Ollama serves one embedding request at a time. Beside an index run
+  embedding 64 chunks of about 250 tokens in requests of 8, a picker
+  keystroke 0.3 s after the last cost 605 ms, median of 5 trials, against
+  15 ms beside an idle daemon. With the marker a query leaves and the run
+  waits for between requests, 23 ms. The first keystroke still waits for
+  the request in flight, 601 ms, and the run of 64 chunks takes 11.0 s
+  against 7.2 s, the time the person typed plus the 2 s hold.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
 
