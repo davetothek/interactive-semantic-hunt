@@ -116,7 +116,8 @@ class TestEmbed:
     def test_sends_model_and_input(self, recorder: Recorder) -> None:
         OllamaEmbedder("mxbai-embed-large").embed_documents(["a", "bb"])
         assert recorder.requests == [
-            {"model": "mxbai-embed-large", "input": ["a", "bb"]}
+            {"model": "mxbai-embed-large", "input": ["a"]},
+            {"model": "mxbai-embed-large", "input": ["bb"]},
         ]
 
     def test_posts_to_the_embed_endpoint(self, recorder: Recorder) -> None:
@@ -153,17 +154,17 @@ class TestEmbed:
         OllamaEmbedder(batch_size=0).embed_documents(["a", "b"])
         assert [len(r["input"]) for r in recorder.requests] == [1, 1]
 
-    def test_the_default_batch_keeps_a_request_short(self, recorder: Recorder) -> None:
+    def test_the_default_sends_one_text_a_request(self, recorder: Recorder) -> None:
         """The daemon serves one request at a time.
 
-        A batch is therefore how long a search waits while an index run
-        is going, so the default splits rather than sending everything
-        as one request nothing can queue ahead of.
+        A request is therefore how long a search waits while an index run
+        is going, so the default sends one text at a time rather than a
+        batch nothing can queue ahead of.
         """
         OllamaEmbedder().embed_documents([f"text {n}" for n in range(64)])
 
-        assert len(recorder.requests) > 1
-        assert max(len(r["input"]) for r in recorder.requests) <= 8
+        assert len(recorder.requests) == 64
+        assert all(len(r["input"]) == 1 for r in recorder.requests)
 
 
 class TestWaiting:
@@ -386,7 +387,7 @@ class TestFailures:
 
     def test_wrong_vector_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A generation model returns no embeddings. Say so plainly."""
-        rec = Recorder(embeddings_for=[[0.1]])
+        rec = Recorder(embeddings_for=[])
         monkeypatch.setattr(urllib.request, "urlopen", rec)
 
         with pytest.raises(RuntimeError, match="is an embedding model"):

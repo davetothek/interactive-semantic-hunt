@@ -22,12 +22,14 @@ DEFAULT_MODEL = "nomic-embed-text"
 # request at a time, so this is also how long a search waits when it
 # arrives during an index run: a query queues behind the request in
 # flight and nothing else, because the run reads the marker the query
-# leaves and holds its next request back. Measured with nomic-embed-text
-# over 64 definitions, the whole run costs the same at every size while
-# the wait tracks the batch: 97 s at 64, 23 s at 16, 12 s at 8. The
-# vectors are unchanged, bit for bit, so a smaller batch buys the wait
-# for nothing.
-DEFAULT_BATCH_SIZE = 8
+# leaves and holds its next request back. One text a request bounds
+# that wait to one text. Each text is embedded on its own inside a
+# request, so the vectors are the same bit for bit at any size. The
+# run pays for it in throughput on small chunks: 64 chunks of about
+# 250 tokens embed in 9.1 s one at a time against 7.5 s in requests of
+# 8, and 16 chunks of about 1000 tokens in 9.3 s either way, median of
+# 5 on a CPU daemon.
+DEFAULT_BATCH_SIZE = 1
 # A batch of large definitions can take minutes on a busy daemon.
 TIMEOUT_SECONDS = 600
 # What somebody watching a picker will wait. A query still queues behind

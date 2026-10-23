@@ -283,7 +283,13 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   15 ms beside an idle daemon. With the marker a query leaves and the run
   waits for between requests, 23 ms. The first keystroke still waits for
   the request in flight, 601 ms, and the run of 64 chunks takes 11.0 s
-  against 7.2 s, the time the person typed plus the 2 s hold.
+  against 7.2 s, the time the person typed plus the 2 s hold. One text a
+  request takes the first keystroke to 115 ms beside chunks of about 250
+  tokens, and to 45 ms, worst 135 ms, beside chunks of about 1000 tokens,
+  because the daemon reads a long text in pieces. The run pays for it on small
+  chunks: 64 chunks of about 250 tokens embed in 9.1 s one at a time against
+  7.5 s in requests of 8, 16 chunks of about 1000 tokens in 9.3 s either
+  way, and alone or in a request of 8 the vectors differ by 0.0.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
 
