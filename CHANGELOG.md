@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.6.0 - 2026-10-23
+
 ### Added
 
 - Remove the stored index of a tree with `ish --forget PATH`. A worktree is
