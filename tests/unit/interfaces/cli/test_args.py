@@ -96,6 +96,18 @@ def test_version_flag(capsys):
     assert "ish" in capsys.readouterr().out
 
 
+def test_a_run_without_the_flag_reads_no_metadata(monkeypatch):
+    """Every run builds the parser. Only --version pays for the metadata."""
+    import importlib.metadata
+
+    def forbidden(name):
+        raise AssertionError("the package metadata was read")
+
+    monkeypatch.setattr(importlib.metadata, "version", forbidden)
+
+    assert CliArgs.from_args(["--color=never"]).settings.color == "never"
+
+
 def test_config_flag_names_the_file(tmp_path, monkeypatch):
     """The named file stands in for the file beside the tree."""
     monkeypatch.chdir(tmp_path)
