@@ -20,6 +20,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   repository cost 2.25 ms and now costs 0.09 ms. A query runs two git
   commands in place of three. Loading the filter cost 10.9 ms and now costs
   8.2 ms, in-process, median of 10.
+- A `type:` filter sorts a path into `test` with string operations. A
+  filtered search asks about every chunk it walks. Measured on 49,740
+  chunks, a `type:doc` search cost 1,034 ms and now costs 752 ms, warm,
+  median of 5. Every path is sorted as before, checked over 460,665 paths.
 
 ### Fixed
 

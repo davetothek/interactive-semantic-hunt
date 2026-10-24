@@ -24,16 +24,39 @@ DOC = "doc"
 TEST = "test"
 CONFIG = "config"
 
-# Where a test lives. Judge a chunk by its path rather than its language,
-# so a fixture counts as a test alongside the code that reads it.
-_TEST_PATH = re.compile(
-    r"(?:^|/)(?:tests?|specs?|__tests__|testdata|fixtures)(?:/|$)"
-    r"|(?:^|/)(?:test_[^/]+|[^/]+_test|[^/]+\.test)\.[^/]+$"
-    r"|(?:^|/)conftest\.py$"
+# The directories where tests live. A path with one of these as a whole
+# segment is a test path.
+_TEST_DIRS = frozenset(
+    {"test", "tests", "spec", "specs", "__tests__", "testdata", "fixtures"}
 )
 
 # The categories a chunk can fall into. Every chunk has exactly one.
 TYPES = (CODE, DOC, TEST, CONFIG)
+
+
+def _is_test_path(path: str) -> bool:
+    """Return True when the POSIX *path* is in a test directory or names a test.
+
+    Judge a chunk by its path rather than its language, so a fixture
+    counts as a test alongside the code that reads it. A file name is a
+    test when it is ``conftest.py``, or when an extension follows a stem
+    that starts with ``test_`` or ends with ``_test`` or ``.test``. Test
+    the segments with string operations. A filtered search asks about
+    every chunk, and a regular expression over the whole path costs
+    thirteen times as much.
+    """
+    parts = path.split("/")
+    if not _TEST_DIRS.isdisjoint(parts):
+        return True
+    name = parts[-1]
+    if name == "conftest.py":
+        return True
+    # The stem and the extension each hold at least one character, so a
+    # marker that touches either end of the name does not count.
+    body = name[1:-1]
+    if "_test." in body or ".test." in body:
+        return True
+    return name.startswith("test_") and "." in name[6:-1]
 
 
 def by_language(languages: Mapping[str, str]) -> Categorizer:
@@ -45,7 +68,7 @@ def by_language(languages: Mapping[str, str]) -> Categorizer:
     """
 
     def category_of(chunk: Chunk) -> str:
-        if _TEST_PATH.search(chunk.path.as_posix()):
+        if _is_test_path(chunk.path.as_posix()):
             return TEST
         return languages.get(chunk.language, CODE)
 
