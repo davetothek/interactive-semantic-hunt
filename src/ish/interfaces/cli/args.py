@@ -6,7 +6,7 @@ and ``ish.toml`` always accept the same option set.
 
 import argparse
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -116,10 +116,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-V",
         "--version",
-        action="version",
-        version=f"%(prog)s {_version()}",
+        action=_VersionAction,
+        help="show program's version number and exit",
     )
     return parser
+
+
+class _VersionAction(argparse.Action):
+    """Print the version and exit.
+
+    Read the package metadata only when the flag is given. Every run
+    builds the parser, and the metadata costs a tenth of a warm query.
+    """
+
+    def __init__(self, option_strings: Sequence[str], dest: str, **kwargs: Any) -> None:
+        super().__init__(
+            option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kwargs
+        )
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        print(f"{parser.prog} {_version()}")
+        parser.exit()
 
 
 def _version() -> str:
