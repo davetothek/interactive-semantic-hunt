@@ -89,6 +89,7 @@ class GitVisibleFiles:
         self._visible: set[Path] | None = None
         self._repo: Path | None = checkout
         self._inside: str | None = None
+        self._asked = False
 
     def ignores(self, path: Path) -> bool:
         """Return True when git would not show *path*."""
@@ -104,9 +105,16 @@ class GitVisibleFiles:
         return path not in visible
 
     def _load(self) -> set[Path] | None:
-        """Read the visible file set once."""
-        if self._visible is not None:
+        """Read the visible file set once.
+
+        Ask git one time. Outside a repository, or when git cannot run,
+        the answer is None, and the filter keeps that answer too. The
+        scan asks about every file, so an answer that is not kept costs
+        one process per file.
+        """
+        if self._asked:
             return self._visible
+        self._asked = True
 
         if self._repo is None:
             top = self._run(["rev-parse", "--show-toplevel"])

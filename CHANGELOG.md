@@ -21,6 +21,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   commands in place of three. Loading the filter cost 10.9 ms and now costs
   8.2 ms, in-process, median of 10.
 
+### Fixed
+
+- A tree outside a git repository asked git once for every file on every
+  query, because the filter did not keep the answer that there was no
+  repository. Measured on 20 copies of this repository outside git, a
+  query ran 2,742 git processes in 6,177 ms and now runs 3 in 353 ms,
+  cold, median of 5.
+
 ## 0.6.0 - 2026-10-23
 
 ### Added
