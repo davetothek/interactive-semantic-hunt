@@ -8,6 +8,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- An index run leaves the matrix file beside the index when it closes.
+  The first query after `ish --refresh`, after a refresh of `ish-serve`,
+  or after a background refresh in the TUI or the MCP server no longer
+  reads every vector. Measured on 49,740 chunks, that query cost
+  2,684 ms and now costs 325 ms, cold, median of 5. The index run takes
+  that work on: 8,072 ms becomes 9,347 ms.
+
 ## 0.6.1 - 2026-10-24
 
 ### Added

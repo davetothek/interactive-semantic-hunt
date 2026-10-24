@@ -281,6 +281,8 @@ class SqliteVectorStore:
         # file beside it was last read or written under.
         self._last_write = 0.0
         self._saved: tuple[int, int] | None = None
+        # A second close finds the connection gone, so it does nothing.
+        self._closed = False
         self._matrix_path = db_path.with_name(db_path.name + MATRIX_SUFFIX)
         self._db = sqlite3.connect(
             db_path, timeout=BUSY_SECONDS, check_same_thread=False
@@ -508,6 +510,9 @@ class SqliteVectorStore:
         the blobs again.
         """
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             self._save_matrix_if_current()
             self._matrix_cache = None
             self._db.close()
@@ -830,14 +835,7 @@ class SqliteVectorStore:
                 self._matrix_cache = (token, *mapped)
                 return mapped
 
-            rows = self._db.execute(
-                "SELECT c.id, v.dim, v.data "
-                "FROM main.chunks c "
-                f"JOIN {self._vectors} v ON v.content_hash = c.content_hash "  # noqa: S608
-                "WHERE v.model_id = ?",
-                (self._model_id,),
-            ).fetchall()
-
+            rows = self._vector_rows()
             if not rows:
                 self._matrix_cache = (token, [], numpy.empty((0, width), "float32"))
                 return self._matrix_cache[1], self._matrix_cache[2]
@@ -849,15 +847,32 @@ class SqliteVectorStore:
                     f"has {width}. Re-index with the current model."
                 )
 
-            matrix = numpy.frombuffer(
-                b"".join(row[2] for row in rows), dtype=numpy.float32
-            ).reshape(len(rows), width)
-            identifiers = [int(row[0]) for row in rows]
+            identifiers, matrix = self._joined(rows, width)
             settled = time.monotonic() - self._last_write > SETTLE_SECONDS
             if self._writes == 0 or settled:
                 self._save_matrix(stamp, identifiers, matrix)
             self._matrix_cache = (token, identifiers, matrix)
             return identifiers, matrix
+
+    def _vector_rows(self) -> list[tuple[int, int, bytes]]:
+        """Read the id, the width, and the vector of every chunk."""
+        return self._db.execute(
+            "SELECT c.id, v.dim, v.data "
+            "FROM main.chunks c "
+            f"JOIN {self._vectors} v ON v.content_hash = c.content_hash "  # noqa: S608
+            "WHERE v.model_id = ?",
+            (self._model_id,),
+        ).fetchall()
+
+    @staticmethod
+    def _joined(rows: Sequence[tuple[int, int, bytes]], width: int):
+        """Return the ids of *rows* and their vectors as one matrix."""
+        import numpy
+
+        matrix = numpy.frombuffer(
+            b"".join(row[2] for row in rows), dtype=numpy.float32
+        ).reshape(len(rows), width)
+        return [int(row[0]) for row in rows], matrix
 
     def _data_version(self) -> int:
         """Return SQLite's counter of commits made by other connections."""
@@ -957,12 +972,12 @@ class SqliteVectorStore:
         try:
             with partial.open("wb") as handle:
                 handle.write(header.ljust(MATRIX_HEADER_BYTES))
+                # Write the memory of each array. A copy of the matrix as
+                # bytes costs as much again as the write itself.
                 handle.write(
-                    numpy.ascontiguousarray(identifiers, dtype=numpy.int64).tobytes()
+                    numpy.ascontiguousarray(identifiers, dtype=numpy.int64).data
                 )
-                handle.write(
-                    numpy.ascontiguousarray(matrix, dtype=numpy.float32).tobytes()
-                )
+                handle.write(numpy.ascontiguousarray(matrix, dtype=numpy.float32).data)
             os.replace(partial, path)
         except OSError as exc:
             log.debug("Cannot write the matrix beside %s: %s", path, exc)
@@ -972,19 +987,32 @@ class SqliteVectorStore:
         self._saved = stamp
 
     def _save_matrix_if_current(self) -> None:
-        """Write the matrix file when this store wrote and holds a current matrix.
+        """Leave the matrix file current when this store wrote.
 
         A store that wrote within the settle time kept the file back on
-        each miss. Closing is when nothing waits on it.
+        each miss, and an index run never scores a matrix at all.
+        Closing is when nothing waits on it. Read the vectors again when
+        the kept matrix is stale or absent, so the first query of the
+        next process maps the file and does not read the blobs.
         """
-        cache = self._matrix_cache
-        if cache is None or not self._writes:
-            return
-        if cache[0] != (self._writes, self._data_version()):
+        if not self._writes:
             return
         stamp = self._stamp()
-        if stamp != self._saved:
+        if stamp == self._saved:
+            return
+        cache = self._matrix_cache
+        if cache is not None and cache[0] == (self._writes, self._data_version()):
             self._save_matrix(stamp, cache[1], cache[2])
+            return
+        rows = self._vector_rows()
+        if not rows:
+            return
+        width = rows[0][1]
+        # A query names the width it reads, and refuses another. Here
+        # nothing names one, so vectors of two widths leave no file.
+        if any(dim != width for _i, dim, _d in rows):
+            return
+        self._save_matrix(stamp, *self._joined(rows, width))
 
     def _details(
         self, identifiers: Sequence[int], scores: Any, best: Any
