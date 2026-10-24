@@ -126,7 +126,7 @@ class TestWriting:
         store.close()
         assert not matrix_path.exists()
 
-    def test_a_stale_matrix_is_not_written_on_close(
+    def test_a_stale_matrix_is_read_again_before_close_writes_it(
         self, db_path: Path, matrix_path: Path
     ) -> None:
         """Another process committed, so what this store holds is old."""
@@ -136,7 +136,13 @@ class TestWriting:
         other.set_file(Path("b.py"), STAMP, [(make_chunk("h", line=9), "h1")])
         first.close()
         other.close()
-        assert not matrix_path.exists()
+
+        reader = SqliteVectorStore(db_path, model_id="model-a")
+        try:
+            identifiers, _matrix = reader._map_matrix(2, reader._stamp())
+            assert len(identifiers) == 3
+        finally:
+            reader.close()
 
     def test_a_file_that_cannot_be_written_is_skipped(
         self, db_path: Path, matrix_path: Path, monkeypatch
@@ -164,6 +170,69 @@ class TestWriting:
         store.search(TOWARD_F, limit=1)
         store.close()
         store.close()
+
+
+class TestAnIndexRunLeavesTheMatrixFile:
+    """An index run writes and never scores, and still leaves the file.
+
+    Without it, the first query after an index run read every vector
+    and wrote the file on the keystroke path: 7,505 ms on 49,740
+    chunks, against 6,063 ms with the file in place.
+    """
+
+    def test_a_store_that_only_wrote_writes_the_file_on_close(
+        self, db_path: Path, matrix_path: Path
+    ) -> None:
+        filled(db_path).close()
+        reader = SqliteVectorStore(db_path, model_id="model-a")
+        try:
+            mapped = reader._map_matrix(2, reader._stamp())
+            assert mapped is not None
+            assert best(reader, TOWARD_G) == "g"
+        finally:
+            reader.close()
+
+    def test_the_file_matches_the_one_a_query_writes(
+        self, tmp_path: Path, db_path: Path, matrix_path: Path
+    ) -> None:
+        filled(db_path).close()
+        written_at_close = matrix_path.read_bytes()
+
+        matrix_path.unlink()
+        reader = SqliteVectorStore(db_path, model_id="model-a")
+        reader.search(TOWARD_F, limit=1)
+        reader.close()
+        assert matrix_path.read_bytes() == written_at_close
+
+    def test_a_store_that_did_not_write_leaves_nothing(
+        self, db_path: Path, matrix_path: Path
+    ) -> None:
+        filled(db_path).close()
+        matrix_path.unlink()
+        SqliteVectorStore(db_path, model_id="model-a").close()
+        assert not matrix_path.exists()
+
+    def test_vectors_of_two_widths_leave_no_file(
+        self, db_path: Path, matrix_path: Path
+    ) -> None:
+        """A query names the width it needs. A close has none to name."""
+        store = SqliteVectorStore(db_path, model_id="model-a")
+        store.add_vectors({"h1": TOWARD_F, "h2": [1.0, 0.0, 0.0]})
+        store.set_file(
+            Path("a.py"),
+            STAMP,
+            [(make_chunk("f"), "h1"), (make_chunk("g", line=5), "h2")],
+        )
+        store.close()
+        assert not matrix_path.exists()
+
+    def test_a_store_whose_vectors_are_all_gone_leaves_no_file(
+        self, db_path: Path, matrix_path: Path
+    ) -> None:
+        store = SqliteVectorStore(db_path, model_id="model-a")
+        store.set_file(Path("a.py"), STAMP, [])
+        store.close()
+        assert not matrix_path.exists()
 
 
 class TestReading:
