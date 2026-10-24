@@ -8,6 +8,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Support Python 3.15. The suite runs on 3.12, 3.13, 3.14, and 3.15.
+
 ### Changed
 
 - Only `ish --version` reads the package metadata. Every run built the
