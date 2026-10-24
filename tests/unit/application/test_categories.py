@@ -55,6 +55,18 @@ class TestCategories:
             ("/p/src/a_test.py", "python", "test"),
             ("/p/conftest.py", "python", "test"),
             ("/p/spec/a.py", "python", "test"),
+            ("/p/fixtures", "python", "test"),
+            ("/p/src/a.test.ts", "python", "test"),
+            ("/p/src/test_a.b.py", "python", "test"),
+            # A marker needs a stem before it and an extension after it.
+            ("/p/src/test_.py", "python", "code"),
+            ("/p/src/_test.py", "python", "code"),
+            ("/p/src/.test.py", "python", "code"),
+            ("/p/src/a_test.", "python", "code"),
+            ("/p/src/test_a", "python", "code"),
+            ("/p/src/testing/a.py", "python", "code"),
+            ("/p/src/latest.py", "python", "code"),
+            ("/p/src/conftest.pyc", "python", "code"),
         ],
     )
     def test_category(self, path: str, language: str, expected: str) -> None:

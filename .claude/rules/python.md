@@ -5,7 +5,7 @@ paths:
 
 # Python
 
-- Python 3.12 is the floor. The suite runs on 3.12, 3.13, and 3.14.
+- Python 3.12 is the floor. The suite runs on 3.12, 3.13, 3.14, and 3.15.
 - Import `Sequence`, `Mapping`, `Iterable`, and `Callable` from
   `collections.abc`, never from `typing`.
 - Use `typing` only for `Protocol`, `runtime_checkable`, `TypeAlias`,
