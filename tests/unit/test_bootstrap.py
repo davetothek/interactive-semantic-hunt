@@ -524,6 +524,27 @@ class TestGitAwareness:
         settings = replace(Settings(), git=False)
         assert bootstrap.build_ignored_by(settings, tmp_path) is None
 
+    def test_the_scan_hands_the_checkout_to_the_filter(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Git is asked for the checkout once, and the filter reuses the answer."""
+        import ish.adapters.vcs.git as git
+
+        given: list[Path | None] = []
+
+        class Recording:
+            def __init__(self, root: Path, checkout: Path | None = None) -> None:
+                given.append(checkout)
+
+            def ignores(self, path: Path) -> bool:
+                return False
+
+        monkeypatch.setattr(git, "GitVisibleFiles", Recording)
+        bootstrap.build_scan(
+            Settings(), tmp_path, identity=(tmp_path / ".git", tmp_path)
+        )
+        assert given == [tmp_path]
+
 
 class TestIndexDiscovery:
     """Verify that a search finds the indexes below the path it is given."""

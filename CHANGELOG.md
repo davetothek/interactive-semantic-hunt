@@ -14,6 +14,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   argument parser with the version string in it, and the import and the
   lookup cost 20 ms of a run, a tenth of a warm query. Measured on this repository,
   `ish --help` cost 120 ms and now costs 100 ms, cold, median of 10.
+- The git filter reads whether a file sits in the repository from the text
+  of the two paths. It takes the top of the checkout from the composition
+  root, which asked git for it already. Asking about the 184 files of this
+  repository cost 2.25 ms and now costs 0.09 ms. A query runs two git
+  commands in place of three. Loading the filter cost 10.9 ms and now costs
+  8.2 ms, in-process, median of 10.
 
 ## 0.6.0 - 2026-10-23
 

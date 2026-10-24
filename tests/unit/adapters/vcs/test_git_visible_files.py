@@ -78,6 +78,23 @@ class TestInsideARepository:
             visible.ignores(repo / "app.py")
         assert calls == []
 
+    def test_a_known_checkout_is_not_asked_for_again(
+        self, repo: Path, monkeypatch
+    ) -> None:
+        """The caller that knows the checkout spares the filter one command."""
+        calls: list[list[str]] = []
+        real = subprocess.run
+
+        def counted(command, **kwargs):
+            calls.append(command)
+            return real(command, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", counted)
+        visible = GitVisibleFiles(repo, checkout=repo)
+        assert visible.ignores(repo / "build" / "gen.py") is True
+        assert visible.ignores(repo / "app.py") is False
+        assert [command[3] for command in calls] == ["ls-files"]
+
 
 class TestOutsideARepository:
     """Verify that the filter is inert where git cannot help."""
@@ -88,6 +105,13 @@ class TestOutsideARepository:
     def test_path_outside_the_repository(self, repo: Path, tmp_path_factory) -> None:
         elsewhere = tmp_path_factory.mktemp("elsewhere") / "x.py"
         assert GitVisibleFiles(repo).ignores(elsewhere) is False
+
+    def test_a_sibling_whose_name_begins_alike_is_outside(self, repo: Path) -> None:
+        """`repo2/x.py` is not under `repo/`, however the names begin."""
+        sibling = repo.with_name(repo.name + "2")
+        sibling.mkdir()
+        (sibling / "x.py").write_text("pass\n")
+        assert GitVisibleFiles(repo).ignores(sibling / "x.py") is False
 
     def test_missing_git_is_not_fatal(self, repo: Path, monkeypatch) -> None:
         def unavailable(*args, **kwargs):
