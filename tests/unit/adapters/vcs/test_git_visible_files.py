@@ -137,6 +137,28 @@ class TestOutsideARepository:
         assert GitVisibleFiles(repo).ignores(repo / "app.py") is False
 
 
+class TestATreeOutsideGitAsksOnce:
+    """Outside a repository, git answers nothing, and the filter keeps that.
+
+    A scan of a 20-copy tree outside git ran one `git rev-parse` per
+    file: 2,742 processes and 5.6 s for a query that costs 0.4 s.
+    """
+
+    def test_git_is_asked_once_for_many_files(self, tmp_path: Path, monkeypatch):
+        calls: list[list[str]] = []
+        real = subprocess.run
+
+        def counted(command, **kwargs):
+            calls.append(command)
+            return real(command, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", counted)
+        visible = GitVisibleFiles(tmp_path)
+        for index in range(20):
+            assert visible.ignores(tmp_path / f"f{index}.py") is False
+        assert len(calls) == 1
+
+
 def test_a_second_call_reuses_the_cached_answer(repo: Path) -> None:
     """The loader returns the same set rather than re-reading."""
     visible = GitVisibleFiles(repo)
