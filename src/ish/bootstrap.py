@@ -467,14 +467,19 @@ def repository_identity(root: Path) -> tuple[Path | None, Path | None]:
     return found.common_dir, found.checkout
 
 
-def build_ignored_by(settings: Settings, root: Path):
-    """Return the predicate that skips files a repository ignores."""
+def build_ignored_by(settings: Settings, root: Path, checkout: Path | None = None):
+    """Return the predicate that skips files a repository ignores.
+
+    *checkout* is the top of the checkout *root* sits in, when the
+    caller has already asked git for it. The filter then asks git only
+    for the files it shows.
+    """
     if not settings.git:
         return None
 
     from ish.adapters.vcs.git import GitVisibleFiles
 
-    return GitVisibleFiles(root).ignores
+    return GitVisibleFiles(root, checkout=checkout).ignores
 
 
 def build_scan(
@@ -496,7 +501,7 @@ def build_scan(
         ignored_dirs=settings.ignore,
         include=settings.include,
         exclude=settings.exclude,
-        ignored_by=build_ignored_by(settings, root),
+        ignored_by=build_ignored_by(settings, root, checkout),
         unignore=settings.unignore,
         root=root,
         anchor=checkout,

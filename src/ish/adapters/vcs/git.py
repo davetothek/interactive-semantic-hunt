@@ -11,6 +11,7 @@ one project share the work of embedding.
 """
 
 import logging
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,10 +79,16 @@ class GitVisibleFiles:
     stays cheap enough for the scan to ask about every candidate.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, checkout: Path | None = None) -> None:
+        """Filter the files under *root*.
+
+        *checkout* is the top of the working tree, when the caller has
+        already asked git for it. Without it, the filter asks.
+        """
         self._root = root
         self._visible: set[Path] | None = None
-        self._repo: Path | None = None
+        self._repo: Path | None = checkout
+        self._inside: str | None = None
 
     def ignores(self, path: Path) -> bool:
         """Return True when git would not show *path*."""
@@ -89,7 +96,9 @@ class GitVisibleFiles:
         if visible is None:
             # Not a repository, or git is unavailable. Ignore nothing.
             return False
-        if self._repo is not None and self._repo not in path.parents:
+        if self._inside is not None and not os.path.normcase(str(path)).startswith(
+            self._inside
+        ):
             # Outside the repository, so git has no opinion.
             return False
         return path not in visible
@@ -99,10 +108,16 @@ class GitVisibleFiles:
         if self._visible is not None:
             return self._visible
 
-        top = self._run(["rev-parse", "--show-toplevel"])
-        if top is None:
-            return None
-        self._repo = Path(top.strip()).resolve()
+        if self._repo is None:
+            top = self._run(["rev-parse", "--show-toplevel"])
+            if top is None:
+                return None
+            self._repo = Path(top.strip()).resolve()
+        # A path sits inside the repository when its text begins with
+        # the repository's text and a separator. The scan asks about
+        # every file, and the text answers without building a path per
+        # level above the file.
+        self._inside = os.path.normcase(str(self._repo)) + os.sep
 
         # Tracked files plus untracked files that no ignore rule covers.
         # --full-name reports every path from the repository root, so a
