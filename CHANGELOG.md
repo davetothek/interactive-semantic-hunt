@@ -17,6 +17,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   2,684 ms and now costs 325 ms, cold, median of 5. The index run takes
   that work on: 8,072 ms becomes 9,347 ms.
 
+### Documentation
+
+- The README says how to install and use ish, and links to the rest. Every
+  option, the clients, configuration, the index, and extending ish each
+  have a page under `docs/`.
+
 ## 0.6.1 - 2026-10-24
 
 ### Added
