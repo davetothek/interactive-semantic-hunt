@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.6.2 - 2026-10-29
+
 ### Changed
 
 - An index run leaves the matrix file beside the index when it closes.
