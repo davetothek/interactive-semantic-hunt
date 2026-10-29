@@ -1,0 +1,51 @@
+name: docs
+
+# Build the site on every change to what it shows, so a broken link fails
+# the pull request that made it. Publish it from main only.
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "README.md", "mkdocs.yml", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["docs/**", "README.md", "mkdocs.yml", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+concurrency:
+  # One deploy at a time. A newer push makes the older build pointless.
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NO_MKDOCS_2_WARNING: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Only the docs group. The site needs nothing of the package itself.
+      - run: uv sync --only-group docs
+      - run: uv run --no-sync mkdocs build --strict
+
+      - uses: actions/upload-pages-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          path: site/
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    # Only this job may write to Pages, and only with the token it is given here.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

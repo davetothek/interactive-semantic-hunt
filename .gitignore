@@ -19,3 +19,6 @@ htmlcov/
 
 # ish
 .ish_cache/
+
+# Docs
+site/

@@ -88,15 +88,15 @@ Press Tab to finish a filter word: `ty` becomes `type:`, `lang:cp` becomes
 
 | from | how | read |
 |---|---|---|
-| Neovim | `contrib/nvim/ish.lua`, an fzf-lua picker | [clients](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/clients.md#use-from-neovim) |
-| VS Code | `contrib/vscode/`, a QuickPick on `Ctrl+Alt+I` | [clients](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/clients.md#use-from-vs-code) |
-| Python | `from ish.interfaces.python.api import Ish` | [clients](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/clients.md#use-from-python) |
-| an agent | `ish-mcp`, a Model Context Protocol server | [clients](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/clients.md#use-from-an-agent) |
+| Neovim | `contrib/nvim/ish.lua`, an fzf-lua picker | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-neovim) |
+| VS Code | `contrib/vscode/`, a QuickPick on `Ctrl+Alt+I` | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-vs-code) |
+| Python | `from ish.interfaces.python.api import Ish` | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-python) |
+| an agent | `ish-mcp`, a Model Context Protocol server | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-an-agent) |
 
 To keep the index of a large tree current in the background, run
 `ish-serve /path/to/tree`. Every client then reads the index and refreshes
 nothing itself. See
-[indexing](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/indexing.md#keep-the-index-current).
+[indexing](https://davetothek.github.io/interactive-semantic-hunt/indexing/#keep-the-index-current).
 
 ## Configure
 
@@ -116,16 +116,16 @@ meaning, and embedding costs about one chunk per second.
 
 ## Documentation
 
-- [Use](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/usage.md):
+- [Use](https://davetothek.github.io/interactive-semantic-hunt/usage/):
   every filter, every option, and the picker themes.
-- [Clients](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/clients.md):
+- [Clients](https://davetothek.github.io/interactive-semantic-hunt/clients/):
   Neovim, VS Code, Python, and MCP.
-- [Configure](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/configuration.md):
+- [Configure](https://davetothek.github.io/interactive-semantic-hunt/configuration/):
   config files and their order, keeping generated code out, the model's
   context window.
-- [Index](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/indexing.md):
+- [Index](https://davetothek.github.io/interactive-semantic-hunt/indexing/):
   where the index lives, federation, worktrees, and `ish-serve`.
-- [Extend](https://github.com/davetothek/interactive-semantic-hunt/blob/main/docs/extending.md):
+- [Extend](https://davetothek.github.io/interactive-semantic-hunt/extending/):
   add a language or an embedding backend.
 
 ## Develop
@@ -133,6 +133,7 @@ meaning, and embedding costs about one chunk per second.
 ```sh
 uv sync
 uv run poe check   # lint, typecheck, test
+uv run --group docs mkdocs serve   # preview the documentation site
 ```
 
 The architecture is ports and adapters. `.claude/CLAUDE.md` describes the
