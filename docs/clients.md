@@ -39,7 +39,7 @@ from a QuickPick. Press `Ctrl+Alt+I` and type. The highlighted chunk shows
 in the editor beside the picker, Enter opens it with its lines selected, and
 Tab finishes a filter word. While the index refreshes, the status bar shows
 `ish ███░░░░░ 38%`. It needs `ish-mcp` on PATH, like the Neovim client, and
-[its README](../contrib/vscode/README.md) says how to build, install, and
+[its README](https://github.com/davetothek/interactive-semantic-hunt/blob/main/contrib/vscode/README.md) says how to build, install, and
 release it. It ships on its own
 schedule, apart from the PyPI package.
 

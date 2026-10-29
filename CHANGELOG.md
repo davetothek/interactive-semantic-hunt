@@ -21,7 +21,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 - The README says how to install and use ish, and links to the rest. Every
   option, the clients, configuration, the index, and extending ish each
-  have a page under `docs/`.
+  have a page under `docs/`, published at
+  <https://davetothek.github.io/interactive-semantic-hunt/>.
 
 ## 0.6.1 - 2026-10-24
 
