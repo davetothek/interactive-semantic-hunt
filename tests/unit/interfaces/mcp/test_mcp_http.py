@@ -119,7 +119,22 @@ class TestFraming:
         assert caught.value.headers["Allow"] == "POST"
 
     def test_a_body_too_large_is_413(self, running: Running) -> None:
-        assert running.post(b"x" * (MAX_BODY_BYTES + 1))[0] == 413
+        """Refuse on the declared length, before reading a byte of the body.
+
+        Send the headers alone. A client still writing a large body when
+        the refusal arrives can hit a broken pipe, which made a test that
+        sent the whole body fail under load.
+        """
+        import http.client
+
+        host, port = running.transport.address  # set once the server is ready
+        connection = http.client.HTTPConnection(host, port, timeout=10)
+        connection.putrequest("POST", "/mcp")
+        connection.putheader("Authorization", f"Bearer {TOKEN}")
+        connection.putheader("Content-Length", str(MAX_BODY_BYTES + 1))
+        connection.endheaders()
+        assert connection.getresponse().status == 413
+        connection.close()
         assert running.calls == []
 
     def test_a_malformed_message_is_a_json_rpc_error(self, running: Running) -> None:
