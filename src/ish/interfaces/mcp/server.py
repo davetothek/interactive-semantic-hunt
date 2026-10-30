@@ -20,8 +20,15 @@ from typing import Any
 from ish import bootstrap
 from ish.application.categories import TYPES
 from ish.application.progress import Progress
+from ish.domain.chunk import Chunk
 from ish.interfaces import heartbeat
-from ish.interfaces.format import render
+from ish.interfaces.format import (
+    NOT_COVERED_TEXT,
+    display_path,
+    number_citations,
+    render,
+    symbol_of,
+)
 from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
 from ish.interfaces.python.api import Ish
@@ -282,6 +289,49 @@ class IshTools:
             render(chunk, shape, score, base=root) for chunk, score in results
         )
 
+    def ask(self, arguments: Mapping[str, Any]) -> str:
+        """Answer a question from the chunks a search finds, as JSON.
+
+        Return the answer with numbered citations, and for each citation
+        the path from the directory asked about, the location as data,
+        and a link. A question the documents do not cover returns the
+        closest sources instead of an answer.
+        """
+        question = str(arguments.get("question") or "").strip()
+        if not question:
+            raise ValueError("The 'question' argument is required.")
+        root = self._resolve(arguments.get("path"))
+        session = self._session_for(root)
+        self._keep_current(root, session)
+        answer = session.ask(question, **self._narrowing(arguments))
+
+        def described(chunk: Chunk, number: int | None = None) -> dict[str, Any]:
+            entry: dict[str, Any] = {} if number is None else {"n": number}
+            entry |= {
+                "path": str(display_path(chunk.path, root)),
+                "location": chunk.location.to_dict(),
+                "kind": chunk.kind,
+                "symbol": symbol_of(chunk),
+                "url": session.link(chunk),
+            }
+            return entry
+
+        reply: dict[str, Any] = {
+            "covered": answer.covered,
+            "model": answer.model,
+            "input_tokens": answer.input_tokens,
+            "output_tokens": answer.output_tokens,
+            "dropped": answer.dropped,
+        }
+        if answer.covered:
+            text, cited = number_citations(answer)
+            reply["answer"] = text
+            reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
+        else:
+            reply["answer"] = NOT_COVERED_TEXT
+            reply["sources"] = [described(c) for c in answer.sources]
+        return json.dumps(reply, ensure_ascii=False)
+
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
         root = self._resolve(arguments.get("path"))
@@ -383,6 +433,33 @@ class IshTools:
                     "required": ["query"],
                 },
                 handler=self.search,
+            ),
+            Tool(
+                name="ask",
+                description=(
+                    "Answer a question from the documents and code under a "
+                    "path, with a citation for each claim. Returns JSON: the "
+                    "answer with [n] markers, and per citation the path, the "
+                    "location, and a link that opens the source. When the "
+                    "documents do not answer the question, 'covered' is "
+                    "false and 'sources' lists the closest chunks. Use it "
+                    "for questions such as 'how is the watchdog configured'."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question, in plain language.",
+                        },
+                        "path": _PATH_PROPERTY,
+                        "lang": _QUERY_PROPERTIES["lang"],
+                        "under": _QUERY_PROPERTIES["under"],
+                        "type": _QUERY_PROPERTIES["type"],
+                    },
+                    "required": ["question"],
+                },
+                handler=self.ask,
             ),
             Tool(
                 name="list_chunks",

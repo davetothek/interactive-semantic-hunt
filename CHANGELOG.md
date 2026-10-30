@@ -18,6 +18,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `language_model`, `answer_model`, and `allowed_language_models`. The
   `anthropic` backend reads its key from `ANTHROPIC_API_KEY`. A search
   never builds a language model.
+- The MCP server offers an `ask` tool. It returns JSON: the answer with
+  `[n]` markers, and per citation the path, the location as data, and a
+  link that opens the source. When the documents do not answer the
+  question, `covered` is false and `sources` lists the closest chunks.
+- `link_base` publishes the links of an answer under a base URL, such as
+  `https://docs.example.com/spec/a.adoc#L120-164`. Empty links to the
+  file on disk.
 
 ## 0.6.2 - 2026-10-29
 
