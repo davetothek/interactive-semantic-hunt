@@ -6,11 +6,13 @@ asks on their own machine. A shared server answers for many people, and
 one login would carry them all, so a server uses the anthropic backend.
 
 The model must read the sources and nothing else. The command turns off
-every tool, every MCP server, and every settings file, and runs in an
-empty directory, so no hook, project file, or memory reaches the model.
+every tool, every MCP server, every settings file, and every memory
+file, and runs in an empty directory, so no hook, project file, or
+memory reaches the model.
 """
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +28,17 @@ from ish.application.ports.language_model import (
 
 EXECUTABLE = "claude"
 TIMEOUT_SECONDS = 600
+
+# Ask the CLI to load no memory: no CLAUDE.md of any scope, and no auto
+# memory. Do not rely on these alone. Version 2.1.296 still loaded the
+# auto memory of its working directory with both set, so the empty
+# directory each call runs in is what keeps that memory out. A managed
+# policy of an organization is loaded whatever is set, and only --bare
+# skips it, which also skips the login.
+NO_MEMORY = {
+    "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+}
 
 
 def command(
@@ -119,6 +132,7 @@ class ClaudeCliLanguageModel:
                     capture_output=True,
                     text=True,
                     cwd=empty,
+                    env={**os.environ, **NO_MEMORY},
                     timeout=self._timeout,
                     check=False,
                 )

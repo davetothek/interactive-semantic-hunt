@@ -255,6 +255,12 @@ something broke. This is that record, so a rule is never argued from taste.
   three. 13,984 rerank and 7,639 answer input tokens, 11.6 s, median.
   At 30 candidates it fell to 19, because one source ranked 32nd. Hence
   `rerank_model` and 50 `rerank_candidates`.
+- `claude -p` run inside a tree loaded the auto memory of that tree with
+  `--setting-sources ""`, and on 2.1.296 also with
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`:
+  5,534 input tokens either way. Run in an empty directory, it loaded none,
+  2,300 tokens. A managed policy of an organization still loads. Hence an
+  empty directory for every call, and the Anthropic API for a server.
 - `claude --bare` skips the login as well as the hooks. The claude-cli
   backend turns off settings, tools, and MCP servers one by one instead,
   and runs in an empty directory.

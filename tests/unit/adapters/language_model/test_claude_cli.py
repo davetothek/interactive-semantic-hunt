@@ -93,6 +93,9 @@ class TestCommand:
         assert call["input"] == _grounded.prompt("How?", SOURCES)
         assert call["timeout"] == 5
         assert call["cwd_existed"]
+        assert call["env"]["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] == "1"
+        assert call["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+        assert call["env"]["PATH"]
         assert not Path(call["cwd"]).exists()
         assert reply.covered
         assert reply.passages[0].source_ids == ("1",)
