@@ -549,24 +549,20 @@ class TestIncludeIsAnchoredAtTheRoot:
         self, tree: Path
     ) -> None:
         """`(?:^|/)` still matches, through the `^` branch, and only there."""
-        assert self._found(tree, r"(?:^|/)core(?:/|$)") == [
-            "core/main.py"
-        ]
+        assert self._found(tree, r"(?:^|/)core(?:/|$)") == ["core/main.py"]
 
     def test_any_depth_is_asked_for_explicitly(self, tree: Path) -> None:
         found = self._found(tree, r"(?:.*/)?core/")
         assert found == [
             ".claude/worktrees/wt-1/core/main.py",
-            "core/main.py",
             "artifacts/core/main.py",
+            "core/main.py",
         ]
 
     def test_pruning_asks_the_same_question(self, tree: Path) -> None:
         scanner = Scan(parsers=[FakeParser()], include=[r"core/"], root=tree)
         assert scanner.accepts(tree / "core" / "main.py") is True
-        assert (
-            scanner.accepts(tree / "artifacts" / "core" / "main.py") is False
-        )
+        assert scanner.accepts(tree / "artifacts" / "core" / "main.py") is False
 
     def test_a_path_outside_the_root_is_matched_whole(self, tree: Path) -> None:
         scanner = Scan(parsers=[FakeParser()], include=[r".*/other/"], root=tree)
@@ -666,7 +662,7 @@ class TestUnignoreKeepsOneIgnoredTree:
 
     def test_the_named_tree_joins_and_the_rest_stay_out(self, tree: Path) -> None:
         found = self._found(tree, unignore=[r"vendor_spec/"])
-        assert found == ["vendor_spec/mod.py", "app.py"]
+        assert found == ["app.py", "vendor_spec/mod.py"]
 
     def test_the_pattern_is_anchored_at_the_root(self, tree: Path) -> None:
         nested = tree / "build" / "vendor_spec"

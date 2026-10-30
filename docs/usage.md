@@ -70,7 +70,7 @@ A repository that names its trees its own way can say so, in
 
 ```toml
 type_patterns = [
-  "test:/[0-9.]*(Tests|Verification)/",
+  "test:/[0-9_]*(Tests|Verification)/",
   "doc:/[0-9.]*Specification/",
 ]
 ```
