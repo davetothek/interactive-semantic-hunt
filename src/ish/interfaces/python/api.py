@@ -29,6 +29,7 @@ from ish import bootstrap
 from ish.application.answer import Answer, AnswerQuestion
 from ish.application.filters import Filters, parse_query
 from ish.application.ports.language_model import LanguageModel
+from ish.application.ports.link import LinkResolver
 from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
@@ -79,6 +80,7 @@ class Ish:
         self._vocabulary: bootstrap.Vocabulary | None = None
         self._identity: bootstrap.Identity | None = None
         self._model: LanguageModel | None = None
+        self._links: LinkResolver | None = None
 
     # ------------------------------------------------------------------
     # Lifetime
@@ -285,6 +287,16 @@ class Ish:
             model=self._model,
         )
         return use_case.answer(question)
+
+    def link(self, chunk: Chunk) -> str:
+        """Return a URL that opens *chunk* at its location.
+
+        Link to ``link_base`` when it is set, with the path taken from
+        this tree, and to the file on disk when it is not.
+        """
+        if self._links is None:
+            self._links = bootstrap.build_link_resolver(self.settings, self.path)
+        return self._links.link(chunk)
 
     def chunks(
         self,

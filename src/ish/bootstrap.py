@@ -19,6 +19,8 @@ from typing import Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.language_model import LANGUAGE_MODELS
+from ish.adapters.link.base_url import BaseUrl
+from ish.adapters.link.file_uri import FileUri
 from ish.adapters.parser import (
     CHUNKING_VERSION,
     Language,
@@ -34,6 +36,7 @@ from ish.application.index import Index
 from ish.application.languages import LanguageResolver, resolve_with
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.language_model import LanguageModel, LanguageModelError
+from ish.application.ports.link import LinkResolver
 from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import (
     StoreBusy,
@@ -194,6 +197,13 @@ def build_language_model(settings: Settings) -> LanguageModel:
             f"Unknown language model {name!r}. Valid backends: {valid}"
         ) from None
     return backend(settings.answer_model)
+
+
+def build_link_resolver(settings: Settings, root: Path) -> LinkResolver:
+    """Link chunks under *root* to ``link_base``, or to their files on disk."""
+    if settings.link_base:
+        return BaseUrl(settings.link_base, root)
+    return FileUri()
 
 
 def model_id(settings: Settings, embedder: Embedder) -> str:

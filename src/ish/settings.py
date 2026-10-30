@@ -264,6 +264,13 @@ class Settings:
             metavar="MS",
         ),
     )
+    link_base: str = field(
+        default="",
+        metadata=_opt(
+            "Base URL where the tree is published. Empty links to files on disk.",
+            metavar="URL",
+        ),
+    )
     # Index scope, so that no call can override them. These three decide
     # where the text of a document may go. Only the operator of a server
     # sets them, in the config file or on the command line.

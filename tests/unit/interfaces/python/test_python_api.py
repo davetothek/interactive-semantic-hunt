@@ -435,3 +435,34 @@ class TestAsk:
         with _ish(project) as ish:
             ish.ask("function")
         assert len(model.sources) == api.ASK_LIMIT
+
+
+class TestLink:
+    def test_a_link_uses_the_base_and_this_tree(self, project: Path) -> None:
+        from ish.domain.chunk import Chunk
+
+        settings = Settings(
+            no_cache=True, git=False, link_base="https://docs.example.com"
+        )
+        chunk = Chunk(
+            project.resolve() / "docs" / "guide.md",
+            "t",
+            "document",
+            "markdown",
+            "Guide",
+            1,
+            3,
+        )
+        with Ish(project, settings=settings) as ish:
+            assert ish.link(chunk) == "https://docs.example.com/docs/guide.md#L1-3"
+            assert ish.link(chunk) == ish.link(chunk)
+
+    def test_without_a_base_a_link_is_a_file_uri(self, project: Path) -> None:
+        from ish.domain.chunk import Chunk
+
+        chunk = Chunk(
+            project.resolve() / "a.md", "t", "document", "markdown", None, 2, 4
+        )
+        with _ish(project) as ish:
+            assert ish.link(chunk).startswith("file://")
+            assert ish.link(chunk).endswith("/a.md#L2-4")
