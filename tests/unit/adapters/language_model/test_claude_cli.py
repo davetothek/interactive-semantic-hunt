@@ -153,3 +153,34 @@ class TestSelect:
         assert args[args.index("--tools") + 1] == ""
         assert args[args.index("--setting-sources") + 1] == ""
         assert "--strict-mcp-config" in args
+
+
+class TestEnvironment:
+    """A server keeps secrets in its environment, and a call gets none."""
+
+    def test_only_the_allowed_names_pass(self) -> None:
+        env = claude_cli.environment(
+            {
+                "PATH": "/usr/bin",
+                "HOME": "/home/u",
+                "HTTPS_PROXY": "http://proxy.example.com:8080",
+                "ISH_MCP_TOKEN": "secret-EXAMPLE",
+                "ANTHROPIC_API_KEY": "sk-ant-EXAMPLE",
+                "AWS_SECRET_ACCESS_KEY": "EXAMPLE",
+            }
+        )
+        assert env == {
+            "PATH": "/usr/bin",
+            "HOME": "/home/u",
+            "HTTPS_PROXY": "http://proxy.example.com:8080",
+            **claude_cli.NO_MEMORY,
+        }
+
+    def test_a_call_gets_no_secret_of_the_server(self, runner, monkeypatch) -> None:
+        monkeypatch.setenv("ISH_MCP_TOKEN", "secret-EXAMPLE")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-EXAMPLE")
+        ClaudeCliLanguageModel("sonnet", timeout=5).answer("q", SOURCES)
+        env = runner.calls[0]["env"]
+        assert "ISH_MCP_TOKEN" not in env
+        assert "ANTHROPIC_API_KEY" not in env
+        assert not any(name.startswith("ISH_") for name in env)

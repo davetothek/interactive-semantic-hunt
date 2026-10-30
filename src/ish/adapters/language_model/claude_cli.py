@@ -16,7 +16,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from ish.adapters.language_model import _grounded
 from ish.application.ports.language_model import (
@@ -39,6 +39,41 @@ NO_MEMORY = {
     "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
 }
+
+# The variables a call passes on, and no others. A server holds secrets
+# in its environment, such as its MCP token and an API key, and a child
+# process gets none of them. These are what the CLI needs to run, to
+# find the login it is signed in with, and to reach the network through
+# a proxy that a company may require.
+PASSED_ON = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TMPDIR",
+    "XDG_CONFIG_HOME",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "CLAUDE_CONFIG_DIR",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "no_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+)
+
+
+def environment(source: Mapping[str, str]) -> dict[str, str]:
+    """Return the environment of a call: the allowed names, and no memory."""
+    passed = {name: source[name] for name in PASSED_ON if name in source}
+    return {**passed, **NO_MEMORY}
 
 
 def command(
@@ -132,7 +167,7 @@ class ClaudeCliLanguageModel:
                     capture_output=True,
                     text=True,
                     cwd=empty,
-                    env={**os.environ, **NO_MEMORY},
+                    env=environment(os.environ),
                     timeout=self._timeout,
                     check=False,
                 )
