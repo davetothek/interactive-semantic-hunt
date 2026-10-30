@@ -15,6 +15,13 @@ from ish.adapters.embedder.ollama import DEFAULT_HOST, _is_loopback, _normalize_
 from ish.adapters.language_model import _grounded
 from ish.application.ports.language_model import LanguageModelError, Reply, Source
 
+# The window the daemon gives the model. Ollama starts a model with a
+# window of a few thousand tokens and drops what does not fit without a
+# signal, so an answer would read only the first sources. An answer may
+# send 60,000 characters, about 15,000 tokens, plus the prompt and the
+# reply.
+CONTEXT_TOKENS = 20_480
+
 # A generation model on a CPU writes slowly. An answer of a few hundred
 # tokens can take minutes.
 TIMEOUT_SECONDS = 600
@@ -56,6 +63,7 @@ class OllamaLanguageModel:
                 "model": self.model_name,
                 "stream": False,
                 "format": _grounded.SCHEMA,
+                "options": {"num_ctx": CONTEXT_TOKENS},
                 "messages": [
                     {"role": "system", "content": _grounded.SYSTEM_PROMPT},
                     {"role": "user", "content": _grounded.prompt(question, sources)},

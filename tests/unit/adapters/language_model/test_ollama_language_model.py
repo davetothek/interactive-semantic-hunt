@@ -109,6 +109,17 @@ class TestAnswer:
         assert reply.passages[0].source_ids == ("1",)
         assert (reply.input_tokens, reply.output_tokens) == (80, 9)
 
+    def test_the_window_holds_a_full_answer_budget(self, recorder) -> None:
+        """Ollama drops what does not fit its window, with no signal."""
+        from ish.adapters.language_model.ollama import CONTEXT_TOKENS
+        from ish.application.answer import DEFAULT_BUDGET_CHARS
+
+        _model().answer("q", SOURCES)
+        body = json.loads(recorder.requests[0][0].data)
+        assert body["options"]["num_ctx"] == CONTEXT_TOKENS
+        # Four characters a token, and room left for the prompt and reply.
+        assert CONTEXT_TOKENS > DEFAULT_BUDGET_CHARS // 4 + 4_000
+
     def test_an_empty_reply_is_an_error(self, recorder) -> None:
         recorder.reply = {}
         with pytest.raises(LanguageModelError, match="did not reply in the JSON"):
