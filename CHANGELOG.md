@@ -8,6 +8,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- The documentation site has a page, "How it works", that describes the
+  pipeline from scan to result: chunks, embedding, the SQLite index and
+  the matrix file, vector and lexical search, and the fusion of the two.
+
 ### Fixed
 
 - `ish-mcp --http` no longer warns about `ISH_MCP_TOKEN` at start. The
