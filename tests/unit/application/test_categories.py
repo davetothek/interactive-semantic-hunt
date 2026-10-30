@@ -104,7 +104,7 @@ class TestConfigurableCategories:
 
     def test_a_pattern_sorts_a_path(self) -> None:
         """The case that the built-in rule misses."""
-        sort_into = compile_categories(("test:/[0-9.]*(Tests|Verification)/",), HOLDS)
+        sort_into = compile_categories(("test:/[0-9_]*(Tests|Verification)/",), HOLDS)
         chunk = make_chunk("/p/2_Tests/3_Verification/case.yaml", "yaml")
         assert sort_by_language(chunk) == "config"
         assert sort_into(chunk) == "test"
