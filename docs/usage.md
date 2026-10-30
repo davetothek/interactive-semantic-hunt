@@ -86,6 +86,34 @@ starting a second index of the same files.
 nvim $(ish -i src/)
 ```
 
+## Ask a question
+
+`--ask` answers the query as a question, from the chunks a search finds:
+
+```sh
+ish --ask "how does the release branch get its version" docs/
+```
+
+ish prints the answer with a numbered citation after each claim, then the
+cited sources in the scan format, so each one opens in an editor:
+
+```text
+The bump happens on a release branch[1], and the hook refuses it anywhere else[2].
+
+[1] RELEASING.md:12-30  section  Cut a release
+[2] .claude/hooks/guard_version.py:1-40  module  guard_version
+```
+
+A language model writes the answer, and it reads only the chunks the search
+returned. When they do not answer the question, ish says so, lists the
+closest sources, and exits 2. It does not answer from anything else. The
+filter words work in a question as in a query: `--ask "type:doc how is X
+done"`.
+
+Answers are off until you choose a model. See
+[Answer questions](configuration.md#answer-questions). A plain search never
+builds a language model and sends no text anywhere.
+
 ## Options
 
 | Flag | Purpose |
@@ -114,6 +142,11 @@ nvim $(ish -i src/)
 | `--sweep` | Delete the vectors no index of the path's repository references, and stop |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
+| `--ask` | Answer the query as a question, with the sources it cites |
+| `--language-model NAME` | Language model backend that writes answers: `anthropic`, `ollama`, `claude-cli` |
+| `--answer-model MODEL` | Model that backend runs. Required, there is no default |
+| `--allowed-language-models NAME ...` | Backends that may receive text. Empty allows none |
+| `--link-base URL` | Base URL where the tree is published, for the links of an answer |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
 or parsed is counted in one line; `-v` names them.

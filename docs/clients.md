@@ -72,8 +72,11 @@ can query the index directly. Add it to a project with `.mcp.json`:
 }
 ```
 
-It offers `search_code`, `list_chunks`, `index_status`, `refresh_index`, and
-`complete_filter`. The server stays resident, so a query costs about 58 ms
+It offers `search_code`, `ask`, `list_chunks`, `index_status`,
+`refresh_index`, and `complete_filter`. `ask` answers a question from the
+chunks a search finds and returns JSON: the answer with `[n]` markers, and
+for each citation the path, the location, and a link. It needs a language
+model, which [Answer questions](configuration.md#answer-questions) sets up. The server stays resident, so a query costs about 58 ms
 rather than a process start, and a filter word completes from the registries
 the server already holds rather than through a fresh `ish-complete`.
 
@@ -86,3 +89,38 @@ A call may narrow one search with `lang`, `under`, `type`, and `limit`, or
 write the same filters into the query text. It cannot change
 what is indexed — those settings come from the config file only, so no single
 call can shrink an index that another call depends on.
+
+## Serve over HTTP
+
+`ish-mcp` serves stdio to the client that starts it. For clients on other
+machines, serve the same tools over MCP Streamable HTTP instead:
+
+```sh
+export ISH_MCP_TOKEN="$(openssl rand -hex 32)"
+ish-mcp --http 0.0.0.0:8765
+```
+
+Every request goes to `/mcp` and carries the token as
+`Authorization: Bearer <token>`. A request without it, or with a wrong one,
+gets 401 and runs nothing. The server refuses to start without a token. A
+bare port, such as `--http 8765`, listens on `127.0.0.1` only. Each request
+runs on its own thread, so a slow answer for one client does not hold up
+another. Run it in the tree it serves, beside an `ish-serve` that keeps the
+index current.
+
+Point a client at it:
+
+```json
+{
+  "mcpServers": {
+    "docs": {
+      "type": "http",
+      "url": "https://docs.example.com:8765/mcp",
+      "headers": { "Authorization": "Bearer ${ISH_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+The server speaks plain HTTP. Put it behind a reverse proxy that holds the
+certificate when the token crosses a network you do not trust.

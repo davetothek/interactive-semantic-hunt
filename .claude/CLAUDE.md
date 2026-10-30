@@ -38,7 +38,12 @@ The first finishes a filter word rather than searching. The second keeps
 the indexes of a tree current and answers no query: it writes a status
 file the clients read, and a client that finds a live one refreshes
 nothing itself. `Ish` is the session the other three are built on. Nothing
-beyond these is built, and an HTTP API stays out by decision.
+beyond these is built. `ish-mcp --http` serves the MCP tools over HTTP
+behind a bearer token, and a REST API stays out by decision.
+
+`ish --ask` and the `ask` MCP tool answer a question from the chunks a
+search finds, with citations. A language model writes the answer, and
+only a backend that `allowed_language_models` names is ever built.
 
 ## Architecture
 
@@ -50,12 +55,15 @@ one module that joins them.
 |---|---|---|
 | Domain | `src/ish/domain/chunk.py` | `Chunk`, one named region of a file |
 | Domain | `src/ish/domain/match.py` | `Match`, a chunk with its score |
-| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the two registries |
+| Domain | `src/ish/domain/location.py` | `Location`, where a chunk sits: lines, pages, slides, cells, sections |
+| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the three registries |
 | Composition | `src/ish/settings.py` | Option set — one source of truth for CLI flags and TOML keys |
 | Composition | `src/ish/runtime.py` | The directory where the processes of one user share files while they run |
 | Port | `src/ish/application/ports/parser.py` | `Parser` Protocol and `ParseError` |
 | Port | `src/ish/application/ports/embedder.py` | `Embedder` Protocol |
 | Port | `src/ish/application/ports/vector_store.py` | `VectorReader` and `VectorStore` Protocols |
+| Port | `src/ish/application/ports/language_model.py` | `LanguageModel` Protocol, `Source`, `Reply` |
+| Port | `src/ish/application/ports/link.py` | `LinkResolver` Protocol |
 | Application | `src/ish/application/scan.py` | Scan use case: discover, accept, parse |
 | Application | `src/ish/application/index.py` | Index use case: staleness, orphans, embedding |
 | Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
@@ -65,6 +73,7 @@ one module that joins them.
 | Application | `src/ish/application/languages.py` | Resolve a spelling to a registered language |
 | Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |
 | Application | `src/ish/application/preview.py` | Read the source a chunk points at |
+| Application | `src/ish/application/answer.py` | Answer use case: search, read, fit the budget, ask the model |
 | Adapter | `src/ish/adapters/parser/__init__.py` | `PARSERS` — every language, and the recipe for adding one |
 | Adapter | `src/ish/adapters/parser/python.py` | Python AST parser |
 | Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
@@ -75,6 +84,12 @@ one module that joins them.
 | Adapter | `src/ish/adapters/embedder/__init__.py` | `EMBEDDERS` — every backend, and the recipe for adding one |
 | Adapter | `src/ish/adapters/embedder/prefixes.py` | `PrefixingEmbedder`, task prefixes, query cache |
 | Adapter | `src/ish/adapters/embedder/turn.py` | The marker a query leaves, and the wait a document batch takes |
+| Adapter | `src/ish/adapters/language_model/__init__.py` | `LANGUAGE_MODELS` — every backend, and the recipe for adding one |
+| Adapter | `src/ish/adapters/language_model/anthropic.py` | Messages API with native citations |
+| Adapter | `src/ish/adapters/language_model/ollama.py` | A generation model on the local daemon |
+| Adapter | `src/ish/adapters/language_model/claude_cli.py` | The Claude Code CLI in print mode |
+| Adapter | `src/ish/adapters/language_model/_grounded.py` | Prompt, schema, and parser for a backend without citations |
+| Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
@@ -91,10 +106,12 @@ one module that joins them.
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |
-| Interface | `src/ish/interfaces/mcp/protocol.py` | MCP stdio JSON-RPC transport |
+| Interface | `src/ish/interfaces/mcp/protocol.py` | MCP JSON-RPC dispatch |
+| Interface | `src/ish/interfaces/mcp/transport.py` | MCP framing: stdio, and HTTP behind a token |
 | Interface | `src/ish/interfaces/mcp/server.py` | MCP tools (`ish-mcp`) |
 
 Languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`. Backends: `ollama` (default), `llama.cpp`, `st`.
+Language models: `anthropic`, `ollama`, `claude-cli`, none by default.
 
 ## Tooling
 
@@ -206,6 +223,25 @@ something broke. This is that record, so a rule is never argued from taste.
 - A worktree index under /srv/mono joined every root search and nested
   under the main tree, which put the count of a root query back on the
   listing path. Hence a search reads the indexes of its own checkout.
+
+### Answering
+
+- A stored index holds where a chunk is, not what it says. On the first
+  real question against a tree of 74,737 chunks, retrieval put the
+  expected section first and second, and the model still said the
+  documents did not cover it: every chunk had empty text, and the model
+  read 696 tokens of titles for ten sources. Read from the file, the same
+  question read 2,867 tokens and cited the expected section. Hence
+  `read_lines` in the answer use case.
+- Ollama starts a model with a window of a few thousand tokens and drops
+  the rest of a prompt with no signal. An answer may send 60,000
+  characters. Hence `num_ctx` of 20,480 on every request.
+- A model with no citation feature cited a source by its title instead of
+  its id, which the use case drops. Naming the id as the bare number in
+  the prompt fixed it on claude-haiku-5-5 and qwen2.5-coder:7b.
+- `claude --bare` skips the login as well as the hooks. The claude-cli
+  backend turns off settings, tools, and MCP servers one by one instead,
+  and runs in an empty directory.
 
 ### Embedding
 

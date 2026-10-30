@@ -144,6 +144,38 @@ a wider window is worth its re-index only when the table moves. The
 `llama.cpp` backend takes the window the same way. The `st` backend reads
 it from the model card, so there only the cap follows.
 
+## Answer questions
+
+`ish --ask` and the `ask` MCP tool send the text of the chunks a search
+finds to a language model. Nothing is sent until the configuration names a
+backend and allows it:
+
+```toml
+language_model = "anthropic"
+answer_model = "claude-sonnet-5-5"
+allowed_language_models = ["anthropic"]
+```
+
+`allowed_language_models` is the gate. A backend that it does not name is
+never built, even when `language_model` names it. There is no default model
+and no fallback: when the backend fails, the answer fails. No call can change
+these three options, because they decide where the text of a document goes.
+
+| Backend | Where the text goes | Citations | Use it for |
+|---|---|---|---|
+| `anthropic` | The Anthropic Messages API, `api.anthropic.com` only. The key comes from `ANTHROPIC_API_KEY` | Native | A shared server |
+| `ollama` | A generation model on the local daemon. A host that is not this machine is refused | From a JSON schema | Text that must stay on the machine |
+| `claude-cli` | The Claude Code CLI, on the account it is logged in to, with every tool and settings file off | From a JSON schema | One person on their own machine |
+
+An answer reads at most ten chunks and at most 60,000 characters of them.
+A chunk that does not fit is skipped, and the answer counts it.
+
+`link_base` publishes the links of an answer under a base URL. With
+`link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164
+of `spec/a.adoc` under the tree links to
+`https://docs.example.com/tree/spec/a.adoc#L120-164`. Without it, a link is
+a `file://` URI.
+
 ## Name one config file
 
 Point ish at a file with `--config PATH`, its short form `-c`, or the

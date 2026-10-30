@@ -24,7 +24,8 @@ interfaces → application → domain
   this in a fresh interpreter.
 - Keep the domain model clean. `Chunk` holds no vector, no AST node, no
   parser internals, and no UI state.
-- Do not add a feature outside the four interfaces. An HTTP API stays out.
+- Do not add a feature outside the four interfaces. MCP over HTTP is the one
+  network interface. A REST API stays out.
 - Do not swallow an error. Report a parse failure to stderr, or return a
   structured error.
 
