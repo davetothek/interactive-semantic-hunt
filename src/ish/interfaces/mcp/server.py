@@ -11,6 +11,7 @@ that process writes, and passes a request for a refresh on to it.
 
 import json
 import logging
+import os
 import sys
 import threading
 from collections.abc import Mapping
@@ -31,6 +32,7 @@ from ish.interfaces.format import (
 )
 from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
+from ish.interfaces.mcp.transport import TOKEN_VARIABLE, HttpTransport
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings, choices_of, load_settings
 
@@ -544,18 +546,60 @@ def installed_version() -> str:
         return "unknown"
 
 
+def _parse(argv: list[str] | None):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="ish-mcp",
+        description="Serve the ish tools over MCP, on stdio unless told otherwise.",
+    )
+    parser.add_argument(
+        "--http",
+        metavar="HOST:PORT",
+        help=(
+            "Serve MCP over HTTP at /mcp on HOST:PORT instead of stdio. "
+            f"Every request must carry ${TOKEN_VARIABLE} as a bearer token."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def _address(text: str) -> tuple[str, int]:
+    """Split HOST:PORT, and read a bare PORT as one on the loopback address."""
+    host, _, port = text.rpartition(":")
+    if not port.isdigit():
+        raise ValueError(f"Expected HOST:PORT for --http, got {text!r}.")
+    return host or "127.0.0.1", int(port)
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Run the MCP server on stdio. Return an exit code."""
+    """Run the MCP server on stdio, or over HTTP with ``--http``.
+
+    Return an exit code.
+    """
+    args = _parse(argv)
     root = Path.cwd()
     settings = load_settings(start=root)
 
     # stdout carries the protocol, so every log line must go to stderr.
     setup_logging(verbosity=settings.verbosity, color=False)
 
+    if args.http:
+        try:
+            transport = HttpTransport(
+                *_address(args.http), os.environ.get(TOKEN_VARIABLE, "")
+            )
+        except ValueError as exc:
+            log.error("%s", exc)
+            return 1
+
     tools = IshTools(settings, root)
     server = Server(SERVER_NAME, installed_version(), tools.tools())
     try:
-        server.serve(sys.stdin, sys.stdout)
+        if args.http:
+            server.serve_on(transport)
+        else:
+            server.serve(sys.stdin, sys.stdout)
     except KeyboardInterrupt:
         log.info("Interrupted")
     finally:

@@ -71,7 +71,11 @@ finishes a filter word. Nothing else is added.
   file. A status nobody has written for `STALE_SECONDS` is a dead server,
   and the client refreshes itself again. Editor clients know nothing of
   the status file.
-- `ish-mcp` serves stdio and nothing else.
+- `ish-mcp` serves stdio by default. `ish-mcp --http HOST:PORT` serves the
+  same tools over MCP Streamable HTTP at `/mcp`, behind the bearer token in
+  `ISH_MCP_TOKEN`, and refuses to start without one. A transport in
+  `interfaces/mcp/transport.py` frames messages and nothing else, so a new
+  one changes no tool. A REST API stays out.
 
 ## Neovim
 

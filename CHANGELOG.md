@@ -22,6 +22,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `[n]` markers, and per citation the path, the location as data, and a
   link that opens the source. When the documents do not answer the
   question, `covered` is false and `sources` lists the closest chunks.
+- `ish-mcp --http HOST:PORT` serves the same tools over MCP Streamable
+  HTTP at `/mcp`, for clients on other machines. Every request carries
+  the token in `ISH_MCP_TOKEN` as a bearer token, and the server refuses
+  to start without one. A bare port listens on `127.0.0.1` only.
 - `link_base` publishes the links of an answer under a base URL, such as
   `https://docs.example.com/spec/a.adoc#L120-164`. Empty links to the
   file on disk.
