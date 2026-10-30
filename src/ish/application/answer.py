@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ish.application.ports.language_model import LanguageModel, Source
+from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 
@@ -39,7 +40,8 @@ class Answer:
             the question.
         sources: The chunks the model read, best first. When
             ``covered`` is False, these are the closest sources.
-        dropped: Chunks the search found that did not fit the budget.
+        dropped: Chunks the search found and the model did not read,
+            because they did not fit the budget or had no readable text.
         model: Name of the model that wrote the answer, or empty when no
             model was asked.
         input_tokens: Tokens the model read.
@@ -64,15 +66,19 @@ class AnswerQuestion:
         search: Callable[[str], Sequence[Match]],
         model: LanguageModel,
         budget_chars: int = DEFAULT_BUDGET_CHARS,
+        read: Callable[[Chunk], str | None] = read_lines,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
         Take the search as a function, so the answer reads the same
-        indexes, filters, and ranking as every other query.
+        indexes, filters, and ranking as every other query. Read the text
+        of each chunk through *read*, because a stored index holds where
+        a chunk is and not what it says.
         """
         self._search = search
         self._model = model
         self._budget = budget_chars
+        self._read = read
 
     def answer(self, question: str) -> Answer:
         """Answer *question* from the chunks a search returns.
@@ -83,13 +89,16 @@ class AnswerQuestion:
         question = question.strip()
         if not question:
             raise ValueError("The question is empty.")
-        kept, dropped = self._fit([chunk for chunk, _ in self._search(question)])
+        texts, dropped = self._fit([chunk for chunk, _ in self._search(question)])
         if dropped:
             log.info("%d chunks did not fit the answer budget", dropped)
+        kept = [chunk for chunk, _ in texts]
         if not kept:
             return Answer(parts=(), covered=False, sources=(), dropped=dropped)
 
-        sources = [_source(str(n), chunk) for n, chunk in enumerate(kept, 1)]
+        sources = [
+            _source(str(n), chunk, text) for n, (chunk, text) in enumerate(texts, 1)
+        ]
         by_id = dict(zip((s.id for s in sources), kept, strict=True))
         reply = self._model.answer(question, sources)
         log.info(
@@ -113,26 +122,32 @@ class AnswerQuestion:
             output_tokens=reply.output_tokens,
         )
 
-    def _fit(self, chunks: list[Chunk]) -> tuple[list[Chunk], int]:
+    def _fit(self, chunks: list[Chunk]) -> tuple[list[tuple[Chunk, str]], int]:
         """Keep the best chunks whose text fits the budget, in rank order.
 
         Skip a chunk that does not fit and try the next, so one long
-        chunk does not push out every shorter one ranked below it.
+        chunk does not push out every shorter one ranked below it. Skip a
+        chunk whose text cannot be read or is empty: a model given a
+        title and no text has nothing to answer from.
         """
-        kept: list[Chunk] = []
+        kept: list[tuple[Chunk, str]] = []
         left = self._budget
         for chunk in chunks:
-            if len(chunk.text) <= left:
-                kept.append(chunk)
-                left -= len(chunk.text)
+            text = self._read(chunk)
+            if not text or not text.strip():
+                log.warning("Left out %s, which has no readable text", chunk.path)
+                continue
+            if len(text) <= left:
+                kept.append((chunk, text))
+                left -= len(text)
         return kept, len(chunks) - len(kept)
 
 
-def _source(source_id: str, chunk: Chunk) -> Source:
+def _source(source_id: str, chunk: Chunk, text: str) -> Source:
     title = f"{chunk.path}{chunk.location.render()}"
     if chunk.symbol:
         title = f"{title} {chunk.symbol}"
-    return Source(id=source_id, title=title, text=chunk.text)
+    return Source(id=source_id, title=title, text=text)
 
 
 def _part(text: str, ids: Sequence[str], by_id: dict[str, Chunk]) -> AnswerPart:

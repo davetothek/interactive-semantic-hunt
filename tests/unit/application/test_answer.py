@@ -169,3 +169,51 @@ class TestCitationsAreChecked:
             )
         assert result.parts[0].cites == (a,)
         assert "cited source '7'" in caplog.text
+
+
+class TestTextComesFromTheFile:
+    """A stored index holds where a chunk is, not what it says.
+
+    Every chunk a stored index returned had empty text, so the model read
+    titles alone and answered nothing. The text is read from the file.
+    """
+
+    def _stored(self, path: Path, start: int, end: int) -> Chunk:
+        return Chunk(path, "", "section", "asciidoc", "s", start, end)
+
+    def test_the_model_reads_the_lines_from_the_file(self, tmp_path: Path) -> None:
+        doc = tmp_path / "gate.adoc"
+        doc.write_text("= Gate\n\nAdd the label.\nThen push.\n")
+        model = FakeModel()
+        AnswerQuestion(search=searching(self._stored(doc, 3, 4)), model=model).answer(
+            "q"
+        )
+        assert model.calls[0][1][0].text == "Add the label.\nThen push.\n"
+
+    def test_an_unreadable_chunk_is_left_out_and_counted(
+        self, tmp_path: Path, caplog
+    ) -> None:
+        doc = tmp_path / "a.adoc"
+        doc.write_text("= A\n\nText.\n")
+        gone = self._stored(tmp_path / "gone.adoc", 1, 2)
+        past_the_end = self._stored(doc, 50, 60)
+        blank = self._stored(doc, 2, 2)
+        kept = self._stored(doc, 3, 3)
+        model = FakeModel()
+        with caplog.at_level(logging.WARNING, logger="ish.application.answer"):
+            result = AnswerQuestion(
+                search=searching(gone, past_the_end, blank, kept), model=model
+            ).answer("q")
+        assert result.sources == (kept,)
+        assert result.dropped == 3
+        assert [s.text for s in model.calls[0][1]] == ["Text.\n"]
+        assert "no readable text" in caplog.text
+
+    def test_the_budget_counts_the_text_read(self, tmp_path: Path) -> None:
+        doc = tmp_path / "a.adoc"
+        doc.write_text("x" * 50 + "\n" + "y\n")
+        long, short = self._stored(doc, 1, 1), self._stored(doc, 2, 2)
+        result = AnswerQuestion(
+            search=searching(long, short), model=FakeModel(), budget_chars=10
+        ).answer("q")
+        assert (result.sources, result.dropped) == ((short,), 1)
