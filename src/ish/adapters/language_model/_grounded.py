@@ -18,9 +18,11 @@ from ish.application.ports.language_model import (
 
 SYSTEM_PROMPT = (
     "You answer questions about a set of internal documents. Use only the "
-    "sources in the message. Each source starts with its id in brackets. "
-    "Reply in JSON. Split the answer into passages, and list for each "
-    "passage the ids of the sources that support it. Do not use knowledge "
+    "sources in the message. Each source starts with its id, a number in "
+    "brackets such as [1], followed by its title. Reply in JSON. Split the "
+    "answer into passages, and list for each passage the ids of the sources "
+    'that support it, as the bare numbers such as "1", never the titles. '
+    "Do not use knowledge "
     "from outside the sources, and do not guess. If the sources do not "
     "answer the question, set covered to false and give no passages."
 )

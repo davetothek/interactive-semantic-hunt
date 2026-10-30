@@ -18,8 +18,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `language_model`, `answer_model`, and `allowed_language_models`. The
   `anthropic` backend reads its key from `ANTHROPIC_API_KEY`. The
   `ollama` backend runs a generation model on the local daemon and
-  refuses a host that is not this machine. A search never builds a
-  language model.
+  refuses a host that is not this machine. The `claude-cli` backend runs
+  the Claude Code CLI on the account it is logged in to, with every
+  tool, MCP server, and settings file off. It suits one person on their
+  own machine, not a shared server. A search never builds a language
+  model.
 - The MCP server offers an `ask` tool. It returns JSON: the answer with
   `[n]` markers, and per citation the path, the location as data, and a
   link that opens the source. When the documents do not answer the
