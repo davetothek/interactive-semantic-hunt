@@ -67,3 +67,27 @@ class TestParse:
     def test_a_covered_value_that_is_not_a_boolean(self) -> None:
         with pytest.raises(LanguageModelError, match="covered='yes'"):
             _grounded.parse('{"covered": "yes", "passages": []}', "m")
+
+
+class TestSelect:
+    def test_the_prompt_lists_candidates_then_the_limit_and_question(self) -> None:
+        candidates = [Source("1", "/d/a.adoc:1-9 A", "Start of A")]
+        assert _grounded.select_prompt("Why?", candidates, 10) == (
+            "[1] /d/a.adoc:1-9 A\nStart of A\n\nChoose at most 10.\n\nQuestion: Why?"
+        )
+
+    def test_the_prompt_prefers_a_rule_over_a_test(self) -> None:
+        assert "test case" in _grounded.SELECT_PROMPT
+        assert "bare numbers" in _grounded.SELECT_PROMPT
+
+    def test_ids_keep_their_order_drop_repeats_and_stop_at_the_limit(self) -> None:
+        selection = _grounded.parse_ids(
+            '{"ids": ["3", 1, "3", "2", "5"]}', "m", 3, input_tokens=9, output_tokens=2
+        )
+        assert selection.ids == ("3", "1", "2")
+        assert (selection.input_tokens, selection.output_tokens) == (9, 2)
+
+    @pytest.mark.parametrize("text", ["nope", "{}", '{"ids": 3}'])
+    def test_the_wrong_shape_names_the_backend(self, text: str) -> None:
+        with pytest.raises(LanguageModelError, match="backend-y did not reply"):
+            _grounded.parse_ids(text, "backend-y", 5)

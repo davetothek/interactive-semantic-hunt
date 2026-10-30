@@ -170,6 +170,25 @@ these three options, because they decide where the text of a document goes.
 An answer reads at most ten chunks and at most 60,000 characters of them.
 A chunk that does not fit is skipped, and the answer counts it.
 
+A search ranks the right source too low when other chunks share the
+wording of the question, such as test cases of the rule the question
+asks about. `rerank_model` lets a model of the same backend look at the
+start of each of `rerank_candidates` chunks, 50 by default, and pick the
+ten worth reading in full:
+
+```toml
+language_model = "anthropic"
+answer_model = "claude-haiku-5-5"
+rerank_model = "claude-haiku-5-5"
+allowed_language_models = ["anthropic"]
+```
+
+Measured on 25 questions over a private specification tree: the expected
+source reached the answer for 21 of 21 questions with the rerank, against
+16 of 21 without. It costs one more call of about 14,000 input tokens, and
+with Haiku 5.5 for both calls an answer costs about a third of a cent at
+API prices.
+
 `link_base` publishes the links of an answer under a base URL. With
 `link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164
 of `spec/a.adoc` under the tree links to

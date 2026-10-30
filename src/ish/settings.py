@@ -288,6 +288,22 @@ class Settings:
             metavar="MODEL",
         ),
     )
+    rerank_model: str = field(
+        default="",
+        metadata=_opt(
+            "Model of the same backend that picks which chunks an answer reads, "
+            "from a wider search. Empty reads the best chunks as ranked.",
+            metavar="MODEL",
+        ),
+    )
+    rerank_candidates: int = field(
+        default=50,
+        metadata=_opt(
+            "Chunks a search returns for the rerank model to choose from.",
+            type=int,
+            metavar="N",
+        ),
+    )
     allowed_language_models: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

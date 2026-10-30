@@ -125,3 +125,28 @@ class TestFailures:
     def test_output_of_the_wrong_shape(self, runner) -> None:
         runner.stdout = json.dumps({"is_error": False, "structured_output": {"x": 1}})
         self._fails("did not reply in the JSON")
+
+
+class TestSelect:
+    def test_select_runs_the_select_prompt_and_schema(self, runner) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"ids": ["2", "1"]},
+                "usage": {"input_tokens": 500, "output_tokens": 8},
+            }
+        )
+        selection = ClaudeCliLanguageModel("haiku", timeout=5).select("q", SOURCES, 1)
+        call = runner.calls[0]
+        assert call["args"] == command(
+            "/usr/bin/claude", "haiku", _grounded.SELECT_PROMPT, _grounded.SELECT_SCHEMA
+        )
+        assert call["input"] == _grounded.select_prompt("q", SOURCES, 1)
+        assert selection.ids == ("2",)
+        assert (selection.input_tokens, selection.output_tokens) == (500, 8)
+
+    def test_select_keeps_every_tool_off(self) -> None:
+        args = command("/c", "m", _grounded.SELECT_PROMPT, _grounded.SELECT_SCHEMA)
+        assert args[args.index("--tools") + 1] == ""
+        assert args[args.index("--setting-sources") + 1] == ""
+        assert "--strict-mcp-config" in args

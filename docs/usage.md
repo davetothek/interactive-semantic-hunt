@@ -146,6 +146,8 @@ builds a language model and sends no text anywhere.
 | `--language-model NAME` | Language model backend that writes answers: `anthropic`, `ollama`, `claude-cli` |
 | `--answer-model MODEL` | Model that backend runs. Required, there is no default |
 | `--allowed-language-models NAME ...` | Backends that may receive text. Empty allows none |
+| `--rerank-model MODEL` | Model of the same backend that picks the chunks an answer reads |
+| `--rerank-candidates N` | Chunks the rerank model chooses from (default 50) |
 | `--link-base URL` | Base URL where the tree is published, for the links of an answer |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read

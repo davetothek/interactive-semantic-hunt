@@ -951,6 +951,7 @@ class TestAsk:
             f"/app.py#L{citation['location']['start']}-{citation['location']['end']}"
         )
         assert "sources" not in reply
+        assert (reply["rerank_input_tokens"], reply["rerank_output_tokens"]) == (0, 0)
 
     def test_not_covered_returns_the_closest_sources(
         self, tools: IshTools, project: Path, stub_backend, model

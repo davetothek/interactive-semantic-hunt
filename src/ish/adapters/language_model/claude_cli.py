@@ -17,13 +17,23 @@ import tempfile
 from collections.abc import Sequence
 
 from ish.adapters.language_model import _grounded
-from ish.application.ports.language_model import LanguageModelError, Reply, Source
+from ish.application.ports.language_model import (
+    LanguageModelError,
+    Reply,
+    Selection,
+    Source,
+)
 
 EXECUTABLE = "claude"
 TIMEOUT_SECONDS = 600
 
 
-def command(executable: str, model: str) -> list[str]:
+def command(
+    executable: str,
+    model: str,
+    system: str = _grounded.SYSTEM_PROMPT,
+    schema: dict[str, object] = _grounded.SCHEMA,
+) -> list[str]:
     """Return the argument list that asks one question with nothing else loaded."""
     return [
         executable,
@@ -37,11 +47,11 @@ def command(executable: str, model: str) -> list[str]:
         "--model",
         model,
         "--system-prompt",
-        _grounded.SYSTEM_PROMPT,
+        system,
         "--output-format",
         "json",
         "--json-schema",
-        json.dumps(_grounded.SCHEMA),
+        json.dumps(schema),
     ]
 
 
@@ -68,11 +78,44 @@ class ClaudeCliLanguageModel:
 
     def answer(self, question: str, sources: Sequence[Source]) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes."""
+        structured, read, wrote = self._run(
+            _grounded.SYSTEM_PROMPT,
+            _grounded.SCHEMA,
+            _grounded.prompt(question, sources),
+        )
+        return _grounded.parse(
+            json.dumps(structured),
+            f"claude {self.model_name}",
+            input_tokens=read,
+            output_tokens=wrote,
+        )
+
+    def select(
+        self, question: str, candidates: Sequence[Source], limit: int
+    ) -> Selection:
+        """Choose at most *limit* candidates, in the JSON the schema fixes."""
+        structured, read, wrote = self._run(
+            _grounded.SELECT_PROMPT,
+            _grounded.SELECT_SCHEMA,
+            _grounded.select_prompt(question, candidates, limit),
+        )
+        return _grounded.parse_ids(
+            json.dumps(structured),
+            f"claude {self.model_name}",
+            limit,
+            input_tokens=read,
+            output_tokens=wrote,
+        )
+
+    def _run(
+        self, system: str, schema: dict[str, object], prompt: str
+    ) -> tuple[object, int, int]:
+        """Run one call, and return its structured output and token counts."""
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
             try:
                 done = subprocess.run(
-                    command(self._executable, self.model_name),
-                    input=_grounded.prompt(question, sources),
+                    command(self._executable, self.model_name, system, schema),
+                    input=prompt,
                     capture_output=True,
                     text=True,
                     cwd=empty,
@@ -101,9 +144,4 @@ class ClaudeCliLanguageModel:
                 "cache_read_input_tokens",
             )
         )
-        return _grounded.parse(
-            json.dumps(body["structured_output"]),
-            f"claude {self.model_name}",
-            input_tokens=read,
-            output_tokens=int(usage.get("output_tokens") or 0),
-        )
+        return body["structured_output"], read, int(usage.get("output_tokens") or 0)

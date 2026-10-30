@@ -80,6 +80,7 @@ class Ish:
         self._vocabulary: bootstrap.Vocabulary | None = None
         self._identity: bootstrap.Identity | None = None
         self._model: LanguageModel | None = None
+        self._reranker: LanguageModel | None = None
         self._links: LinkResolver | None = None
 
     # ------------------------------------------------------------------
@@ -280,11 +281,18 @@ class Ish:
         """
         if self._model is None:
             self._model = bootstrap.build_language_model(self.settings)
+            self._reranker = bootstrap.build_reranker(self.settings)
+        # A rerank model sorts a wide search cheaply from the start of each
+        # chunk. Without one, the best chunks as ranked are read in full.
+        wide = self._reranker is not None
+        limit = self.settings.rerank_candidates if wide else ASK_LIMIT
         use_case = AnswerQuestion(
             search=lambda text: self.search(
-                text, ASK_LIMIT, lang=lang, under=under, type=type
+                text, limit, lang=lang, under=under, type=type
             ),
             model=self._model,
+            reranker=self._reranker,
+            pick=ASK_LIMIT,
         )
         return use_case.answer(question)
 

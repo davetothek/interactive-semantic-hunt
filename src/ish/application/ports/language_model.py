@@ -63,6 +63,21 @@ class Reply:
     output_tokens: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class Selection:
+    """Hold the sources a model chose to read, and what choosing cost.
+
+    Attributes:
+        ids: Keys of the chosen sources, best first.
+        input_tokens: Tokens the model read.
+        output_tokens: Tokens the model wrote.
+    """
+
+    ids: tuple[str, ...]
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
 @runtime_checkable
 class LanguageModel(Protocol):
     """Contract for answering a question from given sources."""
@@ -75,5 +90,16 @@ class LanguageModel(Protocol):
 
         Raise ``LanguageModelError`` when the model does not answer. Never
         answer from knowledge outside *sources*.
+        """
+        ...
+
+    def select(
+        self, question: str, candidates: Sequence[Source], limit: int
+    ) -> Selection:
+        """Choose at most *limit* of *candidates* worth reading in full.
+
+        Each candidate holds the start of a source, not all of it, so a
+        wide search costs few tokens to sort. Raise ``LanguageModelError``
+        when the model does not reply.
         """
         ...

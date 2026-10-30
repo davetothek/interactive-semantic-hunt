@@ -13,7 +13,12 @@ from collections.abc import Sequence
 
 from ish.adapters.embedder.ollama import DEFAULT_HOST, _is_loopback, _normalize_host
 from ish.adapters.language_model import _grounded
-from ish.application.ports.language_model import LanguageModelError, Reply, Source
+from ish.application.ports.language_model import (
+    LanguageModelError,
+    Reply,
+    Selection,
+    Source,
+)
 
 # The window the daemon gives the model. Ollama starts a model with a
 # window of a few thousand tokens and drops what does not fit without a
@@ -58,24 +63,47 @@ class OllamaLanguageModel:
 
     def answer(self, question: str, sources: Sequence[Source]) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes."""
+        text, read, wrote = self._chat(
+            _grounded.SYSTEM_PROMPT,
+            _grounded.SCHEMA,
+            _grounded.prompt(question, sources),
+        )
+        return _grounded.parse(text, f"Ollama model {self.model_name}", read, wrote)
+
+    def select(
+        self, question: str, candidates: Sequence[Source], limit: int
+    ) -> Selection:
+        """Choose at most *limit* candidates, in the JSON the schema fixes."""
+        text, read, wrote = self._chat(
+            _grounded.SELECT_PROMPT,
+            _grounded.SELECT_SCHEMA,
+            _grounded.select_prompt(question, candidates, limit),
+        )
+        return _grounded.parse_ids(
+            text, f"Ollama model {self.model_name}", limit, read, wrote
+        )
+
+    def _chat(
+        self, system: str, schema: dict[str, object], prompt: str
+    ) -> tuple[str, int, int]:
+        """Send one chat turn, and return its text and token counts."""
         body = self._post(
             {
                 "model": self.model_name,
                 "stream": False,
-                "format": _grounded.SCHEMA,
+                "format": schema,
                 "options": {"num_ctx": CONTEXT_TOKENS},
                 "messages": [
-                    {"role": "system", "content": _grounded.SYSTEM_PROMPT},
-                    {"role": "user", "content": _grounded.prompt(question, sources)},
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
                 ],
             }
         )
         message = body.get("message") or {}
-        return _grounded.parse(
+        return (
             str(message.get("content") or ""),
-            f"Ollama model {self.model_name}",
-            input_tokens=int(body.get("prompt_eval_count") or 0),
-            output_tokens=int(body.get("eval_count") or 0),
+            int(body.get("prompt_eval_count") or 0),
+            int(body.get("eval_count") or 0),
         )
 
     def _post(self, payload: dict[str, object]) -> dict:

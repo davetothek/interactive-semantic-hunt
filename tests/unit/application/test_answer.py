@@ -217,3 +217,77 @@ class TestTextComesFromTheFile:
             search=searching(long, short), model=FakeModel(), budget_chars=10
         ).answer("q")
         assert (result.sources, result.dropped) == ((short,), 1)
+
+
+class FakeReranker:
+    """Choose the given ids, and record what it was shown."""
+
+    model_name = "picker"
+
+    def __init__(self, ids: tuple[str, ...]) -> None:
+        self.ids = ids
+        self.calls: list[tuple[str, list[Source], int]] = []
+
+    def select(self, question, candidates, limit):
+        from ish.application.ports.language_model import Selection
+
+        self.calls.append((question, list(candidates), limit))
+        return Selection(ids=self.ids, input_tokens=300, output_tokens=5)
+
+
+class TestRerank:
+    """A wide search ranks the right source too low for a narrow one.
+
+    Over a private tree, the expected section ranked 15th to 32nd for five
+    of 21 questions, behind test cases that share the wording. A model that
+    picks ten of fifty from the start of each chunk found all 21.
+    """
+
+    def test_the_answer_reads_only_the_chosen_chunks_in_the_chosen_order(
+        self,
+    ) -> None:
+        a, b, c = (
+            make_chunk("a", "A text"),
+            make_chunk("b", "B text"),
+            make_chunk("c", "C text"),
+        )
+        model, picker = FakeModel(), FakeReranker(("3", "1", "9"))
+        result = AnswerQuestion(
+            search=searching(a, b, c), model=model, reranker=picker, pick=2
+        ).answer("q")
+        assert [s.text for s in model.calls[0][1]] == ["C text", "A text"]
+        assert result.sources == (c, a)
+        assert (result.rerank_input_tokens, result.rerank_output_tokens) == (300, 5)
+        assert picker.calls[0][2] == 2
+
+    def test_the_picker_sees_the_start_of_each_readable_chunk(
+        self, tmp_path: Path
+    ) -> None:
+        long = make_chunk("long", "word " * 200)
+        blank = make_chunk("blank", "   ")
+        picker = FakeReranker(("1",))
+        AnswerQuestion(
+            search=searching(long, blank), model=FakeModel(), reranker=picker
+        ).answer("q")
+        (shown,) = picker.calls[0][1]
+        assert shown.id == "1"
+        assert len(shown.text) == 300
+        assert shown.title.endswith("long")
+
+    def test_nothing_readable_asks_no_picker_and_no_model(self) -> None:
+        model, picker = FakeModel(), FakeReranker(("1",))
+        result = AnswerQuestion(
+            search=searching(make_chunk("blank", " ")), model=model, reranker=picker
+        ).answer("q")
+        assert (picker.calls, model.calls, result.covered) == ([], [], False)
+
+    def test_a_picker_that_chooses_nothing_asks_no_model(self) -> None:
+        model = FakeModel()
+        result = AnswerQuestion(
+            search=searching(make_chunk("a")),
+            model=model,
+            reranker=FakeReranker(()),
+        ).answer("q")
+        assert model.calls == []
+        assert not result.covered
+        assert result.rerank_input_tokens == 300

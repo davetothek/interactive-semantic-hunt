@@ -323,6 +323,8 @@ class IshTools:
             "model": answer.model,
             "input_tokens": answer.input_tokens,
             "output_tokens": answer.output_tokens,
+            "rerank_input_tokens": answer.rerank_input_tokens,
+            "rerank_output_tokens": answer.rerank_output_tokens,
             "dropped": answer.dropped,
         }
         if answer.covered:

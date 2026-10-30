@@ -13,10 +13,12 @@ file, which may be shared or committed.
 import os
 from collections.abc import Sequence
 
+from ish.adapters.language_model import _grounded
 from ish.application.ports.language_model import (
     LanguageModelError,
     Passage,
     Reply,
+    Selection,
     Source,
 )
 
@@ -75,6 +77,52 @@ class AnthropicLanguageModel:
         return Reply(
             passages=passages,
             covered=bool(text) and not text.startswith(NOT_COVERED),
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+        )
+
+    def select(
+        self, question: str, candidates: Sequence[Source], limit: int
+    ) -> Selection:
+        """Choose at most *limit* candidates, with structured output.
+
+        Choosing cites nothing, so this call can fix the reply to a JSON
+        schema, which the answer call cannot do beside citations.
+        """
+        body = self._post(
+            {
+                "model": self.model_name,
+                "max_tokens": MAX_TOKENS,
+                "system": _grounded.SELECT_PROMPT,
+                "output_config": {
+                    "format": {
+                        "type": "json_schema",
+                        "schema": _grounded.SELECT_SCHEMA,
+                    }
+                },
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": _grounded.select_prompt(question, candidates, limit),
+                    }
+                ],
+            }
+        )
+        if body.get("stop_reason") in ("refusal", "max_tokens"):
+            raise LanguageModelError(
+                f"{self.model_name} did not finish choosing sources "
+                f"({body.get('stop_reason')})."
+            )
+        text = "".join(
+            str(b.get("text") or "")
+            for b in body.get("content") or []
+            if b.get("type") == "text"
+        )
+        usage = body.get("usage") or {}
+        return _grounded.parse_ids(
+            text,
+            self.model_name,
+            limit,
             input_tokens=int(usage.get("input_tokens") or 0),
             output_tokens=int(usage.get("output_tokens") or 0),
         )

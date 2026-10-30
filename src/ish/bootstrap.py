@@ -178,6 +178,22 @@ def build_language_model(settings: Settings) -> LanguageModel:
     backend receives the text of the documents, so there is no default
     and no fallback: an unset, unknown, or disallowed backend raises.
     """
+    return _language_model(settings, settings.answer_model)
+
+
+def build_reranker(settings: Settings) -> LanguageModel | None:
+    """Construct the model that picks which chunks an answer reads, or None.
+
+    Run ``rerank_model`` on the same backend as the answer, behind the
+    same allowlist, so choosing sends text nowhere that answering does
+    not. Return None when no rerank model is set.
+    """
+    if not settings.rerank_model:
+        return None
+    return _language_model(settings, settings.rerank_model)
+
+
+def _language_model(settings: Settings, model: str) -> LanguageModel:
     name = settings.language_model
     if not name:
         raise LanguageModelError(
@@ -196,7 +212,7 @@ def build_language_model(settings: Settings) -> LanguageModel:
         raise LanguageModelError(
             f"Unknown language model {name!r}. Valid backends: {valid}"
         ) from None
-    return backend(settings.answer_model)
+    return backend(model)
 
 
 def build_link_resolver(settings: Settings, root: Path) -> LinkResolver:

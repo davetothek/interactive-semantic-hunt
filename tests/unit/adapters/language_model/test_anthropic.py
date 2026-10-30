@@ -7,7 +7,7 @@ import urllib.request
 
 import pytest
 
-from ish.adapters.language_model import LANGUAGE_MODELS
+from ish.adapters.language_model import LANGUAGE_MODELS, _grounded
 from ish.adapters.language_model.anthropic import (
     ENDPOINT,
     KEY_VARIABLE,
@@ -214,3 +214,39 @@ class TestFailures:
         monkeypatch.setattr(urllib.request, "urlopen", garbage)
         with pytest.raises(LanguageModelError, match="not JSON"):
             _model().answer("q", SOURCES)
+
+
+class TestSelect:
+    def test_select_fixes_the_reply_to_the_schema(self, recorder) -> None:
+        recorder.reply = {
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 700, "output_tokens": 9},
+            "content": [
+                {"type": "thinking", "thinking": ""},
+                {"type": "text", "text": '{"ids": ["2", "1"]}'},
+            ],
+        }
+        selection = _model().select("q", SOURCES, 5)
+        body = recorder.body
+        assert body["system"] == _grounded.SELECT_PROMPT
+        assert body["output_config"] == {
+            "format": {"type": "json_schema", "schema": _grounded.SELECT_SCHEMA}
+        }
+        assert body["messages"][0]["content"] == _grounded.select_prompt(
+            "q", SOURCES, 5
+        )
+        assert selection.ids == ("2", "1")
+        assert (selection.input_tokens, selection.output_tokens) == (700, 9)
+
+    @pytest.mark.parametrize("stop", ["refusal", "max_tokens"])
+    def test_an_unfinished_choice_is_an_error(self, recorder, stop) -> None:
+        recorder.reply = {"stop_reason": stop, "content": []}
+        with pytest.raises(LanguageModelError, match=f"did not finish.*{stop}"):
+            _model().select("q", SOURCES, 5)
+
+    def test_a_reply_with_no_usage(self, recorder) -> None:
+        recorder.reply = {
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": '{"ids": []}'}],
+        }
+        assert _model().select("q", SOURCES, 5).ids == ()

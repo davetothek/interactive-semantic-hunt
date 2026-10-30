@@ -151,3 +151,21 @@ class TestFailures:
         recorder.reply = b"<html>"
         with pytest.raises(LanguageModelError, match="not JSON"):
             _model().answer("q", SOURCES)
+
+
+class TestSelect:
+    def test_select_sends_the_select_schema(self, recorder) -> None:
+        recorder.reply = {
+            "message": {"content": '{"ids": ["1"]}'},
+            "prompt_eval_count": 40,
+            "eval_count": 3,
+        }
+        selection = _model().select("q", SOURCES, 5)
+        body = json.loads(recorder.requests[0][0].data)
+        assert body["format"] == _grounded.SELECT_SCHEMA
+        assert body["messages"][0]["content"] == _grounded.SELECT_PROMPT
+        assert body["messages"][1]["content"] == _grounded.select_prompt(
+            "q", SOURCES, 5
+        )
+        assert selection.ids == ("1",)
+        assert (selection.input_tokens, selection.output_tokens) == (40, 3)

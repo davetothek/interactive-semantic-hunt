@@ -1427,6 +1427,28 @@ class TestBuildLanguageModel:
         with pytest.raises(LanguageModelError, match="Valid backends: .*stub"):
             bootstrap.build_language_model(settings)
 
+    def test_no_rerank_model_builds_no_reranker(self, registry) -> None:
+        settings = Settings(language_model="stub", allowed_language_models=("stub",))
+        assert bootstrap.build_reranker(settings) is None
+        assert registry == []
+
+    def test_the_reranker_runs_on_the_same_backend(self, registry) -> None:
+        settings = Settings(
+            language_model="stub",
+            rerank_model="small",
+            allowed_language_models=("stub",),
+        )
+        assert bootstrap.build_reranker(settings).model_name == "small"
+        assert registry == ["small"]
+
+    def test_the_reranker_is_behind_the_same_allowlist(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="stub", rerank_model="small")
+        with pytest.raises(LanguageModelError, match="not allowed"):
+            bootstrap.build_reranker(settings)
+        assert registry == []
+
     def test_an_empty_registry_says_none(self, monkeypatch) -> None:
         from ish.application.ports.language_model import LanguageModelError
 

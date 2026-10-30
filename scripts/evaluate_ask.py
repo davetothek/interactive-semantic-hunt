@@ -1,8 +1,9 @@
 """Score `ish --ask` against a question set: citations, refusals, cost, time.
 
     uv run python scripts/evaluate_ask.py QUESTIONS.yaml TREE \\
-        --language-model anthropic --answer-model claude-sonnet-5-5 \\
-        --price-in 2.00 --price-out 10.00 --out run.json
+        --language-model anthropic --answer-model claude-haiku-5-5 \\
+        --rerank-model claude-haiku-5-5 \\
+        --price-in 0.10 --price-out 0.50 --out run.json
 
 The question set names, for each question, the file and lines that
 answer it, or ``not_covered`` for a question the tree does not answer:
@@ -21,7 +22,9 @@ file and its lines overlap the expected range. The question set is kept
 outside the repository when it names a private tree.
 
 The language model options are allowed for this run only, so the script
-needs no change to a configuration file.
+needs no change to a configuration file. The cost counts the tokens of
+the rerank model as well, at the same prices, since it runs on the same
+backend.
 """
 
 import argparse
@@ -55,6 +58,8 @@ class Scored:
     seconds: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    rerank_input_tokens: int = 0
+    rerank_output_tokens: int = 0
     error: str = ""
 
 
@@ -112,6 +117,8 @@ def score(item: dict, ish: Ish, tree: Path) -> Scored:
     result.covered = answer.covered
     result.input_tokens = answer.input_tokens
     result.output_tokens = answer.output_tokens
+    result.rerank_input_tokens = answer.rerank_input_tokens
+    result.rerank_output_tokens = answer.rerank_output_tokens
     result.cited = sorted(
         {
             f"{c.path.name}:{c.start_line}-{c.end_line}"
@@ -130,7 +137,11 @@ def summary(rows: list[Scored], price_in: float, price_out: float) -> dict[str, 
     uncovered = [r for r in rows if not r.covered_expected]
     answered = [r for r in rows if not r.error]
     cost = [
-        (r.input_tokens * price_in + r.output_tokens * price_out) / 1_000_000
+        (
+            (r.input_tokens + r.rerank_input_tokens) * price_in
+            + (r.output_tokens + r.rerank_output_tokens) * price_out
+        )
+        / 1_000_000
         for r in answered
     ]
 
@@ -153,6 +164,11 @@ def summary(rows: list[Scored], price_in: float, price_out: float) -> dict[str, 
         if answered
         else 0,
         "median output tokens": statistics.median(r.output_tokens for r in answered)
+        if answered
+        else 0,
+        "median rerank input tokens": statistics.median(
+            r.rerank_input_tokens for r in answered
+        )
         if answered
         else 0,
         "cost per answer (USD)": round(statistics.mean(cost), 4) if cost else 0,
@@ -183,6 +199,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("tree", type=Path)
     parser.add_argument("--language-model", required=True)
     parser.add_argument("--answer-model", required=True)
+    parser.add_argument(
+        "--rerank-model", default="", help="Model of the same backend that reranks."
+    )
     parser.add_argument("--price-in", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--price-out", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--only", nargs="+", default=(), help="Question ids to ask.")
@@ -196,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         tree,
         language_model=args.language_model,
         answer_model=args.answer_model,
+        rerank_model=args.rerank_model,
         allowed_language_models=(args.language_model,),
     ) as ish:
         for item in items:

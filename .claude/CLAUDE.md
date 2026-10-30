@@ -246,6 +246,15 @@ something broke. This is that record, so a rule is never argued from taste.
   median. Six of the seven misses never reached the model: the expected
   section was not in the ten chunks retrieved. Given the section, the
   model cited it 14 times in 15. Retrieval is the limit, not the model.
+  claude-haiku-5-5 scored the same 14, question by question.
+- Recall over the same 21 questions: 16 at 10 chunks, 20 at 30, 21 at 50.
+  The expected spec ranked 15th to 32nd behind test cases that share the
+  wording. A cap per file reached 17. A rerank by claude-haiku-5-5 of the
+  top 50, from the first 300 characters of each, put all 21 in its ten:
+  21 of 21 cited, 21 of 21 answered, 4 of 4 refused, in three runs out of
+  three. 13,984 rerank and 7,639 answer input tokens, 11.6 s, median.
+  At 30 candidates it fell to 19, because one source ranked 32nd. Hence
+  `rerank_model` and 50 `rerank_candidates`.
 - `claude --bare` skips the login as well as the hooks. The claude-cli
   backend turns off settings, tools, and MCP servers one by one instead,
   and runs in an empty directory.

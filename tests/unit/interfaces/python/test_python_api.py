@@ -466,3 +466,33 @@ class TestLink:
         with _ish(project) as ish:
             assert ish.link(chunk).startswith("file://")
             assert ish.link(chunk).endswith("/a.md#L2-4")
+
+
+class TestAskWithRerank:
+    def test_a_rerank_model_widens_the_search_and_picks_ten(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply, Selection
+        from ish.interfaces.python import api
+
+        for n in range(api.ASK_LIMIT + 5):
+            (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
+        shown: list[int] = []
+
+        class Model:
+            model_name = "m"
+
+            def answer(self, question, sources):
+                return Reply(passages=(Passage("ok", ("1",)),), covered=True)
+
+            def select(self, question, candidates, limit):
+                shown.append(len(candidates))
+                return Selection(ids=tuple(c.id for c in candidates)[:limit])
+
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: Model())
+        monkeypatch.setattr(bootstrap, "build_reranker", lambda s: Model())
+        settings = Settings(no_cache=True, git=False, rerank_candidates=14)
+        with Ish(project, settings=settings) as ish:
+            answer = ish.ask("function")
+        assert shown == [14]
+        assert len(answer.sources) == api.ASK_LIMIT

@@ -13,6 +13,7 @@ from ish.application.ports.language_model import (
     LanguageModelError,
     Passage,
     Reply,
+    Selection,
     Source,
 )
 
@@ -82,6 +83,50 @@ def parse(
     return Reply(
         passages=passages,
         covered=covered and bool(passages),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
+
+SELECT_PROMPT = (
+    "You choose the sources worth reading to answer a question. Each "
+    "candidate starts with its id, a number in brackets such as [1], then "
+    "its title and the start of its text. Reply in JSON with the ids of the "
+    "candidates most likely to hold the answer, best first, as the bare "
+    'numbers such as "1". Prefer a source that states a rule or a design '
+    "over one that only exercises it, such as a test case."
+)
+
+SELECT_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
+    "required": ["ids"],
+    "additionalProperties": False,
+}
+
+
+def select_prompt(question: str, candidates: Sequence[Source], limit: int) -> str:
+    """Return the user message that asks for at most *limit* candidate ids."""
+    blocks = [f"[{c.id}] {c.title}\n{c.text}" for c in candidates]
+    return "\n\n".join([*blocks, f"Choose at most {limit}.", f"Question: {question}"])
+
+
+def parse_ids(
+    text: str, backend: str, limit: int, input_tokens: int = 0, output_tokens: int = 0
+) -> Selection:
+    """Turn the JSON a model wrote into at most *limit* ids, without repeats.
+
+    Raise ``LanguageModelError`` naming *backend* when the text is not the
+    JSON the schema asks for.
+    """
+    try:
+        ids = [str(i) for i in json.loads(text)["ids"]]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise LanguageModelError(
+            f"{backend} did not reply with the ids to read: {exc}"
+        ) from exc
+    return Selection(
+        ids=tuple(dict.fromkeys(ids))[:limit],
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )

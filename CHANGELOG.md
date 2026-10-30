@@ -23,6 +23,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   tool, MCP server, and settings file off. It suits one person on their
   own machine, not a shared server. A search never builds a language
   model.
+- `rerank_model` lets a cheap model of the same backend pick the ten
+  chunks an answer reads from a wider search of `rerank_candidates`, 50
+  by default, from the start of each chunk. Measured on 25 questions
+  over a private specification tree, the expected source reached the
+  answer for 21 of 21 questions against 16 of 21, and every answer
+  cited it.
 - The MCP server offers an `ask` tool. It returns JSON: the answer with
   `[n]` markers, and per citation the path, the location as data, and a
   link that opens the source. When the documents do not answer the
