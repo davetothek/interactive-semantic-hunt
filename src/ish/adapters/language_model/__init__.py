@@ -24,9 +24,11 @@ nothing anywhere until an operator allows it.
 from collections.abc import Callable
 
 from ish.adapters.language_model.anthropic import AnthropicLanguageModel
+from ish.adapters.language_model.ollama import OllamaLanguageModel
 from ish.application.ports.language_model import LanguageModel
 
 LANGUAGE_MODELS: dict[str, Callable[[str], LanguageModel]] = {
     "anthropic": AnthropicLanguageModel,
+    "ollama": OllamaLanguageModel,
 }
 """Language model backends by option name. Register a new backend here."""

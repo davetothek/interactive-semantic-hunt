@@ -16,8 +16,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   it, ish says so, lists the closest sources, and exits 2. A language
   model writes the answer, and it is off by default: set
   `language_model`, `answer_model`, and `allowed_language_models`. The
-  `anthropic` backend reads its key from `ANTHROPIC_API_KEY`. A search
-  never builds a language model.
+  `anthropic` backend reads its key from `ANTHROPIC_API_KEY`. The
+  `ollama` backend runs a generation model on the local daemon and
+  refuses a host that is not this machine. A search never builds a
+  language model.
 - The MCP server offers an `ask` tool. It returns JSON: the answer with
   `[n]` markers, and per citation the path, the location as data, and a
   link that opens the source. When the documents do not answer the
