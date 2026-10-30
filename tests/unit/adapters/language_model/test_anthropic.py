@@ -136,6 +136,7 @@ class TestRequest:
         system = recorder.body["system"]
         assert "only the documents" in system
         assert NOT_COVERED in system
+        assert "short paragraphs" in system
         assert "output_config" not in recorder.body
 
 

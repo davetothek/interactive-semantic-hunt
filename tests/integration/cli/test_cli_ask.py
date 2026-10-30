@@ -75,8 +75,10 @@ class TestAsk:
         assert heading == "# what does the watchdog do"
         assert answer == "The watchdog resets the board[1]."
         assert sources_heading == "## Sources"
-        assert source.startswith("1. [docs/boot.md:1-3](file://")
-        assert source.endswith("/docs/boot.md#L1-3) — Watchdog")
+        link, heading = source.split("\n")
+        assert link.startswith("1. [docs/boot.md:1-3](file://")
+        assert link.endswith("/docs/boot.md#L1-3)")
+        assert heading == "   Watchdog"
 
     def test_not_covered_lists_the_closest_sources_and_exits_2(
         self, project: Path, monkeypatch, capsys

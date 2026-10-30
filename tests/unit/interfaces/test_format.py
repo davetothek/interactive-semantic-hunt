@@ -134,8 +134,10 @@ class TestFormatAnswer:
             "\n"
             "## Sources\n"
             "\n"
-            "1. [b.adoc:10-14](https://docs.example.com/b.adoc#L10-14) — b\n"
-            "2. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5) — a"
+            "1. [b.adoc:10-14](https://docs.example.com/b.adoc#L10-14)\n"
+            "   b\n"
+            "2. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
+            "   a"
         )
 
     def test_not_covered_lists_the_closest_sources(self) -> None:
@@ -146,8 +148,41 @@ class TestFormatAnswer:
         answer = Answer(parts=(), covered=False, sources=(a,))
         assert format_answer(answer, "MTBF?", self._link, Path("/d")) == (
             f"# MTBF?\n\n> {NOT_COVERED_TEXT}\n\n## Closest sources\n\n"
-            "1. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5) — a"
+            "1. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
+            "   a"
         )
+
+    def test_paragraphs_wrap_at_80_and_a_marker_stays_on_its_word(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.interfaces.format import WIDTH, format_answer
+
+        a = self._chunk("a")
+        long = "word " * 40 + "end"
+        answer = Answer(
+            parts=(AnswerPart(long + "\n\n", (a,)), AnswerPart("Second.", (a,))),
+            covered=True,
+            sources=(a,),
+        )
+        out = format_answer(answer, "q", self._link, Path("/d"))
+        body = out.split("## Sources")[0].strip().split("\n")[2:]
+        assert all(len(line) <= WIDTH for line in body)
+        assert body[-3].endswith("end[1]")
+        assert body[-2:] == ["", "Second.[1]"]
+
+    def test_a_long_heading_wraps_under_its_source(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import WIDTH, format_answer
+
+        heading = " > ".join(["Overview of the function"] * 6)
+        chunk = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", heading, 1, 2)
+        answer = Answer(
+            parts=(AnswerPart("x", (chunk,)),), covered=True, sources=(chunk,)
+        )
+        out = format_answer(answer, "q", self._link, Path("/d"))
+        below = out.split("## Sources\n\n")[1].split("\n")[1:]
+        assert len(below) > 1
+        assert all(line.startswith("   ") and len(line) <= WIDTH for line in below)
 
 
 class TestPartsAreSpaced:
@@ -174,3 +209,26 @@ class TestPartsAreSpaced:
         from ish.interfaces.format import number_citations
 
         assert number_citations(self._answer(*texts))[0] == joined
+
+
+class TestParagraphs:
+    """A part that ends a paragraph ends in newlines, after its markers."""
+
+    def test_markers_stay_before_the_paragraph_break(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import number_citations
+
+        a = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        b = Chunk(Path("/d/b.adoc"), "t", "section", "asciidoc", "b", 3, 4)
+        answer = Answer(
+            parts=(
+                AnswerPart("It resets.\n\n", (a,)),
+                AnswerPart("It is refused in test mode.", (b,)),
+            ),
+            covered=True,
+            sources=(a, b),
+        )
+        assert number_citations(answer)[0] == (
+            "It resets.[1]\n\nIt is refused in test mode.[2]"
+        )

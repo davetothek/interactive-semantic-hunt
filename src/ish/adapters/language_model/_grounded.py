@@ -23,6 +23,8 @@ SYSTEM_PROMPT = (
     "brackets such as [1], followed by its title. Reply in JSON. Split the "
     "answer into passages, and list for each passage the ids of the sources "
     'that support it, as the bare numbers such as "1", never the titles. '
+    "Write short paragraphs of one topic each, and end the text of the last "
+    "passage of a paragraph with two newline characters. "
     "Do not use knowledge "
     "from outside the sources, and do not guess. If the sources do not "
     "answer the question, set covered to false and give no passages."

@@ -97,7 +97,10 @@ def number_citations(answer: Answer) -> tuple[str, list[Chunk]]:
         marks = "".join(
             f"[{numbers.setdefault(c, len(numbers) + 1)}]" for c in part.cites
         )
-        piece = f"{part.text}{marks}"
+        # Keep the markers on the claim they cite: a part that ends a
+        # paragraph ends in newlines, and the markers go before them.
+        body = part.text.rstrip()
+        piece = f"{body}{marks}{part.text[len(body) :]}"
         # A model may split sentences into parts with no space between
         # them. Add one, but never before punctuation that ends a clause.
         if (
@@ -112,6 +115,11 @@ def number_citations(answer: Answer) -> tuple[str, list[Chunk]]:
     return text.strip(), list(numbers)
 
 
+# Columns an answer wraps to. A heading stays on one line, and a link is
+# never broken, so those two may run past it.
+WIDTH = 80
+
+
 def format_answer(
     answer: Answer,
     question: str,
@@ -120,23 +128,43 @@ def format_answer(
 ) -> str:
     """Format an answer as Markdown: the question, the answer, its sources.
 
-    Markdown reads well in a terminal and in an editor. Each source is a
-    link that opens the file at its location, with the path and lines as
-    its text, so the line still names the place where no link is
-    followed. For a question the documents do not cover, list the
-    closest sources.
+    Markdown reads well in a terminal and in an editor. Wrap the text to
+    ``WIDTH`` columns, a paragraph at a time. List each source as a link
+    that opens the file at its location, with the path and lines as its
+    text, so the line still names the place where no link is followed,
+    and put its heading on the lines below. For a question the documents
+    do not cover, list the closest sources.
     """
     lines = [f"# {_one_line(question)}", ""]
     if answer.covered:
         text, cited = number_citations(answer)
-        lines += [text, "", "## Sources", ""]
+        for paragraph in text.split("\n\n"):
+            if paragraph.strip():
+                lines += [_fill(paragraph), ""]
+        lines += ["## Sources", ""]
     else:
         cited = list(answer.sources)
-        lines += [f"> {NOT_COVERED_TEXT}", "", "## Closest sources", ""]
+        lines += [_fill(NOT_COVERED_TEXT, "> "), "", "## Closest sources", ""]
     for n, chunk in enumerate(cited, 1):
         place = f"{display_path(chunk.path, base)}{chunk.location.render()}"
-        lines.append(f"{n}. [{place}]({link(chunk)}) — {symbol_of(chunk)}")
+        marker = f"{n}. "
+        lines.append(f"{marker}[{place}]({link(chunk)})")
+        lines.append(_fill(symbol_of(chunk), " " * len(marker)))
     return "\n".join(lines)
+
+
+def _fill(text: str, indent: str = "") -> str:
+    """Wrap *text* to ``WIDTH``, every line after *indent*, never inside a word."""
+    import textwrap
+
+    return textwrap.fill(
+        _one_line(text),
+        width=WIDTH,
+        initial_indent=indent,
+        subsequent_indent=indent,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
 
 
 def _one_line(text: str) -> str:

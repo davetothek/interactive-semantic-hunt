@@ -23,6 +23,11 @@ def test_the_system_prompt_forbids_outside_knowledge() -> None:
     assert "covered to false" in _grounded.SYSTEM_PROMPT
 
 
+def test_the_system_prompt_asks_for_paragraphs() -> None:
+    assert "short paragraphs" in _grounded.SYSTEM_PROMPT
+    assert "two newline characters" in _grounded.SYSTEM_PROMPT
+
+
 class TestParse:
     def test_passages_and_their_ids(self) -> None:
         text = json.dumps(
