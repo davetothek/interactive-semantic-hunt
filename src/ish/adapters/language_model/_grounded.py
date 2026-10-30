@@ -30,23 +30,22 @@ SYSTEM_PROMPT = (
     "answer the question, set covered to false and give no passages."
 )
 
+PASSAGES: dict[str, object] = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "source_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["text", "source_ids"],
+        "additionalProperties": False,
+    },
+}
+
 SCHEMA: dict[str, object] = {
     "type": "object",
-    "properties": {
-        "covered": {"type": "boolean"},
-        "passages": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string"},
-                    "source_ids": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["text", "source_ids"],
-                "additionalProperties": False,
-            },
-        },
-    },
+    "properties": {"covered": {"type": "boolean"}, "passages": PASSAGES},
     "required": ["covered", "passages"],
     "additionalProperties": False,
 }
@@ -131,4 +130,55 @@ def parse_ids(
         ids=tuple(dict.fromkeys(ids))[:limit],
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+    )
+
+
+STEP_PROMPT = (
+    SYSTEM_PROMPT
+    + " You may ask for more searches before you answer. When the sources "
+    "fall short, or name a term, an identifier, or a document worth finding, "
+    "put up to three new search queries in search and give no passages. "
+    "Write a query in new words: the search matches by meaning. When the "
+    "sources are enough, or no turns are left, answer and leave search empty."
+)
+
+STEP_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "covered": {"type": "boolean"},
+        "passages": PASSAGES,
+        "search": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["covered", "passages", "search"],
+    "additionalProperties": False,
+}
+
+
+def step_prompt(
+    question: str, sources: Sequence[Source], searched: Sequence[str], turns_left: int
+) -> str:
+    """Return the user message of one turn: the sources, what ran, what is left."""
+    ran = "\n".join(f"- {q}" for q in searched) or "- none"
+    return "\n\n".join(
+        [
+            prompt(question, sources),
+            f"Searches already run:\n{ran}",
+            f"Turns left for searches: {turns_left}",
+        ]
+    )
+
+
+def parse_step(
+    text: str, backend: str, input_tokens: int = 0, output_tokens: int = 0
+) -> Reply:
+    """Turn the JSON of one turn into a reply, with any searches it asks for."""
+    reply = parse(text, backend, input_tokens, output_tokens)
+    # parse has already refused a reply that is not a JSON object.
+    searches = tuple(str(q).strip() for q in json.loads(text).get("search") or ())
+    return Reply(
+        passages=reply.passages,
+        covered=reply.covered,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        searches=tuple(q for q in searches if q),
     )

@@ -496,3 +496,25 @@ class TestAskWithRerank:
             answer = ish.ask("function")
         assert shown == [14]
         assert len(answer.sources) == api.ASK_LIMIT
+
+
+class TestAskTurns:
+    def test_ask_turns_reach_the_use_case(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply
+
+        class Agent:
+            model_name = "agent"
+            turns_seen: list[int] = []
+
+            def step(self, question, sources, searched, turns_left):
+                self.turns_seen.append(turns_left)
+                return Reply(passages=(Passage("ok", ("1",)),), covered=True)
+
+        agent = Agent()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: agent)
+        settings = Settings(no_cache=True, git=False, ask_turns=2)
+        with Ish(project, settings=settings) as ish:
+            assert ish.ask("configure").turns == 1
+        assert agent.turns_seen == [2]

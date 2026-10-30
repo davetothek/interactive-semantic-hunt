@@ -189,6 +189,23 @@ source reached the answer for 21 of 21 questions with the rerank, against
 with Haiku 5.5 for both calls an answer costs about a third of a cent at
 API prices.
 
+`ask_turns` lets the model ask for follow-up searches before it answers,
+up to that many turns. It reads the first sources, and when they fall short
+or name a term worth finding, it sends up to three new queries. ish runs
+them with the same filters, adds the best chunks it has not read, and asks
+again. The model still sees only what ish sends, so this works the same on
+a tree of documents with no code at all. `ish --ask` lists the follow-up
+searches below the sources.
+
+```toml
+ask_turns = 3
+```
+
+Measured on 25 questions with the rerank and Haiku 5.5: 19 were answered in
+one turn, so they cost the same. The model searched again for two hard
+questions and for all four that the documents do not answer, and it still
+refused those four. An answer cost about 0.4 cents against 0.3.
+
 `link_base` publishes the links of an answer under a base URL. With
 `link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164
 of `spec/a.adoc` under the tree links to

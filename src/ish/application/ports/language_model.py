@@ -55,12 +55,15 @@ class Reply:
         covered: False when the sources do not answer the question.
         input_tokens: Tokens the model read.
         output_tokens: Tokens the model wrote.
+        searches: Queries the model asks to run before it answers. A reply
+            that holds any is not an answer yet.
     """
 
     passages: tuple[Passage, ...]
     covered: bool
     input_tokens: int = 0
     output_tokens: int = 0
+    searches: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +93,23 @@ class LanguageModel(Protocol):
 
         Raise ``LanguageModelError`` when the model does not answer. Never
         answer from knowledge outside *sources*.
+        """
+        ...
+
+    def step(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        searched: Sequence[str],
+        turns_left: int,
+    ) -> Reply:
+        """Answer from *sources*, or ask for more searches first.
+
+        Return a reply with ``searches`` to have them run, and their
+        results added to *sources* on the next call. *searched* holds the
+        queries already run. With no turns left, answer, or say the
+        sources do not cover the question. Never answer from knowledge
+        outside *sources*.
         """
         ...
 

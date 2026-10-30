@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from ish.application.ports.language_model import LanguageModel, Source
+from ish.application.ports.language_model import LanguageModel, Reply, Source
 from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
@@ -23,6 +23,10 @@ DEFAULT_PICK = 10
 # Characters of the start of a chunk that a rerank model reads to judge
 # it. Enough for the heading and the first sentences.
 PREVIEW_CHARS = 300
+
+# Queries a model may ask for in one turn, and chunks each one adds.
+SEARCHES_A_TURN = 3
+CHUNKS_A_SEARCH = 5
 
 # Characters of chunk text one question may send. About 15,000 tokens at
 # the four characters a token that English text averages.
@@ -55,6 +59,9 @@ class Answer:
         output_tokens: Tokens the model wrote.
         rerank_input_tokens: Tokens the rerank model read, or 0 when none ran.
         rerank_output_tokens: Tokens the rerank model wrote.
+        searches: Follow-up queries the model asked for and ish ran, in
+            order. Empty when the model answered from the first search.
+        turns: Calls to the model that wrote the answer.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -66,6 +73,8 @@ class Answer:
     output_tokens: int = 0
     rerank_input_tokens: int = 0
     rerank_output_tokens: int = 0
+    searches: tuple[str, ...] = ()
+    turns: int = 0
 
 
 class AnswerQuestion:
@@ -80,6 +89,7 @@ class AnswerQuestion:
         read: Callable[[Chunk], str | None] = read_lines,
         reranker: LanguageModel | None = None,
         pick: int = DEFAULT_PICK,
+        turns: int = 0,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -92,6 +102,11 @@ class AnswerQuestion:
         search returned, from the start of each, before any is read in
         full. A wide search then finds the source a narrow one ranks too
         low, and the answer still reads only a few chunks.
+
+        With *turns* above 0, let the model ask for follow-up searches up
+        to that many times before it answers. Each search runs through
+        *search*, so it reads the same indexes and filters, and adds the
+        best chunks the model has not read, within the same budget.
         """
         self._search = search
         self._model = model
@@ -99,6 +114,7 @@ class AnswerQuestion:
         self._read = read
         self._reranker = reranker
         self._pick = pick
+        self._turns = turns
 
     def answer(self, question: str) -> Answer:
         """Answer *question* from the chunks a search returns.
@@ -115,11 +131,10 @@ class AnswerQuestion:
             found, rerank_in, rerank_out = rerank
         else:
             rerank_in = rerank_out = 0
-        texts, dropped = self._fit(found)
+        texts, dropped, left = self._fit(found, self._budget)
         if dropped:
             log.info("%d chunks did not fit the answer budget", dropped)
-        kept = [chunk for chunk, _ in texts]
-        if not kept:
+        if not texts:
             return Answer(
                 parts=(),
                 covered=False,
@@ -129,16 +144,20 @@ class AnswerQuestion:
                 rerank_output_tokens=rerank_out,
             )
 
-        sources = [
-            _source(str(n), chunk, text) for n, (chunk, text) in enumerate(texts, 1)
-        ]
-        by_id = dict(zip((s.id for s in sources), kept, strict=True))
-        reply = self._model.answer(question, sources)
+        if self._turns > 0:
+            reply, texts, searched, turns, left = self._converse(question, texts, left)
+        else:
+            sources = [_source(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            reply = self._model.answer(question, sources)
+            searched, turns = [], 1
+        kept = [chunk for chunk, _ in texts]
+        by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
         log.info(
-            "%s read %d tokens and wrote %d",
+            "%s read %d tokens and wrote %d in %d turns",
             self._model.model_name,
             reply.input_tokens,
             reply.output_tokens,
+            turns,
         )
         parts = (
             tuple(_part(p.text, p.source_ids, by_id) for p in reply.passages)
@@ -155,7 +174,48 @@ class AnswerQuestion:
             output_tokens=reply.output_tokens,
             rerank_input_tokens=rerank_in,
             rerank_output_tokens=rerank_out,
+            searches=tuple(searched),
+            turns=turns,
         )
+
+    def _converse(
+        self, question: str, texts: list[tuple[Chunk, str]], left: int
+    ) -> tuple[Reply, list[tuple[Chunk, str]], list[str], int, int]:
+        """Let the model ask for searches until it answers or the turns run out.
+
+        Return the final reply with the token counts of every turn summed,
+        the chunks it read, the queries run, the turns taken, and the
+        budget left. A turn that asks only for queries already run counts
+        as a turn, so a model that repeats itself still stops.
+        """
+        searched: list[str] = []
+        read_in = wrote = turns = 0
+        for turns_left in range(self._turns, -1, -1):
+            sources = [_source(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            reply = self._model.step(question, sources, searched, turns_left)
+            turns += 1
+            read_in += reply.input_tokens
+            wrote += reply.output_tokens
+            if not reply.searches or turns_left == 0:
+                break
+            seen = {chunk for chunk, _ in texts}
+            fresh_queries = [
+                q for q in dict.fromkeys(reply.searches) if q not in searched
+            ]
+            for query in fresh_queries[:SEARCHES_A_TURN]:
+                searched.append(query)
+                fresh = [c for c, _ in self._search(query) if c not in seen]
+                added, _, left = self._fit(fresh[:CHUNKS_A_SEARCH], left)
+                texts = texts + added
+                seen.update(chunk for chunk, _ in added)
+            log.info("Turn %d searched %s", turns, fresh_queries[:SEARCHES_A_TURN])
+        final = Reply(
+            passages=reply.passages,
+            covered=reply.covered and not (reply.searches and not reply.passages),
+            input_tokens=read_in,
+            output_tokens=wrote,
+        )
+        return final, texts, searched, turns, left
 
     def _rerank(
         self, question: str, found: list[Chunk]
@@ -188,16 +248,19 @@ class AnswerQuestion:
         )
         return chosen, selection.input_tokens, selection.output_tokens
 
-    def _fit(self, chunks: list[Chunk]) -> tuple[list[tuple[Chunk, str]], int]:
-        """Keep the best chunks whose text fits the budget, in rank order.
+    def _fit(
+        self, chunks: list[Chunk], left: int
+    ) -> tuple[list[tuple[Chunk, str]], int, int]:
+        """Keep the best chunks whose text fits *left* characters, in rank order.
 
         Skip a chunk that does not fit and try the next, so one long
         chunk does not push out every shorter one ranked below it. Skip a
         chunk whose text cannot be read or is empty: a model given a
-        title and no text has nothing to answer from.
+        title and no text has nothing to answer from. Return the kept
+        chunks with their text, how many were left out, and the budget
+        left.
         """
         kept: list[tuple[Chunk, str]] = []
-        left = self._budget
         for chunk in chunks:
             text = self._read(chunk)
             if not text or not text.strip():
@@ -206,7 +269,7 @@ class AnswerQuestion:
             if len(text) <= left:
                 kept.append((chunk, text))
                 left -= len(text)
-        return kept, len(chunks) - len(kept)
+        return kept, len(chunks) - len(kept), left
 
 
 def _source(source_id: str, chunk: Chunk, text: str) -> Source:

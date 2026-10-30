@@ -291,3 +291,110 @@ class TestRerank:
         assert model.calls == []
         assert not result.covered
         assert result.rerank_input_tokens == 300
+
+
+class FakeAgent:
+    """Ask for the queued searches, one turn each, then answer."""
+
+    model_name = "agent"
+
+    def __init__(self, *turns: tuple[str, ...]) -> None:
+        self.turns = list(turns)
+        self.calls: list[tuple[list[Source], list[str], int]] = []
+
+    def step(self, question, sources, searched, turns_left):
+        self.calls.append((list(sources), list(searched), turns_left))
+        if self.turns and turns_left > 0:
+            return Reply(
+                passages=(),
+                covered=False,
+                input_tokens=10,
+                output_tokens=2,
+                searches=self.turns.pop(0),
+            )
+        last = sources[-1].id
+        return Reply(
+            passages=(Passage("Found it.", (last,)),),
+            covered=True,
+            input_tokens=10,
+            output_tokens=2,
+        )
+
+
+def routed(*first: Chunk, **by_query: list[Chunk]):
+    def search(query: str) -> list[Match]:
+        chunks = by_query.get(query.replace(" ", "_"), first)
+        return [Match(c, 1.0) for c in chunks]
+
+    return search
+
+
+class TestFollowUpSearches:
+    """The model may ask for searches before it answers, up to a limit."""
+
+    def test_a_search_adds_new_chunks_and_the_answer_cites_them(self) -> None:
+        start, found = make_chunk("start", "Spec."), make_chunk("found", "Handler.")
+        agent = FakeAgent(("the handler",))
+        result = AnswerQuestion(
+            search=routed(start, the_handler=[start, found]), model=agent, turns=3
+        ).answer("q")
+        assert result.searches == ("the handler",)
+        assert result.turns == 2
+        assert result.sources == (start, found)
+        assert result.parts[0].cites == (found,)
+        assert [s.id for s in agent.calls[1][0]] == ["1", "2"]
+        assert agent.calls[1][1] == ["the handler"]
+        assert (result.input_tokens, result.output_tokens) == (20, 4)
+
+    def test_the_last_turn_has_no_searches_left(self) -> None:
+        agent = FakeAgent(("a",), ("b",), ("c",))
+        result = AnswerQuestion(
+            search=routed(make_chunk("x")), model=agent, turns=2
+        ).answer("q")
+        assert [turns_left for _, _, turns_left in agent.calls] == [2, 1, 0]
+        assert result.searches == ("a", "b")
+        assert result.covered
+
+    def test_a_model_that_still_asks_on_the_last_turn_is_not_covered(self) -> None:
+        class Asker:
+            model_name = "asker"
+
+            def step(self, question, sources, searched, turns_left):
+                return Reply(passages=(), covered=True, searches=("more",))
+
+        result = AnswerQuestion(
+            search=routed(make_chunk("x")), model=Asker(), turns=1
+        ).answer("q")
+        assert not result.covered
+        assert result.turns == 2
+
+    def test_a_repeated_query_runs_once(self) -> None:
+        runs: list[str] = []
+
+        def search(query: str) -> list[Match]:
+            runs.append(query)
+            return [Match(make_chunk("x"), 1.0)]
+
+        agent = FakeAgent(("same", "same", "other", "4th", "5th"), ("same",))
+        result = AnswerQuestion(search=search, model=agent, turns=3).answer("q")
+        assert runs == ["q", "same", "other", "4th"]
+        assert result.searches == ("same", "other", "4th")
+
+    def test_follow_up_chunks_keep_to_the_budget(self) -> None:
+        start = make_chunk("start", "x" * 6)
+        big, small = make_chunk("big", "y" * 9), make_chunk("small", "z" * 3)
+        agent = FakeAgent(("more",))
+        result = AnswerQuestion(
+            search=routed(start, more=[big, small]),
+            model=agent,
+            turns=1,
+            budget_chars=10,
+        ).answer("q")
+        assert result.sources == (start, small)
+
+    def test_no_turns_answers_in_one_call(self) -> None:
+        model = FakeModel()
+        result = AnswerQuestion(search=searching(make_chunk("a")), model=model).answer(
+            "q"
+        )
+        assert (result.turns, result.searches, len(model.calls)) == (1, (), 1)

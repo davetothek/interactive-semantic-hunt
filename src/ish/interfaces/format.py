@@ -150,6 +150,9 @@ def format_answer(
         marker = f"{n}. "
         lines.append(f"{marker}[{place}]({link(chunk)})")
         lines.append(_fill(symbol_of(chunk), " " * len(marker)))
+    if answer.searches:
+        lines += ["", "## Follow-up searches", ""]
+        lines += [_fill(query, "- ") for query in answer.searches]
     return "\n".join(lines)
 
 

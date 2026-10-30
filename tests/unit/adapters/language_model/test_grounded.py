@@ -96,3 +96,40 @@ class TestSelect:
     def test_the_wrong_shape_names_the_backend(self, text: str) -> None:
         with pytest.raises(LanguageModelError, match="backend-y did not reply"):
             _grounded.parse_ids(text, "backend-y", 5)
+
+
+class TestStep:
+    def test_the_step_prompt_names_the_searches_run_and_the_turns_left(self) -> None:
+        sources = [Source("1", "/d/a.adoc:1-9 A", "Alpha.")]
+        text = _grounded.step_prompt("Why?", sources, ["first query"], 2)
+        assert text.startswith(_grounded.prompt("Why?", sources))
+        assert "Searches already run:\n- first query" in text
+        assert text.endswith("Turns left for searches: 2")
+        assert "- none" in _grounded.step_prompt("Why?", sources, [], 0)
+
+    def test_the_step_prompt_extends_the_answer_prompt(self) -> None:
+        assert _grounded.STEP_PROMPT.startswith(_grounded.SYSTEM_PROMPT)
+        assert "up to three new search queries" in _grounded.STEP_PROMPT
+        assert _grounded.STEP_SCHEMA["required"] == ["covered", "passages", "search"]
+
+    def test_a_step_with_searches(self) -> None:
+        reply = _grounded.parse_step(
+            '{"covered": false, "passages": [], "search": [" a ", "", "b"]}',
+            "m",
+            4,
+            1,
+        )
+        assert reply.searches == ("a", "b")
+        assert (reply.input_tokens, reply.output_tokens) == (4, 1)
+
+    def test_a_step_that_answers(self) -> None:
+        reply = _grounded.parse_step(
+            '{"covered": true, "passages": [{"text": "x", "source_ids": ["1"]}],'
+            ' "search": []}',
+            "m",
+        )
+        assert reply.covered and reply.searches == ()
+
+    def test_a_step_with_no_search_field(self) -> None:
+        reply = _grounded.parse_step('{"covered": false, "passages": []}', "m")
+        assert reply.searches == ()

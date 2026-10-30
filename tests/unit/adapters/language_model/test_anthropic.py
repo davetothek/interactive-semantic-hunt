@@ -251,3 +251,27 @@ class TestSelect:
             "content": [{"type": "text", "text": '{"ids": []}'}],
         }
         assert _model().select("q", SOURCES, 5).ids == ()
+
+
+class TestStep:
+    def test_step_fixes_the_reply_to_the_step_schema(self, recorder) -> None:
+        recorder.reply = {
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 90, "output_tokens": 7},
+            "content": [
+                {
+                    "type": "text",
+                    "text": '{"covered": true, "passages": '
+                    '[{"text": "x", "source_ids": ["1"]}], "search": []}',
+                }
+            ],
+        }
+        reply = _model().step("q", SOURCES, [], 0)
+        body = recorder.body
+        assert body["system"] == _grounded.STEP_PROMPT
+        assert body["output_config"]["format"]["schema"] == _grounded.STEP_SCHEMA
+        assert body["messages"][0]["content"] == _grounded.step_prompt(
+            "q", SOURCES, [], 0
+        )
+        assert reply.covered and reply.passages[0].source_ids == ("1",)
+        assert (reply.input_tokens, reply.output_tokens) == (90, 7)

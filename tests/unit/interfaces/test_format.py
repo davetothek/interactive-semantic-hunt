@@ -232,3 +232,20 @@ class TestParagraphs:
         assert number_citations(answer)[0] == (
             "It resets.[1]\n\nIt is refused in test mode.[2]"
         )
+
+
+class TestFollowUpSearchesAreShown:
+    def test_the_searches_follow_the_sources(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import format_answer
+
+        a = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        answer = Answer(
+            parts=(AnswerPart("x", (a,)),),
+            covered=True,
+            sources=(a,),
+            searches=("the handler", "the register"),
+        )
+        out = format_answer(answer, "q", lambda c: "file:///d/a.adoc#L1-2", Path("/d"))
+        assert out.endswith("## Follow-up searches\n\n- the handler\n- the register")

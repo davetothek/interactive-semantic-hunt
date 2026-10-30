@@ -60,6 +60,8 @@ class Scored:
     output_tokens: int = 0
     rerank_input_tokens: int = 0
     rerank_output_tokens: int = 0
+    turns: int = 0
+    searches: list[str] = field(default_factory=list)
     error: str = ""
 
 
@@ -119,6 +121,8 @@ def score(item: dict, ish: Ish, tree: Path) -> Scored:
     result.output_tokens = answer.output_tokens
     result.rerank_input_tokens = answer.rerank_input_tokens
     result.rerank_output_tokens = answer.rerank_output_tokens
+    result.turns = answer.turns
+    result.searches = list(answer.searches)
     result.cited = sorted(
         {
             f"{c.path.name}:{c.start_line}-{c.end_line}"
@@ -166,6 +170,7 @@ def summary(rows: list[Scored], price_in: float, price_out: float) -> dict[str, 
         "median output tokens": statistics.median(r.output_tokens for r in answered)
         if answered
         else 0,
+        "median turns": statistics.median(r.turns for r in answered) if answered else 0,
         "median rerank input tokens": statistics.median(
             r.rerank_input_tokens for r in answered
         )
@@ -202,6 +207,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--rerank-model", default="", help="Model of the same backend that reranks."
     )
+    parser.add_argument(
+        "--ask-turns", type=int, default=0, help="Follow-up searches allowed."
+    )
     parser.add_argument("--price-in", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--price-out", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--only", nargs="+", default=(), help="Question ids to ask.")
@@ -216,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         language_model=args.language_model,
         answer_model=args.answer_model,
         rerank_model=args.rerank_model,
+        ask_turns=args.ask_turns,
         allowed_language_models=(args.language_model,),
     ) as ish:
         for item in items:

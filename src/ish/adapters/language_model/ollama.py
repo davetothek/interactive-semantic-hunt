@@ -70,6 +70,23 @@ class OllamaLanguageModel:
         )
         return _grounded.parse(text, f"Ollama model {self.model_name}", read, wrote)
 
+    def step(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        searched: Sequence[str],
+        turns_left: int,
+    ) -> Reply:
+        """Answer, or ask for searches, in the JSON the schema fixes."""
+        text, read, wrote = self._chat(
+            _grounded.STEP_PROMPT,
+            _grounded.STEP_SCHEMA,
+            _grounded.step_prompt(question, sources, searched, turns_left),
+        )
+        return _grounded.parse_step(
+            text, f"Ollama model {self.model_name}", read, wrote
+        )
+
     def select(
         self, question: str, candidates: Sequence[Source], limit: int
     ) -> Selection:

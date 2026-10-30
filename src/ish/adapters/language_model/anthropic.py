@@ -82,6 +82,54 @@ class AnthropicLanguageModel:
             output_tokens=int(usage.get("output_tokens") or 0),
         )
 
+    def step(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        searched: Sequence[str],
+        turns_left: int,
+    ) -> Reply:
+        """Answer, or ask for searches, with structured output.
+
+        A turn that may ask for searches replies in JSON, which rules out
+        native citations. The passages name their sources by id instead.
+        """
+        text, read, wrote = self._structured(
+            _grounded.STEP_PROMPT,
+            _grounded.STEP_SCHEMA,
+            _grounded.step_prompt(question, sources, searched, turns_left),
+        )
+        return _grounded.parse_step(text, self.model_name, read, wrote)
+
+    def _structured(
+        self, system: str, schema: dict[str, object], prompt: str
+    ) -> tuple[str, int, int]:
+        """Send one request fixed to *schema*, and return its text and tokens."""
+        body = self._post(
+            {
+                "model": self.model_name,
+                "max_tokens": MAX_TOKENS,
+                "system": system,
+                "output_config": {"format": {"type": "json_schema", "schema": schema}},
+                "messages": [{"role": "user", "content": prompt}],
+            }
+        )
+        if body.get("stop_reason") in ("refusal", "max_tokens"):
+            raise LanguageModelError(
+                f"{self.model_name} did not finish ({body.get('stop_reason')})."
+            )
+        text = "".join(
+            str(b.get("text") or "")
+            for b in body.get("content") or []
+            if b.get("type") == "text"
+        )
+        usage = body.get("usage") or {}
+        return (
+            text,
+            int(usage.get("input_tokens") or 0),
+            int(usage.get("output_tokens") or 0),
+        )
+
     def select(
         self, question: str, candidates: Sequence[Source], limit: int
     ) -> Selection:
@@ -90,43 +138,12 @@ class AnthropicLanguageModel:
         Choosing cites nothing, so this call can fix the reply to a JSON
         schema, which the answer call cannot do beside citations.
         """
-        body = self._post(
-            {
-                "model": self.model_name,
-                "max_tokens": MAX_TOKENS,
-                "system": _grounded.SELECT_PROMPT,
-                "output_config": {
-                    "format": {
-                        "type": "json_schema",
-                        "schema": _grounded.SELECT_SCHEMA,
-                    }
-                },
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": _grounded.select_prompt(question, candidates, limit),
-                    }
-                ],
-            }
+        text, read, wrote = self._structured(
+            _grounded.SELECT_PROMPT,
+            _grounded.SELECT_SCHEMA,
+            _grounded.select_prompt(question, candidates, limit),
         )
-        if body.get("stop_reason") in ("refusal", "max_tokens"):
-            raise LanguageModelError(
-                f"{self.model_name} did not finish choosing sources "
-                f"({body.get('stop_reason')})."
-            )
-        text = "".join(
-            str(b.get("text") or "")
-            for b in body.get("content") or []
-            if b.get("type") == "text"
-        )
-        usage = body.get("usage") or {}
-        return _grounded.parse_ids(
-            text,
-            self.model_name,
-            limit,
-            input_tokens=int(usage.get("input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
-        )
+        return _grounded.parse_ids(text, self.model_name, limit, read, wrote)
 
     def _post(self, payload: dict[str, object]) -> dict:
         """Send one request and return the decoded reply."""

@@ -162,6 +162,7 @@ builds a language model and sends no text anywhere.
 | `--allowed-language-models NAME ...` | Backends that may receive text. Empty allows none |
 | `--rerank-model MODEL` | Model of the same backend that picks the chunks an answer reads |
 | `--rerank-candidates N` | Chunks the rerank model chooses from (default 50) |
+| `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
 | `--link-base URL` | Base URL where the tree is published, for the links of an answer |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read

@@ -30,6 +30,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   over a private specification tree, the expected source reached the
   answer for 21 of 21 questions against 16 of 21, and every answer
   cited it.
+- `ask_turns` lets the model ask for up to three follow-up searches a
+  turn, for that many turns, before it answers. ish runs them with the
+  same filters and adds what they find within the same budget. The
+  model sees only what ish sends, so it works on a tree of documents
+  alone. `ish --ask` lists the searches below the sources, and the
+  `ask` tool returns them with the number of turns.
 - The MCP server offers an `ask` tool. It returns JSON: the answer with
   `[n]` markers, and per citation the path, the location as data, and a
   link that opens the source. When the documents do not answer the

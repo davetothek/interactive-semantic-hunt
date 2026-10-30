@@ -952,6 +952,7 @@ class TestAsk:
         )
         assert "sources" not in reply
         assert (reply["rerank_input_tokens"], reply["rerank_output_tokens"]) == (0, 0)
+        assert (reply["turns"], reply["searches"]) == (1, [])
 
     def test_not_covered_returns_the_closest_sources(
         self, tools: IshTools, project: Path, stub_backend, model

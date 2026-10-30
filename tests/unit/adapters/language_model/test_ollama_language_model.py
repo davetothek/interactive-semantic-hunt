@@ -169,3 +169,20 @@ class TestSelect:
         )
         assert selection.ids == ("1",)
         assert (selection.input_tokens, selection.output_tokens) == (40, 3)
+
+
+class TestStep:
+    def test_step_sends_the_step_schema(self, recorder) -> None:
+        recorder.reply = {
+            "message": {
+                "content": '{"covered": false, "passages": [], "search": ["x"]}'
+            }
+        }
+        reply = _model().step("q", SOURCES, ["done"], 1)
+        body = json.loads(recorder.requests[0][0].data)
+        assert body["format"] == _grounded.STEP_SCHEMA
+        assert body["messages"][0]["content"] == _grounded.STEP_PROMPT
+        assert body["messages"][1]["content"] == _grounded.step_prompt(
+            "q", SOURCES, ["done"], 1
+        )
+        assert reply.searches == ("x",)

@@ -293,6 +293,7 @@ class Ish:
             model=self._model,
             reranker=self._reranker,
             pick=ASK_LIMIT,
+            turns=self.settings.ask_turns,
         )
         return use_case.answer(question)
 

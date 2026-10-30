@@ -326,6 +326,8 @@ class IshTools:
             "rerank_input_tokens": answer.rerank_input_tokens,
             "rerank_output_tokens": answer.rerank_output_tokens,
             "dropped": answer.dropped,
+            "turns": answer.turns,
+            "searches": list(answer.searches),
         }
         if answer.covered:
             text, cited = number_citations(answer)

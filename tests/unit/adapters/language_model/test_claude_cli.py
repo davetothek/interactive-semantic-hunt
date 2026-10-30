@@ -184,3 +184,25 @@ class TestEnvironment:
         assert "ISH_MCP_TOKEN" not in env
         assert "ANTHROPIC_API_KEY" not in env
         assert not any(name.startswith("ISH_") for name in env)
+
+
+class TestStep:
+    def test_step_runs_the_step_prompt_and_schema(self, runner) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {
+                    "covered": False,
+                    "passages": [],
+                    "search": ["where is it handled"],
+                },
+                "usage": {"input_tokens": 70, "output_tokens": 6},
+            }
+        )
+        reply = ClaudeCliLanguageModel("haiku", timeout=5).step("q", SOURCES, [], 2)
+        call = runner.calls[0]
+        assert call["args"] == command(
+            "/usr/bin/claude", "haiku", _grounded.STEP_PROMPT, _grounded.STEP_SCHEMA
+        )
+        assert call["input"] == _grounded.step_prompt("q", SOURCES, [], 2)
+        assert reply.searches == ("where is it handled",)

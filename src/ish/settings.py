@@ -304,6 +304,15 @@ class Settings:
             metavar="N",
         ),
     )
+    ask_turns: int = field(
+        default=0,
+        metadata=_opt(
+            "Follow-up searches the model may ask for before it answers. "
+            "0 answers from the first search alone.",
+            type=int,
+            metavar="N",
+        ),
+    )
     allowed_language_models: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

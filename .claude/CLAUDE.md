@@ -255,6 +255,14 @@ something broke. This is that record, so a rule is never argued from taste.
   three. 13,984 rerank and 7,639 answer input tokens, 11.6 s, median.
   At 30 candidates it fell to 19, because one source ranked 32nd. Hence
   `rerank_model` and 50 `rerank_candidates`.
+- Follow-up searches, the same 25 questions, rerank and claude-haiku-5-5,
+  `ask_turns = 3`: 19 answered in one turn. The model searched again for
+  2 hard questions and for all 4 uncovered ones, and still refused the 4.
+  20 of 21 cited, the miss the q07 label that accepts one of several
+  sources. 14.8 s against about 13, 0.4 cents against 0.3 an answer. An
+  agent that greps the tree found a firmware handler that ish cannot,
+  for 211k input tokens, because the handler is one case of a switch
+  that one chunk holds whole.
 - `claude -p` run inside a tree loaded the auto memory of that tree with
   `--setting-sources ""`, and on 2.1.296 also with
   `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`:
