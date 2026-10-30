@@ -129,7 +129,7 @@ class AnswerQuestion:
 
 
 def _source(source_id: str, chunk: Chunk) -> Source:
-    title = f"{chunk.path}:{chunk.start_line}-{chunk.end_line}"
+    title = f"{chunk.path}{chunk.location.render()}"
     if chunk.symbol:
         title = f"{title} {chunk.symbol}"
     return Source(id=source_id, title=title, text=chunk.text)

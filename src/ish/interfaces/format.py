@@ -23,7 +23,7 @@ def display_path(path: Path, base: Path | None = None) -> Path:
 def format_chunk_line(chunk: Chunk, base: Path | None = None) -> str:
     """Format one chunk in the plain scan output format."""
     return (
-        f"{display_path(chunk.path, base)}:{chunk.start_line}-{chunk.end_line}  "
+        f"{display_path(chunk.path, base)}{chunk.location.render()}  "
         f"{chunk.kind}  {symbol_of(chunk)}"
     )
 
