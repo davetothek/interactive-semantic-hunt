@@ -23,7 +23,10 @@ nothing anywhere until an operator allows it.
 
 from collections.abc import Callable
 
+from ish.adapters.language_model.anthropic import AnthropicLanguageModel
 from ish.application.ports.language_model import LanguageModel
 
-LANGUAGE_MODELS: dict[str, Callable[[str], LanguageModel]] = {}
+LANGUAGE_MODELS: dict[str, Callable[[str], LanguageModel]] = {
+    "anthropic": AnthropicLanguageModel,
+}
 """Language model backends by option name. Register a new backend here."""
