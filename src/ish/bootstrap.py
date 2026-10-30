@@ -5,8 +5,9 @@ this module. It is the only module allowed to import both application
 code and concrete adapters.
 
 The registries live beside what they register: ``adapters/parser``
-lists every parser and ``adapters/embedder`` every backend, each with
-the recipe for adding one. This module only selects from them.
+lists every parser, ``adapters/embedder`` every embedding backend, and
+``adapters/language_model`` every language model backend, each with the
+recipe for adding one. This module only selects from them.
 """
 
 import logging
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
+from ish.adapters.language_model import LANGUAGE_MODELS
 from ish.adapters.parser import (
     CHUNKING_VERSION,
     Language,
@@ -31,6 +33,7 @@ from ish.application.filters import build_result_filter as make_result_filter
 from ish.application.index import Index
 from ish.application.languages import LanguageResolver, resolve_with
 from ish.application.ports.embedder import Embedder
+from ish.application.ports.language_model import LanguageModel, LanguageModelError
 from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import (
     StoreBusy,
@@ -163,6 +166,34 @@ def build_embedder(settings: Settings) -> Embedder:
         ) from None
 
     return backend.from_option(settings.model, context_tokens=context_window(settings))
+
+
+def build_language_model(settings: Settings) -> LanguageModel:
+    """Construct the language model that writes answers.
+
+    Build a backend only when ``allowed_language_models`` names it. A
+    backend receives the text of the documents, so there is no default
+    and no fallback: an unset, unknown, or disallowed backend raises.
+    """
+    name = settings.language_model
+    if not name:
+        raise LanguageModelError(
+            "No language model is set. Set language_model to answer questions."
+        )
+    if name not in settings.allowed_language_models:
+        allowed = ", ".join(settings.allowed_language_models) or "none"
+        raise LanguageModelError(
+            f"Language model {name!r} is not allowed. "
+            f"allowed_language_models: {allowed}"
+        )
+    try:
+        backend = LANGUAGE_MODELS[name]
+    except KeyError:
+        valid = ", ".join(sorted(LANGUAGE_MODELS)) or "none"
+        raise LanguageModelError(
+            f"Unknown language model {name!r}. Valid backends: {valid}"
+        ) from None
+    return backend(settings.answer_model)
 
 
 def model_id(settings: Settings, embedder: Embedder) -> str:

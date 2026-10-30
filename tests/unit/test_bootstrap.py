@@ -1355,3 +1355,82 @@ class TestCoveringIndex:
         finally:
             parent.close()
         assert symbols == {"outer", "deep"}
+
+
+class _StubModel:
+    def __init__(self, model: str = "") -> None:
+        self.model_name = model or "stub-default"
+
+    def answer(self, question, sources):
+        raise AssertionError("not called here")
+
+
+class TestBuildLanguageModel:
+    """A language model receives the text of documents, so it is opt-in.
+
+    There is no default and no fallback. Only a backend that
+    ``allowed_language_models`` names is ever constructed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def registry(self, monkeypatch) -> list[str]:
+        built: list[str] = []
+
+        def stub(model: str) -> _StubModel:
+            built.append(model)
+            return _StubModel(model)
+
+        monkeypatch.setitem(bootstrap.LANGUAGE_MODELS, "stub", stub)
+        return built
+
+    def test_the_table_is_the_one_in_the_language_model_package(self) -> None:
+        from ish.adapters import language_model
+
+        assert bootstrap.LANGUAGE_MODELS is language_model.LANGUAGE_MODELS
+
+    def test_an_allowed_backend_is_built_with_the_model_option(self) -> None:
+        settings = Settings(
+            language_model="stub",
+            answer_model="big",
+            allowed_language_models=("stub",),
+        )
+        assert bootstrap.build_language_model(settings).model_name == "big"
+
+    def test_no_backend_set_names_the_setting(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(allowed_language_models=("stub",))
+        with pytest.raises(LanguageModelError, match="language_model"):
+            bootstrap.build_language_model(settings)
+        assert registry == []
+
+    def test_a_backend_not_allowed_is_never_built(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="stub")
+        with pytest.raises(LanguageModelError, match=r"'stub' is not allowed.*none"):
+            bootstrap.build_language_model(settings)
+        assert registry == []
+
+    def test_the_refusal_names_the_allowlist(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="stub", allowed_language_models=("other",))
+        with pytest.raises(LanguageModelError, match="allowed_language_models: other"):
+            bootstrap.build_language_model(settings)
+        assert registry == []
+
+    def test_an_unknown_backend_lists_the_valid_ones(self) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="nope", allowed_language_models=("nope",))
+        with pytest.raises(LanguageModelError, match="Valid backends: .*stub"):
+            bootstrap.build_language_model(settings)
+
+    def test_an_empty_registry_says_none(self, monkeypatch) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        monkeypatch.setattr(bootstrap, "LANGUAGE_MODELS", {})
+        settings = Settings(language_model="nope", allowed_language_models=("nope",))
+        with pytest.raises(LanguageModelError, match="Valid backends: none"):
+            bootstrap.build_language_model(settings)

@@ -264,6 +264,31 @@ class Settings:
             metavar="MS",
         ),
     )
+    # Index scope, so that no call can override them. These three decide
+    # where the text of a document may go. Only the operator of a server
+    # sets them, in the config file or on the command line.
+    language_model: str = field(
+        default="",
+        metadata=_opt(
+            "Language model backend that writes answers. Empty turns answers off.",
+            metavar="NAME",
+        ),
+    )
+    answer_model: str = field(
+        default="",
+        metadata=_opt(
+            "Model the language model backend runs. Empty uses its default.",
+            metavar="MODEL",
+        ),
+    )
+    allowed_language_models: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Language model backends that may receive text. Empty allows none.",
+            nargs="+",
+            metavar="NAME",
+        ),
+    )
     refresh: bool = field(
         default=False,
         metadata=_opt(

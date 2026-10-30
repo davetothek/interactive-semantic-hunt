@@ -72,6 +72,24 @@ class TestReading:
         with _ish(project) as ish:
             assert ish.index() > 0
 
+    def test_search_never_builds_a_language_model(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        """A search sends no text anywhere but the embedder."""
+
+        def refuse(settings):
+            raise AssertionError("a search built a language model")
+
+        monkeypatch.setattr(bootstrap, "build_language_model", refuse)
+        settings = Settings(
+            no_cache=True,
+            git=False,
+            language_model="stub",
+            allowed_language_models=("stub",),
+        )
+        with Ish(project, settings=settings) as ish:
+            assert ish.search("configure", limit=3)
+
     def test_search_returns_ranked_pairs(self, project: Path, offline) -> None:
         with _ish(project) as ish:
             results = ish.search("configure", limit=3)
