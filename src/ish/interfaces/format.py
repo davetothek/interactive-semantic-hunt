@@ -91,13 +91,24 @@ def number_citations(answer: Answer) -> tuple[str, list[Chunk]]:
     *n* of the list is citation ``[n]``.
     """
     numbers: dict[Chunk, int] = {}
-    text = []
+    text = ""
     for part in answer.parts:
         marks = "".join(
             f"[{numbers.setdefault(c, len(numbers) + 1)}]" for c in part.cites
         )
-        text.append(f"{part.text}{marks}")
-    return "".join(text).strip(), list(numbers)
+        piece = f"{part.text}{marks}"
+        # A model may split sentences into parts with no space between
+        # them. Add one, but never before punctuation that ends a clause.
+        if (
+            text
+            and piece
+            and not text[-1].isspace()
+            and not piece[0].isspace()
+            and piece[0] not in ".,;:!?)"
+        ):
+            text += " "
+        text += piece
+    return text.strip(), list(numbers)
 
 
 def format_answer(answer: Answer, base: Path | None = None) -> str:

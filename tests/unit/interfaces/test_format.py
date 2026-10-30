@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import (
     display_path,
@@ -137,3 +139,29 @@ class TestFormatAnswer:
         assert format_answer(answer, Path("/d")) == (
             f"{NOT_COVERED_TEXT}\n\na.adoc:1-5  section  a"
         )
+
+
+class TestPartsAreSpaced:
+    """Claude returned sentences as parts with no space between them."""
+
+    @staticmethod
+    def _answer(*texts: str):
+        from ish.application.answer import Answer, AnswerPart
+
+        return Answer(
+            parts=tuple(AnswerPart(t) for t in texts), covered=True, sources=()
+        )
+
+    @pytest.mark.parametrize(
+        ("texts", "joined"),
+        [
+            (("It stops.", "Then it resets."), "It stops. Then it resets."),
+            (("It stops ", "and resets."), "It stops and resets."),
+            (("It stops", ", then resets", "."), "It stops, then resets."),
+            (("A", "", "B"), "A B"),
+        ],
+    )
+    def test_parts_join_with_one_space(self, texts, joined) -> None:
+        from ish.interfaces.format import number_citations
+
+        assert number_citations(self._answer(*texts))[0] == joined
