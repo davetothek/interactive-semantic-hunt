@@ -38,7 +38,7 @@ def _run_query(args: CliArgs) -> int:
 
 
 def _run_ask(args: CliArgs) -> int:
-    """Answer the query as a question and print the answer with its sources.
+    """Answer the query as a question and print it as Markdown.
 
     Return 0 when the documents answer it, and 2 when they do not, so a
     script can tell the two apart.
@@ -51,7 +51,7 @@ def _run_ask(args: CliArgs) -> int:
         ish.index(on_progress=line.show)
         line.clear()
         answer = ish.ask(args.query)
-    sys.stdout.write(f"{format_answer(answer)}\n")
+        sys.stdout.write(f"{format_answer(answer, args.query, ish.link)}\n")
     return 0 if answer.covered else 2
 
 

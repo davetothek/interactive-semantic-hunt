@@ -69,9 +69,14 @@ class TestAsk:
         out = capsys.readouterr().out
         assert code == 0
         assert model.questions == ["what does the watchdog do"]
-        text, _, sources = out.partition("\n\n")
-        assert text == "The watchdog resets the board[1]."
-        assert sources.strip() == "[1] docs/boot.md:1-3  document  Watchdog"
+        heading, answer, sources_heading, source = [
+            block.strip() for block in out.split("\n\n")
+        ]
+        assert heading == "# what does the watchdog do"
+        assert answer == "The watchdog resets the board[1]."
+        assert sources_heading == "## Sources"
+        assert source.startswith("1. [docs/boot.md:1-3](file://")
+        assert source.endswith("/docs/boot.md#L1-3) — Watchdog")
 
     def test_not_covered_lists_the_closest_sources_and_exits_2(
         self, project: Path, monkeypatch, capsys
@@ -80,9 +85,10 @@ class TestAsk:
         code = main(["--ask", "what is the MTBF", str(project), *FLAGS])
         out = capsys.readouterr().out
         assert code == 2
-        assert out.startswith("The documents do not answer this.")
-        assert "docs/boot.md:1-3" in out
-        assert "docs/other.md:1-3" in out
+        assert out.startswith("# what is the MTBF\n\n> The documents do not answer")
+        assert "## Closest sources" in out
+        assert "[docs/boot.md:1-3](file://" in out
+        assert "[docs/other.md:1-3](file://" in out
 
     def test_a_question_is_required(self, project: Path, caplog) -> None:
         assert main(["--ask", str(project), *FLAGS]) == 1

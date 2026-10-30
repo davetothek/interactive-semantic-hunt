@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ask",
         action="store_true",
-        help="Answer the query as a question, with the sources it cites.",
+        help="Answer the query as a question, in Markdown, with the sources it cites.",
     )
     # Not one of the settings, and deliberately so: a config file cannot
     # hold the path to itself. See CONFIG_OPTION in ish.settings.

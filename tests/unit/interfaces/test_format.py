@@ -99,7 +99,7 @@ class TestTheBase:
 
 
 class TestFormatAnswer:
-    """An answer prints as text with numbered citations, then the sources."""
+    """An answer prints as Markdown, so it reads in a terminal and in an editor."""
 
     @staticmethod
     def _chunk(name: str, line: int = 1):
@@ -108,6 +108,10 @@ class TestFormatAnswer:
         return Chunk(
             Path(f"/d/{name}.adoc"), "t", "section", "asciidoc", name, line, line + 4
         )
+
+    @staticmethod
+    def _link(chunk) -> str:
+        return f"https://docs.example.com/{chunk.path.name}#{chunk.location.fragment()}"
 
     def test_each_source_is_numbered_once_in_order_of_first_citation(self) -> None:
         from ish.application.answer import Answer, AnswerPart
@@ -123,11 +127,15 @@ class TestFormatAnswer:
             covered=True,
             sources=(a, b),
         )
-        assert format_answer(answer, Path("/d")) == (
+        assert format_answer(answer, "Who  agrees?\n", self._link, Path("/d")) == (
+            "# Who agrees?\n"
+            "\n"
             "B says so[1], and A agrees[2][1].\n"
             "\n"
-            "[1] b.adoc:10-14  section  b\n"
-            "[2] a.adoc:1-5  section  a"
+            "## Sources\n"
+            "\n"
+            "1. [b.adoc:10-14](https://docs.example.com/b.adoc#L10-14) — b\n"
+            "2. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5) — a"
         )
 
     def test_not_covered_lists_the_closest_sources(self) -> None:
@@ -136,8 +144,9 @@ class TestFormatAnswer:
 
         a = self._chunk("a")
         answer = Answer(parts=(), covered=False, sources=(a,))
-        assert format_answer(answer, Path("/d")) == (
-            f"{NOT_COVERED_TEXT}\n\na.adoc:1-5  section  a"
+        assert format_answer(answer, "MTBF?", self._link, Path("/d")) == (
+            f"# MTBF?\n\n> {NOT_COVERED_TEXT}\n\n## Closest sources\n\n"
+            "1. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5) — a"
         )
 
 

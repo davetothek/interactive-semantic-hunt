@@ -11,8 +11,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `ish --ask "question" PATH` answers a question from the chunks a search
-  finds, with a numbered citation for each claim and the cited sources
-  below in the `path:start-end` form. When the documents do not answer
+  finds, in Markdown: the question as a heading, the answer with a
+  numbered citation for each claim, and the cited sources as links that
+  open each file at its lines. It pipes into an editor as a document. When the documents do not answer
   it, ish says so, lists the closest sources, and exits 2. A language
   model writes the answer, and it is off by default: set
   `language_model`, `answer_model`, and `allowed_language_models`. The

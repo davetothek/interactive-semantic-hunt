@@ -1,5 +1,6 @@
 """Shared presentation helpers for the CLI and TUI."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from ish.application.answer import Answer
@@ -111,18 +112,32 @@ def number_citations(answer: Answer) -> tuple[str, list[Chunk]]:
     return text.strip(), list(numbers)
 
 
-def format_answer(answer: Answer, base: Path | None = None) -> str:
-    """Format an answer as text with numbered citations, then its sources.
+def format_answer(
+    answer: Answer,
+    question: str,
+    link: Callable[[Chunk], str],
+    base: Path | None = None,
+) -> str:
+    """Format an answer as Markdown: the question, the answer, its sources.
 
-    List the sources below in the scan format, so each one opens in an
-    editor. For a question the documents do not cover, list the closest
-    sources.
+    Markdown reads well in a terminal and in an editor. Each source is a
+    link that opens the file at its location, with the path and lines as
+    its text, so the line still names the place where no link is
+    followed. For a question the documents do not cover, list the
+    closest sources.
     """
-    if not answer.covered:
-        lines = [NOT_COVERED_TEXT, ""]
-        lines += [format_chunk_line(c, base) for c in answer.sources]
-        return "\n".join(lines)
-    text, cited = number_citations(answer)
-    lines = [text, ""]
-    lines += [f"[{n}] {format_chunk_line(c, base)}" for n, c in enumerate(cited, 1)]
+    lines = [f"# {_one_line(question)}", ""]
+    if answer.covered:
+        text, cited = number_citations(answer)
+        lines += [text, "", "## Sources", ""]
+    else:
+        cited = list(answer.sources)
+        lines += [f"> {NOT_COVERED_TEXT}", "", "## Closest sources", ""]
+    for n, chunk in enumerate(cited, 1):
+        place = f"{display_path(chunk.path, base)}{chunk.location.render()}"
+        lines.append(f"{n}. [{place}]({link(chunk)}) — {symbol_of(chunk)}")
     return "\n".join(lines)
+
+
+def _one_line(text: str) -> str:
+    return " ".join(text.split())

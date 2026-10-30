@@ -94,15 +94,29 @@ nvim $(ish -i src/)
 ish --ask "how does the release branch get its version" docs/
 ```
 
-ish prints the answer with a numbered citation after each claim, then the
-cited sources in the scan format, so each one opens in an editor:
+ish prints Markdown: the question as a heading, the answer with a numbered
+citation after each claim, and the cited sources as links that open each
+file at its lines:
 
-```text
-The bump happens on a release branch[1], and the hook refuses it anywhere else[2].
+```markdown
+# how does the release branch get its version
 
-[1] RELEASING.md:12-30  section  Cut a release
-[2] .claude/hooks/guard_version.py:1-40  module  guard_version
+The bump happens on a release branch[1], and a hook refuses it anywhere else[2].
+
+## Sources
+
+1. [RELEASING.md:12-30](file:///home/you/ish/RELEASING.md#L12-30) — Cut a release
+2. [.claude/hooks/guard_version.py:1-40](file:///home/you/ish/.claude/hooks/guard_version.py#L1-40) — guard_version
 ```
+
+It reads well in a terminal, and an editor shows it as a document:
+
+```sh
+ish --ask "how does the release branch get its version" docs/ | nvim -c 'set ft=markdown' -
+```
+
+In Neovim, `gx` on a link opens the source. With `link_base` set, the
+links point at the published tree instead of the files on disk.
 
 A language model writes the answer, and it reads only the chunks the search
 returned. When they do not answer the question, ish says so, lists the
