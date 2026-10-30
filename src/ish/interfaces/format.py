@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from ish.application.answer import Answer
 from ish.domain.chunk import Chunk
 
 
@@ -77,3 +78,30 @@ def render(
 def format_selection(chunk: Chunk) -> str:
     """Format a selected chunk as an editor-friendly ``path:line`` locator."""
     return f"{display_path(chunk.path)}:{chunk.start_line}"
+
+
+NOT_COVERED_TEXT = "The documents do not answer this. The closest sources:"
+
+
+def format_answer(answer: Answer, base: Path | None = None) -> str:
+    """Format an answer as text with numbered citations, then its sources.
+
+    Number each cited chunk once, in the order the answer first cites
+    it, and mark each part of the text with the numbers it cites. List
+    the sources below in the scan format, so each one opens in an editor.
+    For a question the documents do not cover, list the closest sources.
+    """
+    if not answer.covered:
+        lines = [NOT_COVERED_TEXT, ""]
+        lines += [format_chunk_line(c, base) for c in answer.sources]
+        return "\n".join(lines)
+    numbers: dict[Chunk, int] = {}
+    text = []
+    for part in answer.parts:
+        marks = "".join(
+            f"[{numbers.setdefault(c, len(numbers) + 1)}]" for c in part.cites
+        )
+        text.append(f"{part.text}{marks}")
+    lines = ["".join(text).strip(), ""]
+    lines += [f"[{n}] {format_chunk_line(c, base)}" for c, n in numbers.items()]
+    return "\n".join(lines)

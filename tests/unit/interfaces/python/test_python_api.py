@@ -367,3 +367,71 @@ class TestKeptByAServer:
 
     def test_this_process_is_not_a_server(self, project: Path, offline) -> None:
         assert _ish(project).kept_by() is None
+
+
+class TestAsk:
+    """Ish.ask searches the way Ish.search does, then lets a model answer."""
+
+    class Model:
+        model_name = "fake-model"
+
+        def __init__(self) -> None:
+            self.sources: list = []
+
+        def answer(self, question, sources):
+            from ish.application.ports.language_model import Passage, Reply
+
+            self.sources = list(sources)
+            return Reply(passages=(Passage("Yes.", ("1",)),), covered=True)
+
+    def test_the_model_is_built_once_on_the_first_question(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        built: list[object] = []
+        model = self.Model()
+
+        def build(settings):
+            built.append(settings)
+            return model
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        with _ish(project) as ish:
+            assert built == []
+            first = ish.ask("how to configure")
+            ish.ask("again")
+        assert len(built) == 1
+        assert first.covered and first.model == "fake-model"
+        assert first.parts[0].cites == (first.sources[0],)
+
+    def test_filters_narrow_what_the_model_reads(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        with _ish(project) as ish:
+            ish.ask("configure", type=["doc"])
+        assert model.sources
+        assert all("guide.md" in s.title for s in model.sources)
+
+    def test_a_filter_typed_into_the_question_applies(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        with _ish(project) as ish:
+            ish.ask("lang:python configure")
+        assert model.sources
+        assert all(".py:" in s.title for s in model.sources)
+
+    def test_at_most_ask_limit_chunks_are_read(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.interfaces.python import api
+
+        for n in range(api.ASK_LIMIT + 3):
+            (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        with _ish(project) as ish:
+            ish.ask("function")
+        assert len(model.sources) == api.ASK_LIMIT

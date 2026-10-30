@@ -10,7 +10,7 @@ import sys
 from ish import bootstrap
 from ish.interfaces.busy import ProgressLine
 from ish.interfaces.cli.args import CliArgs
-from ish.interfaces.format import format_selection, render
+from ish.interfaces.format import format_answer, format_selection, render
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
 
@@ -35,6 +35,24 @@ def _run_query(args: CliArgs) -> int:
         for chunk, score in ish.search(args.query):
             sys.stdout.write(f"{render(chunk, args.settings.format, score)}\n")
     return 0
+
+
+def _run_ask(args: CliArgs) -> int:
+    """Answer the query as a question and print the answer with its sources.
+
+    Return 0 when the documents answer it, and 2 when they do not, so a
+    script can tell the two apart.
+    """
+    if not args.query:
+        log.error("--ask needs a question.")
+        return 1
+    line = ProgressLine()
+    with Ish(args.path, settings=args.settings) as ish:
+        ish.index(on_progress=line.show)
+        line.clear()
+        answer = ish.ask(args.query)
+    sys.stdout.write(f"{format_answer(answer)}\n")
+    return 0 if answer.covered else 2
 
 
 def _sync_terminal_size() -> None:
@@ -152,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
                 overrides=args.overrides,
             )
             line.clear()
+        if args.ask:
+            return _run_ask(args)
         if args.query:
             return _run_query(args)
         if args.interactive:

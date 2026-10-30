@@ -94,3 +94,46 @@ class TestTheBase:
         assert render(chunk(), "plain", 0.5, base=base).startswith("[0.50] src/a.py:")
         assert render(chunk(), "plain", base=base).startswith("src/a.py:")
         assert render(chunk(), "grep", 0.5, base=base).startswith("src/a.py:12:1:")
+
+
+class TestFormatAnswer:
+    """An answer prints as text with numbered citations, then the sources."""
+
+    @staticmethod
+    def _chunk(name: str, line: int = 1):
+        from ish.domain.chunk import Chunk
+
+        return Chunk(
+            Path(f"/d/{name}.adoc"), "t", "section", "asciidoc", name, line, line + 4
+        )
+
+    def test_each_source_is_numbered_once_in_order_of_first_citation(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.interfaces.format import format_answer
+
+        a, b = self._chunk("a"), self._chunk("b", 10)
+        answer = Answer(
+            parts=(
+                AnswerPart("B says so", (b,)),
+                AnswerPart(", and A agrees", (a, b)),
+                AnswerPart("."),
+            ),
+            covered=True,
+            sources=(a, b),
+        )
+        assert format_answer(answer, Path("/d")) == (
+            "B says so[1], and A agrees[2][1].\n"
+            "\n"
+            "[1] b.adoc:10-14  section  b\n"
+            "[2] a.adoc:1-5  section  a"
+        )
+
+    def test_not_covered_lists_the_closest_sources(self) -> None:
+        from ish.application.answer import Answer
+        from ish.interfaces.format import NOT_COVERED_TEXT, format_answer
+
+        a = self._chunk("a")
+        answer = Answer(parts=(), covered=False, sources=(a,))
+        assert format_answer(answer, Path("/d")) == (
+            f"{NOT_COVERED_TEXT}\n\na.adoc:1-5  section  a"
+        )

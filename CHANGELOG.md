@@ -8,6 +8,17 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `ish --ask "question" PATH` answers a question from the chunks a search
+  finds, with a numbered citation for each claim and the cited sources
+  below in the `path:start-end` form. When the documents do not answer
+  it, ish says so, lists the closest sources, and exits 2. A language
+  model writes the answer, and it is off by default: set
+  `language_model`, `answer_model`, and `allowed_language_models`. The
+  `anthropic` backend reads its key from `ANTHROPIC_API_KEY`. A search
+  never builds a language model.
+
 ## 0.6.2 - 2026-10-29
 
 ### Changed

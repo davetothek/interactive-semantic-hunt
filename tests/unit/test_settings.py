@@ -24,7 +24,15 @@ from ish.settings import (
 # joins them, and it is the one exemption worth stating. A file cannot
 # name where to find itself, so that name is a flag and an environment
 # variable but never a key inside a file.
-NOT_OPTIONS = {"help", "version", "query", "path", "interactive", CONFIG_OPTION}
+NOT_OPTIONS = {
+    "help",
+    "version",
+    "query",
+    "path",
+    "interactive",
+    "ask",
+    CONFIG_OPTION,
+}
 
 
 def _write(path, body: str):
