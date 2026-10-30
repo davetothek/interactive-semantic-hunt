@@ -239,6 +239,13 @@ something broke. This is that record, so a rule is never argued from taste.
 - A model with no citation feature cited a source by its title instead of
   its id, which the use case drops. Naming the id as the bare number in
   the prompt fixed it on claude-haiku-5-5 and qwen2.5-coder:7b.
+- First scored run of `ask`, 25 questions over a private specification
+  tree of 74,737 chunks, claude-sonnet-5-5 through claude-cli: the
+  expected section cited for 14 of 21 answerable questions, all 4
+  unanswerable ones refused, 5.4 s and 8,126 input tokens a question,
+  median. Six of the seven misses never reached the model: the expected
+  section was not in the ten chunks retrieved. Given the section, the
+  model cited it 14 times in 15. Retrieval is the limit, not the model.
 - `claude --bare` skips the login as well as the hooks. The claude-cli
   backend turns off settings, tools, and MCP servers one by one instead,
   and runs in an empty directory.
