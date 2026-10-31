@@ -17,8 +17,10 @@ class TestShipped:
             assert getattr(loaded, name)
 
     def test_the_lines_of_a_paragraph_join_into_one(self) -> None:
-        assert "\n" not in load().answer
-        assert "  " not in load().answer
+        """A blank line keeps paragraphs apart, and nothing else breaks a line."""
+        for paragraph in load().answer.split("\n\n"):
+            assert "\n" not in paragraph
+            assert "  " not in paragraph
 
     def test_the_numbers_are_the_ones_the_code_enforces(self) -> None:
         from ish.adapters.language_model._grounded import MAX_GAPS
