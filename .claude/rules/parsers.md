@@ -49,6 +49,15 @@ The `add-language` skill walks through it.
   section runs to the next heading. The symbol is the heading path. Skip
   fenced blocks. A file with no heading is one chunk named after the file
   when it holds a line of prose, and nothing when it holds only machinery.
+- The AsciiDoc flavor resolves includes through `_asciidoc.py`: attributes,
+  attribute paths, and tagged regions, read relative to the including file.
+  Sections still divide at the headings of the file, so line numbers stay
+  true, and the parser divides a long section itself, between lines of the
+  file, under the `limit` that `build_parsers()` sets. A table that fits is
+  kept whole. A longer one divides between rows, and each piece repeats its
+  head and closes it. A figure reads as `Figure: alt text`.
+- `ask` reads a chunk through `build_reader()`, which parses the file again,
+  so a model reads the text the index embedded, includes resolved.
 - `tree_sitter.py` reads C and C++ as one parser, `cpp`, which owns `.h`. A
   type is a definition only when it has a body. A declaration is a chunk only
   when it declares a function, and is dropped when the same file defines it.

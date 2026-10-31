@@ -8,6 +8,17 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- AsciiDoc files are read as a reader sees them. An `include::`
+  resolves, with attribute paths and tagged regions, so a section that
+  assembles a register table from other files holds its rows and their
+  values. A table that fits stays in one chunk, and a longer one keeps
+  its header row in every chunk it divides into. A figure reads as a
+  line of text with its alt text or file name. The chunking stamp is
+  raised, so the next refresh reads every AsciiDoc file again and
+  embeds only the text it has not seen.
+
 ### Added
 
 - `ish --ask "question" PATH` answers a question from the chunks a search

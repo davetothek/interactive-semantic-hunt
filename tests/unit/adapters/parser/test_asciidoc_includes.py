@@ -257,3 +257,123 @@ class TestParser:
         ]
         inner = built[0]._inner._inner  # CountLimited > SizeLimited > parser
         assert inner.limit == chars_for(4096)
+
+
+class TestTables:
+    """A table keeps its header with every row, whichever piece it lands in."""
+
+    @staticmethod
+    def _parse(tmp_path: Path, body: str, limit: int):
+        doc = tmp_path / "d.adoc"
+        doc.write_text(body)
+        parser = MarkupParser.asciidoc()
+        parser.limit = limit
+        return parser.parse(doc, doc.read_text())
+
+    def test_a_table_that_fits_moves_whole_to_the_next_piece(
+        self, tmp_path: Path
+    ) -> None:
+        body = "= Doc\n" + "prose line\n" * 8 + "|===\n|A |B\n\n|1 |2\n|===\n"
+        chunks = self._parse(tmp_path, body, 100)
+        table = next(c for c in chunks if "|A |B" in c.text)
+        assert table.text.startswith("|===\n|A |B\n")
+        assert table.text.count("|===") == 2
+
+    def test_a_long_table_repeats_its_head_in_each_piece(self, tmp_path: Path) -> None:
+        rows = "".join(f"|row{n} |value{n}\n" for n in range(30))
+        body = (
+            '= Doc\n[cols="1,1", options="header"]\n|===\n|Name |Value\n\n'
+            + rows
+            + "|===\n"
+        )
+        chunks = self._parse(tmp_path, body, 200)
+        pieces = [c for c in chunks if "|row" in c.text]
+        assert len(pieces) > 2
+        for piece in pieces:
+            assert "|Name |Value\n" in piece.text
+            assert piece.text.count("|===") == 2
+        later = pieces[1].text
+        assert later.startswith(
+            '[cols="1,1", options="header"]\n|===\n|Name |Value\n\n'
+        )
+
+    def test_a_head_that_opens_inside_an_include_is_repeated(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "head.adoc").write_text(
+            "// tag::header_row[]\n"
+            '[options="header"]\n'
+            "|===\n|Name |Reset\n"
+            "// end::header_row[]\n"
+        )
+        rows = "".join(f"|REG{n} |0x{n}\n" for n in range(30))
+        (tmp_path / "rows.adoc").write_text(rows)
+        body = (
+            "= Doc\ninclude::head.adoc[tags=header_row]\n\n"
+            + "include::rows.adoc[]\n" * 3
+            + "|===\n"
+        )
+        chunks = self._parse(tmp_path, body, 600)
+        pieces = [c for c in chunks if "|REG" in c.text]
+        assert len(pieces) > 1
+        assert all("|Name |Reset\n" in p.text for p in pieces)
+
+    def test_a_table_with_no_header_row_repeats_its_delimiter_only(
+        self, tmp_path: Path
+    ) -> None:
+        rows = "".join(f"|row{n}\n" for n in range(40))
+        body = "= Doc\n|===\n" + rows + "|===\n"
+        pieces = [c for c in self._parse(tmp_path, body, 120) if "|row" in c.text]
+        assert pieces[1].text.startswith("|===\n|row")
+
+    def test_a_long_head_is_not_repeated(self, tmp_path: Path) -> None:
+        head = "|" + "h" * 80 + "\n"
+        rows = "".join(f"|row{n}\n" for n in range(40))
+        body = '= Doc\n[options="header"]\n|===\n' + head + "\n" + rows + "|===\n"
+        pieces = [c for c in self._parse(tmp_path, body, 200) if "|row" in c.text]
+        assert pieces[1].text.startswith("|===\n|row")
+
+    def test_a_table_left_open_still_closes_each_piece(self, tmp_path: Path) -> None:
+        rows = "".join(f"|row{n}\n" for n in range(40))
+        pieces = [
+            c
+            for c in self._parse(tmp_path, "= Doc\n|===\n" + rows, 120)
+            if "|row" in c.text
+        ]
+        assert all(p.text.count("|===") >= 1 for p in pieces)
+        assert pieces[0].text.endswith("|===\n")
+
+
+class TestFigures:
+    @pytest.mark.parametrize(
+        ("line", "text"),
+        [
+            ("image::timing.svg[Window timing,640]", "Figure: Window timing"),
+            (
+                'image::timing.svg[alt="Window timing", width=640]',
+                "Figure: Window timing",
+            ),
+            (
+                'image::dir/timing.drawio.svg[align="center"]',
+                "Figure: timing.drawio.svg",
+            ),
+            ("image::timing.svg[]", "Figure: timing.svg"),
+        ],
+    )
+    def test_a_figure_reads_as_a_line_of_text(self, tmp_path: Path, line, text) -> None:
+        doc = tmp_path / "d.adoc"
+        doc.write_text(f"= Doc\n.Timing of the window\n{line}\n")
+        (chunk,) = MarkupParser.asciidoc().parse(doc, doc.read_text())
+        assert chunk.text == f"= Doc\nTiming of the window\n{text}\n"
+
+    def test_a_literal_block_fence_is_not_a_title(self, tmp_path: Path) -> None:
+        doc = tmp_path / "d.adoc"
+        doc.write_text("= Doc\n....\nliteral\n....\n")
+        (chunk,) = MarkupParser.asciidoc().parse(doc, doc.read_text())
+        assert chunk.text.count("....") == 2
+
+    def test_markdown_keeps_its_text(self, tmp_path: Path) -> None:
+        doc = tmp_path / "d.md"
+        doc.write_text("# Doc\n.not a title\n")
+        (chunk,) = MarkupParser.markdown().parse(doc, doc.read_text())
+        assert ".not a title" in chunk.text
