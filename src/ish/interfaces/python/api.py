@@ -26,7 +26,7 @@ from pathlib import Path
 from types import TracebackType
 
 from ish import bootstrap
-from ish.application.answer import Answer, AnswerQuestion
+from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
 from ish.application.filters import Filters, parse_query
 from ish.application.ports.language_model import LanguageModel
 from ish.application.ports.link import LinkResolver
@@ -270,6 +270,7 @@ class Ish:
         lang: Sequence[str] = (),
         under: str = "",
         type: Sequence[str] = (),
+        on_step: AnswerCallback | None = None,
     ) -> Answer:
         """Answer *question* from the chunks a search of this tree returns.
 
@@ -277,7 +278,8 @@ class Ish:
         language model the settings allow write the answer. Build the
         model on the first question, so a session that only searches
         never builds one. Raise ``LanguageModelError`` when no model is
-        set or allowed.
+        set or allowed. Report each step to *on_step*, because a model
+        call takes seconds.
         """
         if self._model is None:
             self._model = bootstrap.build_language_model(self.settings)
@@ -294,6 +296,7 @@ class Ish:
             reranker=self._reranker,
             pick=ASK_LIMIT,
             turns=self.settings.ask_turns,
+            **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)
 

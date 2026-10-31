@@ -1,6 +1,8 @@
 """Test the busy line of the terminal, and the pace it shows."""
 
 import io
+import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -189,3 +191,83 @@ class TestTimeLeft:
     )
     def test_said_roughly(self, seconds, said) -> None:
         assert busy._left(seconds) == said
+
+
+class _Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+class TestTicker:
+    """A step that blocks for seconds still shows the time it has run."""
+
+    def test_a_step_shows_its_name_and_its_time(self, monkeypatch) -> None:
+        from ish.interfaces.busy import Ticker
+
+        out = _Terminal()
+        monkeypatch.setattr(sys, "stderr", out)
+        now = [100.0]
+        ticker = Ticker(interval=60, clock=lambda: now[0])
+        ticker.show("haiku writing the answer")
+        now[0] = 107.4
+        ticker.draw()
+        ticker.stop()
+        drawn = out.getvalue()
+        assert "haiku writing the answer · 0 s" in drawn
+        assert "haiku writing the answer · 7 s" in drawn
+        assert drawn.endswith("\r\033[2K")
+
+    def test_a_new_step_restarts_the_time(self, monkeypatch) -> None:
+        from ish.interfaces.busy import Ticker
+
+        out = _Terminal()
+        monkeypatch.setattr(sys, "stderr", out)
+        now = [0.0]
+        ticker = Ticker(interval=60, clock=lambda: now[0])
+        ticker.show("Searching")
+        now[0] = 5.0
+        ticker.show("Reading 10 chunks")
+        ticker.stop()
+        assert "Reading 10 chunks · 0 s" in out.getvalue()
+
+    def test_the_thread_redraws_until_it_is_stopped(self, monkeypatch) -> None:
+        from ish.interfaces.busy import Ticker
+
+        out = _Terminal()
+        monkeypatch.setattr(sys, "stderr", out)
+        ticker = Ticker(interval=0.001)
+        drawn = threading.Event()
+        original = ticker.draw
+
+        def counting() -> None:
+            original()
+            if out.getvalue().count("Searching") > 2:
+                drawn.set()
+
+        monkeypatch.setattr(ticker, "draw", counting)
+        ticker.show("Searching")
+        assert drawn.wait(5)
+        ticker.stop()
+        assert ticker._thread is None
+
+    def test_a_pipe_gets_nothing_and_no_thread_starts(self, monkeypatch) -> None:
+        from ish.interfaces.busy import Ticker
+
+        out = io.StringIO()
+        monkeypatch.setattr(sys, "stderr", out)
+        ticker = Ticker()
+        ticker.show("Searching")
+        ticker.stop()
+        assert out.getvalue() == ""
+        assert ticker._thread is None
+
+
+def test_a_ticker_stops_twice_without_harm(monkeypatch) -> None:
+    from ish.interfaces.busy import Ticker
+
+    monkeypatch.setattr(sys, "stderr", _Terminal())
+    ticker = Ticker(interval=60)
+    ticker.show("Searching")
+    ticker.stop()
+    ticker.stop()
+    assert ticker._thread is None

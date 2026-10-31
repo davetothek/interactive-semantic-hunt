@@ -126,3 +126,97 @@ class TestAsk:
         monkeypatch.setattr(bootstrap, "build_language_model", refuse)
         assert main(["ask", str(project), *FLAGS]) == 0
         assert "docs/" in capsys.readouterr().out
+
+
+class TestProgressStaysOffStdout:
+    def test_the_steps_go_to_the_ticker_and_stdout_holds_the_answer(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        from ish.interfaces.cli import main as cli
+
+        shown: list[str] = []
+        stopped: list[bool] = []
+
+        class Recorder:
+            def show(self, text: str) -> None:
+                shown.append(text)
+
+            def stop(self) -> None:
+                stopped.append(True)
+
+        monkeypatch.setattr(cli, "Ticker", Recorder)
+        _model(monkeypatch, FakeModel())
+        assert main(["--ask", "what does the watchdog do", str(project), *FLAGS]) == 0
+        assert shown[0] == "Searching"
+        assert shown[-1] == "fake-model writing the answer"
+        assert stopped == [True]
+        assert capsys.readouterr().out.startswith("# what does the watchdog do")
+
+    def test_the_ticker_stops_when_the_model_fails(
+        self, project: Path, monkeypatch
+    ) -> None:
+        from ish.interfaces.cli import main as cli
+
+        stopped: list[bool] = []
+
+        class Recorder:
+            def show(self, text: str) -> None:
+                pass
+
+            def stop(self) -> None:
+                stopped.append(True)
+
+        class Broken:
+            model_name = "broken"
+
+            def answer(self, question, sources):
+                raise LanguageModelError("down")
+
+        monkeypatch.setattr(cli, "Ticker", Recorder)
+        _model(monkeypatch, Broken())
+        assert main(["--ask", "anything", str(project), *FLAGS]) == 1
+        assert stopped == [True]
+
+
+class TestInterrupt:
+    """Ctrl-C while a model works leaves a clean line and exit code 130."""
+
+    def test_ctrl_c_exits_130_with_no_traceback(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        class Interrupted:
+            model_name = "slow"
+
+            def answer(self, question, sources):
+                raise KeyboardInterrupt
+
+        _model(monkeypatch, Interrupted())
+        code = main(["--ask", "anything", str(project), *FLAGS])
+        out, err = capsys.readouterr()
+        assert code == 130
+        assert out == ""
+        assert err.endswith("ish: interrupted\n")
+        assert "Traceback" not in err
+
+    def test_ctrl_c_stops_the_ticker(self, project: Path, monkeypatch) -> None:
+        from ish.interfaces.cli import main as cli
+
+        stops: list[bool] = []
+
+        class Recorder:
+            def show(self, text: str) -> None:
+                pass
+
+            def stop(self) -> None:
+                stops.append(True)
+
+        class Interrupted:
+            model_name = "slow"
+
+            def answer(self, question, sources):
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(cli, "Ticker", Recorder)
+        _model(monkeypatch, Interrupted())
+        assert main(["--ask", "anything", str(project), *FLAGS]) == 130
+        assert stops

@@ -46,6 +46,56 @@ class AnswerPart:
     cites: tuple[Chunk, ...] = ()
 
 
+SEARCHING = "searching"
+"""Running the search the question starts with."""
+CHOOSING = "choosing"
+"""The rerank model choosing which chunks to read."""
+READING = "reading"
+"""Reading the chosen chunks from their files."""
+WRITING = "writing"
+"""The language model writing the answer, or asking for searches."""
+FOLLOWING = "following"
+"""Running a search the language model asked for."""
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerStep:
+    """Report one step of an answer, as a value an interface renders.
+
+    A model call takes seconds, and a command that shows nothing then
+    cannot be told from one that has stopped. *count* is the chunks the
+    step works on, *model* the model that runs it, *query* a follow-up
+    search, and *turn* of *turns* the call to the answering model.
+    """
+
+    stage: str
+    count: int = 0
+    model: str = ""
+    query: str = ""
+    turn: int = 0
+    turns: int = 0
+
+    def __str__(self) -> str:
+        """Render the step as one line a person can read."""
+        if self.stage == SEARCHING:
+            return "Searching"
+        if self.stage == CHOOSING:
+            return f"{self.model} choosing what to read from {self.count} chunks"
+        if self.stage == READING:
+            return f"Reading {self.count} chunks"
+        if self.stage == FOLLOWING:
+            return f"Searching again: {self.query}"
+        turn = f", turn {self.turn} of {self.turns}" if self.turns > 1 else ""
+        return f"{self.model} writing the answer{turn}"
+
+
+AnswerCallback = Callable[[AnswerStep], None]
+
+
+def _quiet(step: AnswerStep) -> None:
+    """Report nothing, for a caller that shows no progress."""
+
+
 @dataclass(frozen=True, slots=True)
 class AnswerRow:
     """Hold one row of a table in an answer, and the chunks it cites."""
@@ -121,6 +171,7 @@ class AnswerQuestion:
         reranker: LanguageModel | None = None,
         pick: int = DEFAULT_PICK,
         turns: int = 0,
+        on_step: AnswerCallback = _quiet,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -146,6 +197,7 @@ class AnswerQuestion:
         self._reranker = reranker
         self._pick = pick
         self._turns = turns
+        self._on_step = on_step
 
     def answer(self, question: str) -> Answer:
         """Answer *question* from the chunks a search returns.
@@ -156,12 +208,14 @@ class AnswerQuestion:
         question = question.strip()
         if not question:
             raise ValueError("The question is empty.")
+        self._on_step(AnswerStep(SEARCHING))
         found = [chunk for chunk, _ in self._search(question)]
         rerank = self._rerank(question, found) if self._reranker else None
         if rerank is not None:
             found, rerank_in, rerank_out = rerank
         else:
             rerank_in = rerank_out = 0
+        self._on_step(AnswerStep(READING, count=len(found)))
         texts, dropped, left = self._fit(found, self._budget)
         if dropped:
             log.info("%d chunks did not fit the answer budget", dropped)
@@ -179,6 +233,7 @@ class AnswerQuestion:
             reply, texts, searched, turns, left = self._converse(question, texts, left)
         else:
             sources = [_source(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            self._on_step(AnswerStep(WRITING, model=self._model.model_name))
             reply = self._model.answer(question, sources)
             searched, turns = [], 1
         kept = [chunk for chunk, _ in texts]
@@ -225,6 +280,14 @@ class AnswerQuestion:
         read_in = wrote = turns = 0
         for turns_left in range(self._turns, -1, -1):
             sources = [_source(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            self._on_step(
+                AnswerStep(
+                    WRITING,
+                    model=self._model.model_name,
+                    turn=turns + 1,
+                    turns=self._turns + 1,
+                )
+            )
             reply = self._model.step(question, sources, searched, turns_left)
             turns += 1
             read_in += reply.input_tokens
@@ -236,6 +299,7 @@ class AnswerQuestion:
                 q for q in dict.fromkeys(reply.searches) if q not in searched
             ]
             for query in fresh_queries[:SEARCHES_A_TURN]:
+                self._on_step(AnswerStep(FOLLOWING, query=query))
                 searched.append(query)
                 fresh = [c for c, _ in self._search(query) if c not in seen]
                 added, _, left = self._fit(fresh[:CHUNKS_A_SEARCH], left)
@@ -271,6 +335,9 @@ class AnswerQuestion:
             by_id[str(n)] = chunk
         if not previews:
             return None
+        self._on_step(
+            AnswerStep(CHOOSING, count=len(previews), model=self._reranker.model_name)
+        )
         selection = self._reranker.select(question, previews, self._pick)
         chosen = [by_id[i] for i in selection.ids if i in by_id]
         log.info(

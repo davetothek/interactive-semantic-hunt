@@ -10,6 +10,7 @@ holds only results.
 
 import shutil
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -117,6 +118,72 @@ class ProgressLine:
         frame = frames[self._frame % len(frames)]
         self._frame += 1
         return frame
+
+
+class Ticker:
+    """Keep one line of stderr turning while a step blocks for seconds.
+
+    A call to a language model returns nothing until it is done, so a
+    line drawn once would stand still and look stopped. A daemon thread
+    redraws it every *interval* seconds with the time the step has run.
+    Draw only on a terminal: a pipe gets nothing, and the log carries
+    each step at -v.
+    """
+
+    def __init__(
+        self,
+        interval: float = 0.1,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._interval = interval
+        self._clock = clock
+        self._frame = 0
+        self._text = ""
+        self._since = clock()
+        self._lock = threading.Lock()
+        self._stopped = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def show(self, text: str) -> None:
+        """Name the step now running, and start turning on the first call."""
+        with self._lock:
+            self._text = text
+            self._since = self._clock()
+        if self._thread is None and sys.stderr.isatty():
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        self.draw()
+
+    def draw(self) -> None:
+        """Rewrite the line with the step, the spinner, and the time it has run."""
+        if not sys.stderr.isatty():
+            return
+        with self._lock:
+            text, since = self._text, self._since
+        frames = _frames()
+        frame = frames[self._frame % len(frames)]
+        self._frame += 1
+        line = f"{frame} {text} · {self._clock() - since:.0f} s"
+        sys.stderr.write(f"\r\033[2K{line[: _width() - 1]}")
+        sys.stderr.flush()
+
+    def stop(self) -> None:
+        """Stop turning and clear the line, so the output stands alone.
+
+        Stopping twice is harmless, so a caller may stop on an interrupt
+        and again on its way out.
+        """
+        self._stopped.set()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+        if sys.stderr.isatty():
+            sys.stderr.write("\r\033[2K")
+            sys.stderr.flush()
+
+    def _run(self) -> None:
+        while not self._stopped.wait(self._interval):
+            self.draw()
 
 
 def _width() -> int:

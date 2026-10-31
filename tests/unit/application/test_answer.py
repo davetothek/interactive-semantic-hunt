@@ -437,3 +437,69 @@ class TestLayoutCarriesChunks:
             search=searching(make_chunk("a")), model=FakeModel(reply)
         ).answer("q")
         assert result.blocks == ()
+
+
+class TestProgress:
+    """A model call takes seconds, so the use case says what it is doing."""
+
+    def test_each_step_renders_as_a_line(self) -> None:
+        from ish.application.answer import (
+            CHOOSING,
+            FOLLOWING,
+            READING,
+            SEARCHING,
+            WRITING,
+            AnswerStep,
+        )
+
+        assert str(AnswerStep(SEARCHING)) == "Searching"
+        assert str(AnswerStep(CHOOSING, count=50, model="haiku")) == (
+            "haiku choosing what to read from 50 chunks"
+        )
+        assert str(AnswerStep(READING, count=10)) == "Reading 10 chunks"
+        assert str(AnswerStep(FOLLOWING, query="the handler")) == (
+            "Searching again: the handler"
+        )
+        assert str(AnswerStep(WRITING, model="haiku")) == "haiku writing the answer"
+        assert str(AnswerStep(WRITING, model="haiku", turn=2, turns=4)) == (
+            "haiku writing the answer, turn 2 of 4"
+        )
+
+    def test_a_plain_answer_searches_reads_and_writes(self) -> None:
+        steps: list = []
+        AnswerQuestion(
+            search=searching(make_chunk("a")), model=FakeModel(), on_step=steps.append
+        ).answer("q")
+        assert [s.stage for s in steps] == ["searching", "reading", "writing"]
+        assert steps[1].count == 1 and steps[2].model == "fake"
+
+    def test_a_rerank_reports_what_it_chooses_from(self) -> None:
+        steps: list = []
+        AnswerQuestion(
+            search=searching(make_chunk("a"), make_chunk("b")),
+            model=FakeModel(),
+            reranker=FakeReranker(("1",)),
+            on_step=steps.append,
+        ).answer("q")
+        assert [s.stage for s in steps] == [
+            "searching",
+            "choosing",
+            "reading",
+            "writing",
+        ]
+        assert (steps[1].count, steps[1].model, steps[2].count) == (2, "picker", 1)
+
+    def test_follow_up_turns_report_each_search_and_turn(self) -> None:
+        steps: list = []
+        agent = FakeAgent(("the handler",))
+        AnswerQuestion(
+            search=routed(make_chunk("x")), model=agent, turns=2, on_step=steps.append
+        ).answer("q")
+        assert [(s.stage, s.turn, s.query) for s in steps] == [
+            ("searching", 0, ""),
+            ("reading", 0, ""),
+            ("writing", 1, ""),
+            ("following", 0, "the handler"),
+            ("writing", 2, ""),
+        ]
+        assert steps[2].turns == 3

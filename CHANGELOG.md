@@ -35,6 +35,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   over a private specification tree, the expected source reached the
   answer for 21 of 21 questions against 16 of 21, and every answer
   cited it.
+- `ish --ask` shows on stderr what it is doing while the models work,
+  with the seconds each step has run: searching, choosing what to read,
+  reading, writing the answer, and each follow-up search. stdout holds
+  only the answer, so it pipes into an editor. Ctrl-C stops it with
+  exit code 130 and no traceback, and stops a `claude` call with it.
 - `ask_turns` lets the model ask for up to three follow-up searches a
   turn, for that many turns, before it answers. ish runs them with the
   same filters and adds what they find within the same budget. The
