@@ -130,16 +130,16 @@ class TestFormatAnswer:
         assert format_answer(answer, "Who  agrees?\n", self._link, Path("/d")) == (
             "# Who agrees?\n"
             "\n"
-            "B says so[1], and A agrees[2][1].\n"
+            "B says so [^1], and A agrees [^2] [^1].\n"
             "\n"
             "## Sources\n"
             "\n"
-            "1. [b.adoc:10-14](https://docs.example.com/b.adoc#L10-14)\n"
-            "   b\n"
-            "   ./\n"
-            "2. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
-            "   a\n"
-            "   ./"
+            "[^1]: [b.adoc:10-14](https://docs.example.com/b.adoc#L10-14)\n"
+            "    b\n"
+            "    ./\n"
+            "[^2]: [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
+            "    a\n"
+            "    ./"
         )
 
     def test_not_covered_lists_the_closest_sources(self) -> None:
@@ -169,8 +169,8 @@ class TestFormatAnswer:
         out = format_answer(answer, "q", self._link, Path("/d"))
         body = out.split("## Sources")[0].strip().split("\n")[2:]
         assert all(len(line) <= WIDTH for line in body)
-        assert body[-3].endswith("end[1]")
-        assert body[-2:] == ["", "Second.[1]"]
+        assert body[-3].endswith("end [^1]")
+        assert body[-2:] == ["", "Second. [^1]"]
 
     def test_a_long_heading_wraps_under_its_source(self) -> None:
         from ish.application.answer import Answer, AnswerPart
@@ -311,25 +311,25 @@ class TestLayout:
         )
 
     def test_the_short_answer_comes_first(self) -> None:
-        assert self._out().split("\n")[2] == "**Short answer:** It is 49 ms.[1]"
+        assert self._out().split("\n")[2] == "**Short answer:** It is 49 ms. [^1]"
 
     def test_a_table_lines_up_escapes_pipes_and_cites_each_row(self) -> None:
         out = self._out()
         table = out.split("### Registers\n\n")[1].split("\n\n")[0].split("\n")
         assert table == [
-            "| Name         | Bits  | Sources |",
-            "|--------------|-------|---------|",
-            "| ERR_MODE_WDT | 25:24 | [2]     |",
-            "| A\\|B         | 1     | [1][2]  |",
+            "| Name         | Bits  | Sources   |",
+            "|--------------|-------|-----------|",
+            "| ERR_MODE_WDT | 25:24 | [^2]      |",
+            "| A\\|B         | 1     | [^1] [^2] |",
         ]
 
     def test_steps_are_numbered(self) -> None:
         steps = self._out().split("### How\n\n")[1].split("\n\n")[0]
-        assert steps == "1. Write 0x01 to CMD_ID.[3]\n2. Set CMD_TRG."
+        assert steps == "1. Write 0x01 to CMD_ID. [^3]\n2. Set CMD_TRG."
 
     def test_what_is_open_is_gathered_in_one_block(self) -> None:
         out = self._out()
-        assert "> **Not in the documents**\n>\n> - INCK is open.[3]" in out
+        assert "> **Not in the documents**\n>\n> - INCK is open. [^3]" in out
 
     def test_a_long_gap_wraps_inside_the_quote(self) -> None:
         from ish.application.answer import Answer, AnswerBlock, AnswerPart
@@ -346,9 +346,9 @@ class TestLayout:
     def test_sources_name_the_file_then_the_type_heading_and_directory(self) -> None:
         sources = self._out().split("## Sources\n\n")[1].split("\n")
         assert sources[:3] == [
-            "1. [a.adoc:1-5](file:///d/spec/a.adoc)",
-            "   doc · a head",
-            "   spec/",
+            "[^1]: [a.adoc:1-5](file:///d/spec/a.adoc)",
+            "    doc · a head",
+            "    spec/",
         ]
         assert len(sources) == 9
 
@@ -407,3 +407,56 @@ def test_a_long_follow_up_search_wraps_under_its_dash() -> None:
     assert lines[0].startswith("- word")
     assert lines[1].startswith("  word")
     assert [line for line in lines if line.startswith("- ")] == [lines[0], "- short"]
+
+
+class TestFootnotes:
+    """Markers link to their sources in Markdown, and stay plain in JSON."""
+
+    def test_each_marker_has_a_definition_in_the_sources(self) -> None:
+        import re
+
+        out = TestLayout()._out()
+        used = set(re.findall(r"\[\^(\d+)\](?!:)", out))
+        defined = set(re.findall(r"^\[\^(\d+)\]:", out, re.M))
+        assert used == defined == {"1", "2", "3"}
+
+    def test_a_definition_continues_on_indented_lines(self) -> None:
+        sources = TestLayout()._out().split("## Sources\n\n")[1].split("\n")
+        assert all(line.startswith(("[^", "    ")) for line in sources if line)
+
+    def test_closest_sources_cite_nothing_so_they_are_a_list(self) -> None:
+        from ish.application.answer import Answer
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import format_answer
+
+        a = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        out = format_answer(Answer(parts=(), covered=False, sources=(a,)), "q", str)
+        assert "\n1. [a.adoc:1-2]" in out
+        assert "[^" not in out
+
+    def test_plain_markers_for_json_and_plain_text(self) -> None:
+        from ish.interfaces.format import bracket, footnote
+
+        assert (bracket(3), footnote(3)) == ("[3]", " [^3]")
+
+
+def test_footnote_markers_stand_apart_from_words_and_each_other() -> None:
+    import re
+
+    out = TestLayout()._out()
+    body = out.split("## Sources")[0]
+    assert not re.search(r"\S\[\^\d+\]", body.replace("| [^", "|  [^"))
+
+
+def test_a_wrapped_heading_path_never_starts_a_quote() -> None:
+    from ish.application.answer import Answer, AnswerPart
+    from ish.domain.chunk import Chunk
+    from ish.interfaces.format import format_answer
+
+    heading = " > ".join(["Overview", "Function Description", "Operating State"] * 4)
+    chunk = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", heading, 1, 2)
+    answer = Answer(parts=(AnswerPart("x", (chunk,)),), covered=True, sources=(chunk,))
+    sources = format_answer(answer, "q", str).split("## Sources")[1].split("\n")
+    assert len([line for line in sources if line.startswith("    ")]) > 2
+    assert not any(line.lstrip().startswith(">") for line in sources)
+    assert "Overview › Function Description" in "\n".join(sources)

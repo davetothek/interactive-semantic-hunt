@@ -271,3 +271,24 @@ def test_a_ticker_stops_twice_without_harm(monkeypatch) -> None:
     ticker.stop()
     ticker.stop()
     assert ticker._thread is None
+
+
+def test_a_notice_stays_above_the_turning_line(monkeypatch) -> None:
+    from ish.interfaces.busy import Ticker
+
+    out = _Terminal()
+    monkeypatch.setattr(sys, "stderr", out)
+    ticker = Ticker(interval=60)
+    ticker.show("haiku writing the answer")
+    ticker.note("Searching again: the handler")
+    ticker.stop()
+    assert "Searching again: the handler\n" in out.getvalue()
+
+
+def test_a_notice_to_a_pipe_writes_nothing(monkeypatch) -> None:
+    from ish.interfaces.busy import Ticker
+
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", out)
+    Ticker().note("Searching again: x")
+    assert out.getvalue() == ""

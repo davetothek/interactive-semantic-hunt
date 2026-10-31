@@ -12,8 +12,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 - `ish --ask "question" PATH` answers a question from the chunks a search
   finds, in Markdown: the question as a heading, the answer with a
-  numbered citation for each claim, and the cited sources as links that
-  open each file at its lines. It pipes into an editor as a document.
+  Markdown footnote for each claim, `[^1]`, and the cited sources as
+  footnotes with links that open each file at its lines. It pipes into an editor as a document.
   An answer opens with a short answer, gives each part of the question
   a section, a procedure numbered steps, and registers or values a
   table, and gathers what the documents leave open in one block. Each
@@ -39,7 +39,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   cited it.
 - `ish --ask` shows on stderr what it is doing while the models work,
   with the seconds each step has run: searching, choosing what to read,
-  reading, writing the answer, and each follow-up search. stdout holds
+  reading, writing the answer, and each follow-up search, which stays on
+  the screen as a notice. stdout holds
   only the answer, so it pipes into an editor. Ctrl-C stops it with
   exit code 130 and no traceback, and stops a `claude` call with it.
 - `ask_turns` lets the model ask for up to three follow-up searches a

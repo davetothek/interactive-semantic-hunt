@@ -167,6 +167,19 @@ class Ticker:
         sys.stderr.write(f"\r\033[2K{line[: _width() - 1]}")
         sys.stderr.flush()
 
+    def note(self, text: str) -> None:
+        """Leave *text* standing above the turning line, marked as a notice.
+
+        A step the next one replaces flashes past. A notice stays, so a
+        person can read afterwards what the run did.
+        """
+        if not sys.stderr.isatty():
+            return
+        with self._lock:
+            sys.stderr.write(f"\r\033[2K{_mark()} {text}\n")
+            sys.stderr.flush()
+        self.draw()
+
     def stop(self) -> None:
         """Stop turning and clear the line, so the output stands alone.
 

@@ -8,6 +8,7 @@ import os
 import sys
 
 from ish import bootstrap
+from ish.application.answer import FOLLOWING, AnswerStep
 from ish.interfaces.busy import ProgressLine, Ticker
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.format import format_answer, format_selection, render
@@ -54,7 +55,7 @@ def _run_ask(args: CliArgs) -> int:
         try:
             ish.index(on_progress=line.show)
             line.clear()
-            answer = ish.ask(args.query, on_step=lambda step: ticker.show(str(step)))
+            answer = ish.ask(args.query, on_step=lambda step: _report(ticker, step))
         except KeyboardInterrupt:
             # Ctrl-C reaches a claude child as well, which stops with it.
             # Leave a clean line and the exit code a shell expects.
@@ -67,6 +68,13 @@ def _run_ask(args: CliArgs) -> int:
         text = format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
         sys.stdout.write(f"{text}\n")
     return 0 if answer.covered else 2
+
+
+def _report(ticker: Ticker, step: AnswerStep) -> None:
+    """Show *step* on the busy line, and leave a follow-up search standing."""
+    if step.stage == FOLLOWING:
+        ticker.note(str(step))
+    ticker.show(str(step))
 
 
 def _sync_terminal_size() -> None:

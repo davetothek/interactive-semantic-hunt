@@ -73,13 +73,13 @@ class TestAsk:
             block.strip() for block in out.split("\n\n")
         ]
         assert heading == "# what does the watchdog do"
-        assert answer == "The watchdog resets the board[1]."
+        assert answer == "The watchdog resets the board [^1]."
         assert sources_heading == "## Sources"
         link, about, where = source.split("\n")
-        assert link.startswith("1. [boot.md:1-3](file://")
+        assert link.startswith("[^1]: [boot.md:1-3](file://")
         assert link.endswith("/docs/boot.md#L1-3)")
-        assert about == "   doc · Watchdog"
-        assert where == "   docs/"
+        assert about == "    doc · Watchdog"
+        assert where == "    docs/"
 
     def test_not_covered_lists_the_closest_sources_and_exits_2(
         self, project: Path, monkeypatch, capsys
@@ -220,3 +220,38 @@ class TestInterrupt:
         _model(monkeypatch, Interrupted())
         assert main(["--ask", "anything", str(project), *FLAGS]) == 130
         assert stops
+
+
+class TestFollowUpSearchesStand:
+    def test_each_follow_up_search_is_left_standing(
+        self, project: Path, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply
+        from ish.interfaces.cli import main as cli
+
+        notes: list[str] = []
+
+        class Recorder:
+            def show(self, text: str) -> None:
+                pass
+
+            def note(self, text: str) -> None:
+                notes.append(text)
+
+            def stop(self) -> None:
+                pass
+
+        class Agent:
+            model_name = "agent"
+
+            def step(self, question, sources, searched, turns_left):
+                if not searched and turns_left:
+                    return Reply(
+                        passages=(), covered=False, searches=("the reset command",)
+                    )
+                return Reply(passages=(Passage("Found.", ("1",)),), covered=True)
+
+        monkeypatch.setattr(cli, "Ticker", Recorder)
+        _model(monkeypatch, Agent())
+        assert main(["--ask", "q", str(project), *FLAGS, "--ask-turns", "2"]) == 0
+        assert notes == ["Searching again: the reset command"]

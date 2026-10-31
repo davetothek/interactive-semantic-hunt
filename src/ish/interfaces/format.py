@@ -84,8 +84,26 @@ def format_selection(chunk: Chunk) -> str:
 NOT_COVERED_TEXT = "The documents do not answer this. The closest sources:"
 
 
+def bracket(number: int) -> str:
+    """Mark a citation as ``[n]``, for plain text and for JSON."""
+    return f"[{number}]"
+
+
+def footnote(number: int) -> str:
+    """Mark a citation as a Markdown footnote, `` [^n]``, after a space.
+
+    Two plain markers side by side, ``[1][2]``, read in Markdown as a
+    reference link. A footnote marker links to its definition instead.
+    The space keeps a marker off the word before it and off the marker
+    before it, which some renderers join into one.
+    """
+    return f" [^{number}]"
+
+
 def number_citations(
-    answer: Answer, numbers: dict[Chunk, int] | None = None
+    answer: Answer,
+    numbers: dict[Chunk, int] | None = None,
+    mark: Callable[[int], str] = bracket,
 ) -> tuple[str, list[Chunk]]:
     """Return the answer text with numbered citations, and the cited chunks.
 
@@ -98,7 +116,7 @@ def number_citations(
     text = ""
     for part in answer.parts:
         marks = "".join(
-            f"[{numbers.setdefault(c, len(numbers) + 1)}]" for c in part.cites
+            mark(numbers.setdefault(c, len(numbers) + 1)) for c in part.cites
         )
         # Keep the markers on the claim they cite: a part that ends a
         # paragraph ends in newlines, and the markers go before them.
@@ -145,11 +163,11 @@ def format_answer(
     numbers: dict[Chunk, int] = {}
     if answer.covered and answer.blocks:
         for block in answer.blocks:
-            lines += _render(block, numbers) + [""]
+            lines += _render(block, numbers, footnote) + [""]
         cited = list(numbers)
         lines += ["## Sources", ""]
     elif answer.covered:
-        text, cited = number_citations(answer)
+        text, cited = number_citations(answer, mark=footnote)
         for paragraph in text.split("\n\n"):
             if paragraph.strip():
                 lines += [_fill(paragraph), ""]
@@ -157,13 +175,20 @@ def format_answer(
     else:
         cited = list(answer.sources)
         lines += [_fill(NOT_COVERED_TEXT, "> "), "", "## Closest sources", ""]
+    # A footnote definition for a cited source, so each marker links to
+    # it. A closest source is cited by nothing, so it is a plain list.
     for n, chunk in enumerate(cited, 1):
-        marker = f"{n}. "
+        marker = f"[^{n}]: " if answer.covered else f"{n}. "
         place = f"{chunk.path.name}{chunk.location.render()}"
         lines.append(f"{marker}[{place}]({link(chunk)})")
-        indent = " " * len(marker)
+        # A footnote continues on lines indented by four spaces.
+        indent = "    " if answer.covered else " " * len(marker)
         about = [kind_of(chunk)] if kind_of else []
-        lines.append(_fill(" · ".join([*about, symbol_of(chunk)]), indent))
+        # A heading path joins its levels with " > ". A wrapped line that
+        # starts with ">" is a quote in Markdown, so a source line writes
+        # the separator as " › ".
+        heading = symbol_of(chunk).replace(" > ", " › ")
+        lines.append(_fill(" · ".join([*about, heading]), indent))
         # A directory does not wrap: a path broken over two lines no longer
         # pastes into a shell.
         lines.append(f"{indent}{display_path(chunk.path.parent, base).as_posix()}/")
@@ -202,50 +227,62 @@ def layout_data(answer: Answer) -> tuple[list[dict[str, object]], list[Chunk]]:
     return data, list(numbers)
 
 
-def _marks(cites: Sequence[Chunk], numbers: dict[Chunk, int]) -> str:
-    return "".join(f"[{numbers.setdefault(c, len(numbers) + 1)}]" for c in cites)
+def _marks(
+    cites: Sequence[Chunk],
+    numbers: dict[Chunk, int],
+    mark: Callable[[int], str] = bracket,
+) -> str:
+    return "".join(mark(numbers.setdefault(c, len(numbers) + 1)) for c in cites)
 
 
-def _joined(parts: Sequence[AnswerPart], numbers: dict[Chunk, int]) -> str:
+def _joined(
+    parts: Sequence[AnswerPart],
+    numbers: dict[Chunk, int],
+    mark: Callable[[int], str] = bracket,
+) -> str:
     """Join parts into text with their markers, as ``number_citations`` does."""
     return number_citations(
-        Answer(parts=tuple(parts), covered=True, sources=()), numbers
+        Answer(parts=tuple(parts), covered=True, sources=()), numbers, mark
     )[0]
 
 
-def _render(block: AnswerBlock, numbers: dict[Chunk, int]) -> list[str]:
+def _render(
+    block: AnswerBlock, numbers: dict[Chunk, int], mark: Callable[[int], str]
+) -> list[str]:
     """Render one block as Markdown lines, numbering new citations in order."""
     lines = [f"### {block.heading}", ""] if block.heading else []
     if block.kind == "summary":
-        return [_fill(f"**Short answer:** {_joined(block.parts, numbers)}")]
+        return [_fill(f"**Short answer:** {_joined(block.parts, numbers, mark)}")]
     if block.kind == "gaps":
         lines = ["> **Not in the documents**", ">"]
         for part in block.parts:
-            text = f"{part.text.strip()}{_marks(part.cites, numbers)}"
+            text = f"{part.text.strip()}{_marks(part.cites, numbers, mark)}"
             lines += _fill(text, "> - ").replace("\n> - ", "\n>   ").split("\n")
         return lines
     if block.kind == "steps":
         for n, part in enumerate(block.parts, 1):
             marker = f"{n}. "
-            text = f"{marker}{part.text.strip()}{_marks(part.cites, numbers)}"
+            text = f"{marker}{part.text.strip()}{_marks(part.cites, numbers, mark)}"
             lines.append(_fill(text, "", " " * len(marker)))
         return lines
     if block.kind == "table":
         if block.parts:
-            lines += [_fill(_joined(block.parts, numbers)), ""]
-        return lines + _table(block, numbers)
-    for paragraph in _joined(block.parts, numbers).split("\n\n"):
+            lines += [_fill(_joined(block.parts, numbers, mark)), ""]
+        return lines + _table(block, numbers, mark)
+    for paragraph in _joined(block.parts, numbers, mark).split("\n\n"):
         if paragraph.strip():
             lines += [_fill(paragraph), ""]
     return lines[:-1] if lines and lines[-1] == "" else lines
 
 
-def _table(block: AnswerBlock, numbers: dict[Chunk, int]) -> list[str]:
+def _table(
+    block: AnswerBlock, numbers: dict[Chunk, int], mark: Callable[[int], str]
+) -> list[str]:
     """Render a table with a column of citations, padded to line up in a terminal."""
     width = max([len(block.columns)] + [len(r.cells) for r in block.rows])
     head = [*block.columns, *[""] * (width - len(block.columns)), "Sources"]
     body = [
-        [*r.cells, *[""] * (width - len(r.cells)), _marks(r.cites, numbers)]
+        [*r.cells, *[""] * (width - len(r.cells)), _marks(r.cites, numbers, mark)]
         for r in block.rows
     ]
     cells = [[_cell(c) for c in row] for row in [head, *body]]
