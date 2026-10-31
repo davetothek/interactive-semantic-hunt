@@ -97,6 +97,9 @@ docstring-code-format = true
 cache_dir = ".cache/pytest"
 addopts = "--cov=ish --cov-report=term-missing --cov-fail-under=100"
 
+[tool.setuptools.package-data]
+"ish.adapters.language_model" = ["prompts/*.md"]
+
 [tool.coverage.run]
 source = ["ish"]
 

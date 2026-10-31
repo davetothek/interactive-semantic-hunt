@@ -102,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the interactive TUI.",
     )
+    parser.add_argument(
+        "--ask",
+        action="store_true",
+        help="Answer the query as a question, in Markdown, with the sources it cites.",
+    )
     # Not one of the settings, and deliberately so: a config file cannot
     # hold the path to itself. See CONFIG_OPTION in ish.settings.
     parser.add_argument(
@@ -163,6 +168,7 @@ class CliArgs:
     query: str
     interactive: bool
     settings: Settings
+    ask: bool = False
     # The flags as given, so a tree below can resolve its own
     # configuration and still let a flag override it.
     overrides: Mapping[str, Any] = field(default_factory=dict)
@@ -204,6 +210,7 @@ class CliArgs:
             path=path,
             query=query_val,
             interactive=args.interactive,
+            ask=args.ask,
             settings=load_settings(overrides, start=_search_root(path)),
             overrides=overrides,
         )

@@ -22,3 +22,6 @@ htmlcov/
 
 # Docs
 site/
+
+# Local design notes
+/spec.md

@@ -20,13 +20,17 @@ free of layer imports, and `tests/unit/test_package.py` enforces that.
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 
 from ish import bootstrap
+from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
 from ish.application.filters import Filters, parse_query
+from ish.application.ports.language_model import LanguageModel
+from ish.application.ports.link import LinkResolver
+from ish.application.preview import read_lines
 from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
@@ -35,6 +39,10 @@ from ish.interfaces import completion, heartbeat
 from ish.settings import Settings, load_settings
 
 log = logging.getLogger(__name__)
+
+# Chunks a question reads. More chunks find more, and every one is paid
+# for in tokens the model reads.
+ASK_LIMIT = 10
 
 
 class Ish:
@@ -72,6 +80,10 @@ class Ish:
         self._indexed = False
         self._vocabulary: bootstrap.Vocabulary | None = None
         self._identity: bootstrap.Identity | None = None
+        self._model: LanguageModel | None = None
+        self._reranker: LanguageModel | None = None
+        self._reader: Callable[[Chunk], str | None] = read_lines
+        self._links: LinkResolver | None = None
 
     # ------------------------------------------------------------------
     # Lifetime
@@ -252,6 +264,63 @@ class Ish:
                 hybrid=hybrid,
             )
         )
+
+    def ask(
+        self,
+        question: str,
+        *,
+        lang: Sequence[str] = (),
+        under: str = "",
+        type: Sequence[str] = (),
+        on_step: AnswerCallback | None = None,
+    ) -> Answer:
+        """Answer *question* from the chunks a search of this tree returns.
+
+        Search the way ``search`` does, filters included, then let the
+        language model the settings allow write the answer. Build the
+        model on the first question, so a session that only searches
+        never builds one. Raise ``LanguageModelError`` when no model is
+        set or allowed. Report each step to *on_step*, because a model
+        call takes seconds.
+        """
+        if self._model is None:
+            self._model = bootstrap.build_language_model(self.settings)
+            self._reranker = bootstrap.build_reranker(self.settings)
+            self._reader = bootstrap.build_reader(self.settings)
+        # A rerank model sorts a wide search cheaply from the start of each
+        # chunk. Without one, the best chunks as ranked are read in full.
+        wide = self._reranker is not None
+        limit = self.settings.rerank_candidates if wide else ASK_LIMIT
+        use_case = AnswerQuestion(
+            search=lambda text: self.search(
+                text, limit, lang=lang, under=under, type=type
+            ),
+            model=self._model,
+            reranker=self._reranker,
+            pick=ASK_LIMIT,
+            turns=self.settings.ask_turns,
+            read=self._reader,
+            **({"on_step": on_step} if on_step else {}),
+        )
+        return use_case.answer(question)
+
+    def kind_of(self, chunk: Chunk) -> str:
+        """Return what *chunk* holds: code, doc, test, or config.
+
+        Read the type the way the ``type:`` filter does, with the
+        ``type_patterns`` of this tree.
+        """
+        return self._words.categorize(chunk)
+
+    def link(self, chunk: Chunk) -> str:
+        """Return a URL that opens *chunk* at its location.
+
+        Link to ``link_base`` when it is set, with the path taken from
+        this tree, and to the file on disk when it is not.
+        """
+        if self._links is None:
+            self._links = bootstrap.build_link_resolver(self.settings, self.path)
+        return self._links.link(chunk)
 
     def chunks(
         self,

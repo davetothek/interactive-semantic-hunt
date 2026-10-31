@@ -72,6 +72,24 @@ class TestReading:
         with _ish(project) as ish:
             assert ish.index() > 0
 
+    def test_search_never_builds_a_language_model(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        """A search sends no text anywhere but the embedder."""
+
+        def refuse(settings):
+            raise AssertionError("a search built a language model")
+
+        monkeypatch.setattr(bootstrap, "build_language_model", refuse)
+        settings = Settings(
+            no_cache=True,
+            git=False,
+            language_model="stub",
+            allowed_language_models=("stub",),
+        )
+        with Ish(project, settings=settings) as ish:
+            assert ish.search("configure", limit=3)
+
     def test_search_returns_ranked_pairs(self, project: Path, offline) -> None:
         with _ish(project) as ish:
             results = ish.search("configure", limit=3)
@@ -349,3 +367,169 @@ class TestKeptByAServer:
 
     def test_this_process_is_not_a_server(self, project: Path, offline) -> None:
         assert _ish(project).kept_by() is None
+
+
+class TestAsk:
+    """Ish.ask searches the way Ish.search does, then lets a model answer."""
+
+    class Model:
+        model_name = "fake-model"
+
+        def __init__(self) -> None:
+            self.sources: list = []
+
+        def answer(self, question, sources):
+            from ish.application.ports.language_model import Passage, Reply
+
+            self.sources = list(sources)
+            return Reply(passages=(Passage("Yes.", ("1",)),), covered=True)
+
+    def test_the_model_is_built_once_on_the_first_question(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        built: list[object] = []
+        model = self.Model()
+
+        def build(settings):
+            built.append(settings)
+            return model
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        with _ish(project) as ish:
+            assert built == []
+            first = ish.ask("how to configure")
+            ish.ask("again")
+        assert len(built) == 1
+        assert first.covered and first.model == "fake-model"
+        assert first.parts[0].cites == (first.sources[0],)
+
+    def test_filters_narrow_what_the_model_reads(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        with _ish(project) as ish:
+            ish.ask("configure", type=["doc"])
+        assert model.sources
+        assert all("guide.md" in s.title for s in model.sources)
+
+    def test_a_filter_typed_into_the_question_applies(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        with _ish(project) as ish:
+            ish.ask("lang:python configure")
+        assert model.sources
+        assert all(".py:" in s.title for s in model.sources)
+
+    def test_at_most_ask_limit_chunks_are_read(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.interfaces.python import api
+
+        for n in range(api.ASK_LIMIT + 3):
+            (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        with _ish(project) as ish:
+            ish.ask("function")
+        assert len(model.sources) == api.ASK_LIMIT
+
+
+class TestLink:
+    def test_a_link_uses_the_base_and_this_tree(self, project: Path) -> None:
+        from ish.domain.chunk import Chunk
+
+        settings = Settings(
+            no_cache=True, git=False, link_base="https://docs.example.com"
+        )
+        chunk = Chunk(
+            project.resolve() / "docs" / "guide.md",
+            "t",
+            "document",
+            "markdown",
+            "Guide",
+            1,
+            3,
+        )
+        with Ish(project, settings=settings) as ish:
+            assert ish.link(chunk) == "https://docs.example.com/docs/guide.md#L1-3"
+            assert ish.link(chunk) == ish.link(chunk)
+
+    def test_without_a_base_a_link_is_a_file_uri(self, project: Path) -> None:
+        from ish.domain.chunk import Chunk
+
+        chunk = Chunk(
+            project.resolve() / "a.md", "t", "document", "markdown", None, 2, 4
+        )
+        with _ish(project) as ish:
+            assert ish.link(chunk).startswith("file://")
+            assert ish.link(chunk).endswith("/a.md#L2-4")
+
+
+class TestAskWithRerank:
+    def test_a_rerank_model_widens_the_search_and_picks_ten(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply, Selection
+        from ish.interfaces.python import api
+
+        for n in range(api.ASK_LIMIT + 5):
+            (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
+        shown: list[int] = []
+
+        class Model:
+            model_name = "m"
+
+            def answer(self, question, sources):
+                return Reply(passages=(Passage("ok", ("1",)),), covered=True)
+
+            def select(self, question, candidates, limit):
+                shown.append(len(candidates))
+                return Selection(ids=tuple(c.id for c in candidates)[:limit])
+
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: Model())
+        monkeypatch.setattr(bootstrap, "build_reranker", lambda s: Model())
+        settings = Settings(no_cache=True, git=False, rerank_candidates=14)
+        with Ish(project, settings=settings) as ish:
+            answer = ish.ask("function")
+        assert shown == [14]
+        assert len(answer.sources) == api.ASK_LIMIT
+
+
+class TestAskTurns:
+    def test_ask_turns_reach_the_use_case(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply
+
+        class Agent:
+            model_name = "agent"
+            turns_seen: list[int] = []
+
+            def step(self, question, sources, searched, turns_left):
+                self.turns_seen.append(turns_left)
+                return Reply(passages=(Passage("ok", ("1",)),), covered=True)
+
+        agent = Agent()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: agent)
+        settings = Settings(no_cache=True, git=False, ask_turns=2)
+        with Ish(project, settings=settings) as ish:
+            assert ish.ask("configure").turns == 1
+        assert agent.turns_seen == [2]
+
+
+class TestKindOf:
+    def test_a_chunk_is_sorted_the_way_the_type_filter_sorts_it(
+        self, project: Path
+    ) -> None:
+        from ish.domain.chunk import Chunk
+
+        def chunk(rel: str, language: str) -> Chunk:
+            return Chunk(project.resolve() / rel, "t", "k", language, None, 1, 2)
+
+        with _ish(project) as ish:
+            assert ish.kind_of(chunk("docs/guide.md", "markdown")) == "doc"
+            assert ish.kind_of(chunk("tests/test_app.py", "python")) == "test"
+            assert ish.kind_of(chunk("src/app.py", "python")) == "code"

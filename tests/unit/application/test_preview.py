@@ -79,3 +79,33 @@ class TestFailures:
         target = tmp_path / "a.py"
         target.write_bytes(b"# caf\xe9\n")
         assert "Cannot read" in load_text(chunk(target, 1, 1))
+
+
+class TestReadLines:
+    """read_lines gives the real text or nothing, never an explanation."""
+
+    def _chunk(self, path: Path, start: int, end: int, text: str = "") -> Chunk:
+        return Chunk(path, text, "section", "asciidoc", "s", start, end)
+
+    def test_the_lines_from_the_file(self, tmp_path: Path) -> None:
+        from ish.application.preview import read_lines
+
+        f = tmp_path / "a.adoc"
+        f.write_text("one\ntwo\nthree\n")
+        assert read_lines(self._chunk(f, 2, 3)) == "two\nthree\n"
+
+    def test_the_text_a_chunk_carries(self, tmp_path: Path) -> None:
+        from ish.application.preview import read_lines
+
+        assert read_lines(self._chunk(tmp_path / "x", 1, 1, "kept")) == "kept"
+
+    def test_none_when_it_cannot_be_read(self, tmp_path: Path) -> None:
+        from ish.application.preview import read_lines
+
+        f = tmp_path / "a.adoc"
+        f.write_text("one\n")
+        binary = tmp_path / "b.adoc"
+        binary.write_bytes(b"\xff\xfe\xfa")
+        assert read_lines(self._chunk(tmp_path / "gone", 1, 1)) is None
+        assert read_lines(self._chunk(f, 5, 9)) is None
+        assert read_lines(self._chunk(binary, 1, 1)) is None

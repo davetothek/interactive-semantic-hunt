@@ -9,9 +9,13 @@ paths:
 
 ## bootstrap.py
 
-- This is the composition root. It selects from the two registries,
-  `PARSERS` in `adapters/parser` and `EMBEDDERS` in `adapters/embedder`, and
-  wires adapters into use cases. It does not hold a registry itself.
+- This is the composition root. It selects from the three registries,
+  `PARSERS` in `adapters/parser`, `EMBEDDERS` in `adapters/embedder`, and
+  `LANGUAGE_MODELS` in `adapters/language_model`, and wires adapters into use
+  cases. It does not hold a registry itself.
+- `build_language_model()` builds a backend only when
+  `allowed_language_models` names it. No default, no fallback. A search
+  never calls it: `Ish` builds the model on the first question.
 - `build_stores()` returns two things: the index a refresh may write, or
   `None` when a search reads several indexes and may write to none, and the
   reader a search consults. A federated reader never sees a write.

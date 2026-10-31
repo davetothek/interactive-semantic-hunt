@@ -200,6 +200,7 @@ class TestToolDefinitions:
     def test_every_tool_is_offered(self, tools: IshTools) -> None:
         assert [t.name for t in tools.tools()] == [
             "search_code",
+            "ask",
             "list_chunks",
             "index_status",
             "refresh_index",
@@ -399,7 +400,7 @@ class TestOnlyQueryScopeIsOverridable:
     ) -> None:
         from ish.settings import query_scope_names
 
-        allowed = set(query_scope_names()) | {"query", "path"}
+        allowed = set(query_scope_names()) | {"query", "question", "path"}
         assert self._properties(tools) <= allowed
 
     def test_search_offers_the_narrowing_options(self, tools: IshTools) -> None:
@@ -899,3 +900,95 @@ class TestBesideAServer:
         assert project.resolve() in tools._status
         tools._refresh_once(project.resolve())
         assert project.resolve() not in tools._status
+
+
+class TestAsk:
+    """The ask tool answers as JSON, with a location and a link per citation."""
+
+    class Model:
+        model_name = "fake-model"
+
+        def __init__(self, covered: bool = True) -> None:
+            self.covered = covered
+            self.sources: list = []
+
+        def answer(self, question, sources):
+            from ish.application.ports.language_model import Passage, Reply
+
+            self.sources = list(sources)
+            return Reply(
+                passages=(Passage("It loads the config", ("1",)), Passage(".")),
+                covered=self.covered,
+                input_tokens=50,
+                output_tokens=6,
+            )
+
+    @pytest.fixture()
+    def model(self, monkeypatch) -> "TestAsk.Model":
+        made = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: made)
+        return made
+
+    def test_the_answer_carries_numbered_citations_with_links(
+        self, tools: IshTools, project: Path, stub_backend, model
+    ) -> None:
+        import json
+
+        reply = json.loads(tools.ask({"question": "config", "path": str(project)}))
+        assert reply["covered"] is True
+        assert reply["answer"] == "It loads the config[1]."
+        assert (reply["model"], reply["input_tokens"], reply["output_tokens"]) == (
+            "fake-model",
+            50,
+            6,
+        )
+        (citation,) = reply["citations"]
+        assert citation["n"] == 1
+        assert citation["path"] == "app.py"
+        assert citation["location"]["kind"] == "lines"
+        assert citation["url"].startswith("file://")
+        assert citation["url"].endswith(
+            f"/app.py#L{citation['location']['start']}-{citation['location']['end']}"
+        )
+        assert "sources" not in reply
+        assert (reply["rerank_input_tokens"], reply["rerank_output_tokens"]) == (0, 0)
+        assert (reply["turns"], reply["searches"]) == (1, [])
+        assert reply["layout"] == [
+            {"kind": "prose", "heading": "", "text": "It loads the config[1]."}
+        ]
+        assert citation["type"] == "code"
+
+    def test_not_covered_returns_the_closest_sources(
+        self, tools: IshTools, project: Path, stub_backend, model
+    ) -> None:
+        import json
+
+        model.covered = False
+        reply = json.loads(tools.ask({"question": "config", "path": str(project)}))
+        assert reply["covered"] is False
+        assert "citations" not in reply
+        assert reply["sources"]
+        assert all("n" not in s and s["url"] for s in reply["sources"])
+
+    def test_a_filter_narrows_what_the_model_reads(
+        self, tools: IshTools, project: Path, stub_backend, model
+    ) -> None:
+        tools.ask({"question": "config", "path": str(project), "lang": ["markdown"]})
+        assert model.sources == []
+
+    def test_a_question_is_required(self, tools: IshTools) -> None:
+        with pytest.raises(ValueError, match="question"):
+            tools.ask({"question": "  "})
+
+    def test_no_model_set_is_a_tool_error(
+        self, tools: IshTools, project: Path, stub_backend
+    ) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        with pytest.raises(LanguageModelError, match="No language model"):
+            tools.ask({"question": "config", "path": str(project)})
+
+    def test_the_tool_is_listed(self, tools: IshTools) -> None:
+        ask = next(t for t in tools.tools() if t.name == "ask")
+        assert ask.schema["required"] == ["question"]
+        assert "limit" not in ask.schema["properties"]

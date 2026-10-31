@@ -1355,3 +1355,155 @@ class TestCoveringIndex:
         finally:
             parent.close()
         assert symbols == {"outer", "deep"}
+
+
+class _StubModel:
+    def __init__(self, model: str = "") -> None:
+        self.model_name = model or "stub-default"
+
+    def answer(self, question, sources):
+        raise AssertionError("not called here")
+
+
+class TestBuildLanguageModel:
+    """A language model receives the text of documents, so it is opt-in.
+
+    There is no default and no fallback. Only a backend that
+    ``allowed_language_models`` names is ever constructed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def registry(self, monkeypatch) -> list[str]:
+        built: list[str] = []
+
+        def stub(model: str, *, prompts) -> _StubModel:
+            built.append(model)
+            return _StubModel(model)
+
+        monkeypatch.setitem(bootstrap.LANGUAGE_MODELS, "stub", stub)
+        return built
+
+    def test_the_table_is_the_one_in_the_language_model_package(self) -> None:
+        from ish.adapters import language_model
+
+        assert bootstrap.LANGUAGE_MODELS is language_model.LANGUAGE_MODELS
+
+    def test_an_allowed_backend_is_built_with_the_model_option(self) -> None:
+        settings = Settings(
+            language_model="stub",
+            answer_model="big",
+            allowed_language_models=("stub",),
+        )
+        assert bootstrap.build_language_model(settings).model_name == "big"
+
+    def test_no_backend_set_names_the_setting(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(allowed_language_models=("stub",))
+        with pytest.raises(LanguageModelError, match="language_model"):
+            bootstrap.build_language_model(settings)
+        assert registry == []
+
+    def test_a_backend_not_allowed_is_never_built(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="stub")
+        with pytest.raises(LanguageModelError, match=r"'stub' is not allowed.*none"):
+            bootstrap.build_language_model(settings)
+        assert registry == []
+
+    def test_the_refusal_names_the_allowlist(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="stub", allowed_language_models=("other",))
+        with pytest.raises(LanguageModelError, match="allowed_language_models: other"):
+            bootstrap.build_language_model(settings)
+        assert registry == []
+
+    def test_an_unknown_backend_lists_the_valid_ones(self) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="nope", allowed_language_models=("nope",))
+        with pytest.raises(LanguageModelError, match="Valid backends: .*stub"):
+            bootstrap.build_language_model(settings)
+
+    def test_no_rerank_model_builds_no_reranker(self, registry) -> None:
+        settings = Settings(language_model="stub", allowed_language_models=("stub",))
+        assert bootstrap.build_reranker(settings) is None
+        assert registry == []
+
+    def test_the_reranker_runs_on_the_same_backend(self, registry) -> None:
+        settings = Settings(
+            language_model="stub",
+            rerank_model="small",
+            allowed_language_models=("stub",),
+        )
+        assert bootstrap.build_reranker(settings).model_name == "small"
+        assert registry == ["small"]
+
+    def test_the_reranker_is_behind_the_same_allowlist(self, registry) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        settings = Settings(language_model="stub", rerank_model="small")
+        with pytest.raises(LanguageModelError, match="not allowed"):
+            bootstrap.build_reranker(settings)
+        assert registry == []
+
+    def test_an_empty_registry_says_none(self, monkeypatch) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        monkeypatch.setattr(bootstrap, "LANGUAGE_MODELS", {})
+        settings = Settings(language_model="nope", allowed_language_models=("nope",))
+        with pytest.raises(LanguageModelError, match="Valid backends: none"):
+            bootstrap.build_language_model(settings)
+
+
+class TestReader:
+    """A model reads the text the index embedded, includes resolved."""
+
+    def _doc(self, tmp_path: Path) -> Path:
+        (tmp_path / "part.adoc").write_text("|REG |0x1\n")
+        doc = tmp_path / "spec.adoc"
+        doc.write_text("= Spec\n\n== Regs\ninclude::part.adoc[]\n")
+        return doc
+
+    def _chunk(self, doc: Path, start: int, end: int, language: str = "asciidoc"):
+        from ish.domain.chunk import Chunk
+
+        return Chunk(doc, "", "section", language, "s", start, end)
+
+    def test_an_asciidoc_chunk_reads_with_its_includes(self, tmp_path: Path) -> None:
+        doc = self._doc(tmp_path)
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(doc, 3, 4)) == "== Regs\n|REG |0x1\n"
+
+    def test_lines_no_chunk_holds_read_from_the_file(self, tmp_path: Path) -> None:
+        doc = self._doc(tmp_path)
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(doc, 2, 3)) == "\n== Regs\n"
+
+    def test_a_language_with_no_parser_reads_the_file(self, tmp_path: Path) -> None:
+        doc = tmp_path / "notes.txt"
+        doc.write_text("one\ntwo\n")
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(doc, 2, 2, "text")) == "two\n"
+
+    def test_a_gone_file_reads_as_nothing(self, tmp_path: Path) -> None:
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(tmp_path / "gone.adoc", 1, 2)) is None
+
+    def test_a_file_that_fails_to_parse_reads_its_lines(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.py"
+        bad.write_text("def broken(:\n")
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(bad, 1, 1, "python")) == "def broken(:\n"
+
+    def test_the_reader_keeps_a_bounded_number_of_files(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(bootstrap, "READER_FILES", 2)
+        read = bootstrap.build_reader(Settings())
+        for n in range(4):
+            doc = tmp_path / f"d{n}.adoc"
+            doc.write_text(f"= D{n}\ntext {n}\n")
+            assert read(self._chunk(doc, 1, 2)) == f"= D{n}\ntext {n}\n"

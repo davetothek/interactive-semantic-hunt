@@ -5,18 +5,24 @@ this module. It is the only module allowed to import both application
 code and concrete adapters.
 
 The registries live beside what they register: ``adapters/parser``
-lists every parser and ``adapters/embedder`` every backend, each with
-the recipe for adding one. This module only selects from them.
+lists every parser, ``adapters/embedder`` every embedding backend, and
+``adapters/language_model`` every language model backend, each with the
+recipe for adding one. This module only selects from them.
 """
 
 import logging
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
+from ish.adapters.language_model import LANGUAGE_MODELS
+from ish.adapters.language_model.prompts import Prompts
+from ish.adapters.language_model.prompts import load as load_prompts
+from ish.adapters.link.base_url import BaseUrl
+from ish.adapters.link.file_uri import FileUri
 from ish.adapters.parser import (
     CHUNKING_VERSION,
     Language,
@@ -31,6 +37,8 @@ from ish.application.filters import build_result_filter as make_result_filter
 from ish.application.index import Index
 from ish.application.languages import LanguageResolver, resolve_with
 from ish.application.ports.embedder import Embedder
+from ish.application.ports.language_model import LanguageModel, LanguageModelError
+from ish.application.ports.link import LinkResolver
 from ish.application.ports.parser import Parser
 from ish.application.ports.vector_store import (
     StoreBusy,
@@ -126,6 +134,55 @@ def build_parsers(settings: Settings) -> list[Parser]:
     return parsers
 
 
+# Files a reader keeps parsed. An answer reads ten chunks, most of them
+# from a few files, and a follow-up search adds five more.
+READER_FILES = 32
+
+
+def build_reader(settings: Settings) -> Callable[[Chunk], str | None]:
+    """Return a function that reads the text of a chunk as it was indexed.
+
+    A parser may give a chunk text that the file does not hold line for
+    line: an AsciiDoc section has its includes resolved. Parse the file
+    again with the same parser and return the text of the chunk with the
+    same lines, so a model reads what the index embedded. Read the lines
+    of the file when the parse fails or no chunk has those lines, as when
+    the file changed after it was indexed.
+    """
+    from collections import OrderedDict
+
+    from ish.application.preview import read_lines
+
+    parsers = {parser.language: parser for parser in build_parsers(settings)}
+    parsed: OrderedDict[tuple[Path, float], dict[tuple[int, int], str]] = OrderedDict()
+
+    def read(chunk: Chunk) -> str | None:
+        parser = parsers.get(chunk.language)
+        try:
+            stamp = chunk.path.stat().st_mtime
+        except OSError:
+            return None
+        key = (chunk.path, stamp)
+        texts = parsed.get(key)
+        if texts is None and parser is not None:
+            try:
+                source = chunk.path.read_text(encoding="utf-8")
+                texts = {
+                    (c.start_line, c.end_line): c.text
+                    for c in parser.parse(chunk.path, source)
+                }
+            except Exception:
+                log.debug("Could not parse %s again", chunk.path, exc_info=True)
+                texts = {}
+            parsed[key] = texts
+            if len(parsed) > READER_FILES:
+                parsed.popitem(last=False)
+        text = (texts or {}).get((chunk.start_line, chunk.end_line))
+        return text if text is not None else read_lines(chunk)
+
+    return read
+
+
 def context_window(settings: Settings) -> int | None:
     """Return the window to ask the backend for, or None at the default.
 
@@ -163,6 +220,63 @@ def build_embedder(settings: Settings) -> Embedder:
         ) from None
 
     return backend.from_option(settings.model, context_tokens=context_window(settings))
+
+
+def build_language_model(settings: Settings) -> LanguageModel:
+    """Construct the language model that writes answers.
+
+    Build a backend only when ``allowed_language_models`` names it. A
+    backend receives the text of the documents, so there is no default
+    and no fallback: an unset, unknown, or disallowed backend raises.
+    """
+    return _language_model(settings, settings.answer_model)
+
+
+def build_reranker(settings: Settings) -> LanguageModel | None:
+    """Construct the model that picks which chunks an answer reads, or None.
+
+    Run ``rerank_model`` on the same backend as the answer, behind the
+    same allowlist, so choosing sends text nowhere that answering does
+    not. Return None when no rerank model is set.
+    """
+    if not settings.rerank_model:
+        return None
+    return _language_model(settings, settings.rerank_model)
+
+
+def _language_model(settings: Settings, model: str) -> LanguageModel:
+    name = settings.language_model
+    if not name:
+        raise LanguageModelError(
+            "No language model is set. Set language_model to answer questions."
+        )
+    if name not in settings.allowed_language_models:
+        allowed = ", ".join(settings.allowed_language_models) or "none"
+        raise LanguageModelError(
+            f"Language model {name!r} is not allowed. "
+            f"allowed_language_models: {allowed}"
+        )
+    try:
+        backend = LANGUAGE_MODELS[name]
+    except KeyError:
+        valid = ", ".join(sorted(LANGUAGE_MODELS)) or "none"
+        raise LanguageModelError(
+            f"Unknown language model {name!r}. Valid backends: {valid}"
+        ) from None
+    return backend(model, prompts=build_prompts(settings))
+
+
+def build_prompts(settings: Settings) -> Prompts:
+    """Read the instructions, from ``prompt_dir`` where it holds a file."""
+    directory = Path(settings.prompt_dir).expanduser() if settings.prompt_dir else None
+    return load_prompts(directory)
+
+
+def build_link_resolver(settings: Settings, root: Path) -> LinkResolver:
+    """Link chunks under *root* to ``link_base``, or to their files on disk."""
+    if settings.link_base:
+        return BaseUrl(settings.link_base, root)
+    return FileUri()
 
 
 def model_id(settings: Settings, embedder: Embedder) -> str:

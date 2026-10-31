@@ -38,7 +38,12 @@ The first finishes a filter word rather than searching. The second keeps
 the indexes of a tree current and answers no query: it writes a status
 file the clients read, and a client that finds a live one refreshes
 nothing itself. `Ish` is the session the other three are built on. Nothing
-beyond these is built, and an HTTP API stays out by decision.
+beyond these is built. `ish-mcp --http` serves the MCP tools over HTTP
+behind a bearer token, and a REST API stays out by decision.
+
+`ish --ask` and the `ask` MCP tool answer a question from the chunks a
+search finds, with citations. A language model writes the answer, and
+only a backend that `allowed_language_models` names is ever built.
 
 ## Architecture
 
@@ -50,12 +55,15 @@ one module that joins them.
 |---|---|---|
 | Domain | `src/ish/domain/chunk.py` | `Chunk`, one named region of a file |
 | Domain | `src/ish/domain/match.py` | `Match`, a chunk with its score |
-| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the two registries |
+| Domain | `src/ish/domain/location.py` | `Location`, where a chunk sits: lines, pages, slides, cells, sections |
+| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the three registries |
 | Composition | `src/ish/settings.py` | Option set — one source of truth for CLI flags and TOML keys |
 | Composition | `src/ish/runtime.py` | The directory where the processes of one user share files while they run |
 | Port | `src/ish/application/ports/parser.py` | `Parser` Protocol and `ParseError` |
 | Port | `src/ish/application/ports/embedder.py` | `Embedder` Protocol |
 | Port | `src/ish/application/ports/vector_store.py` | `VectorReader` and `VectorStore` Protocols |
+| Port | `src/ish/application/ports/language_model.py` | `LanguageModel` Protocol, `Source`, `Reply` |
+| Port | `src/ish/application/ports/link.py` | `LinkResolver` Protocol |
 | Application | `src/ish/application/scan.py` | Scan use case: discover, accept, parse |
 | Application | `src/ish/application/index.py` | Index use case: staleness, orphans, embedding |
 | Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
@@ -65,6 +73,7 @@ one module that joins them.
 | Application | `src/ish/application/languages.py` | Resolve a spelling to a registered language |
 | Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |
 | Application | `src/ish/application/preview.py` | Read the source a chunk points at |
+| Application | `src/ish/application/answer.py` | Answer use case: search, read, fit the budget, ask the model |
 | Adapter | `src/ish/adapters/parser/__init__.py` | `PARSERS` — every language, and the recipe for adding one |
 | Adapter | `src/ish/adapters/parser/python.py` | Python AST parser |
 | Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
@@ -75,6 +84,13 @@ one module that joins them.
 | Adapter | `src/ish/adapters/embedder/__init__.py` | `EMBEDDERS` — every backend, and the recipe for adding one |
 | Adapter | `src/ish/adapters/embedder/prefixes.py` | `PrefixingEmbedder`, task prefixes, query cache |
 | Adapter | `src/ish/adapters/embedder/turn.py` | The marker a query leaves, and the wait a document batch takes |
+| Adapter | `src/ish/adapters/language_model/__init__.py` | `LANGUAGE_MODELS` — every backend, and the recipe for adding one |
+| Adapter | `src/ish/adapters/language_model/anthropic.py` | Messages API with native citations |
+| Adapter | `src/ish/adapters/language_model/ollama.py` | A generation model on the local daemon |
+| Adapter | `src/ish/adapters/language_model/claude_cli.py` | The Claude Code CLI in print mode |
+| Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
+| Adapter | `src/ish/adapters/language_model/prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
+| Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
@@ -91,10 +107,12 @@ one module that joins them.
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |
-| Interface | `src/ish/interfaces/mcp/protocol.py` | MCP stdio JSON-RPC transport |
+| Interface | `src/ish/interfaces/mcp/protocol.py` | MCP JSON-RPC dispatch |
+| Interface | `src/ish/interfaces/mcp/transport.py` | MCP framing: stdio, and HTTP behind a token |
 | Interface | `src/ish/interfaces/mcp/server.py` | MCP tools (`ish-mcp`) |
 
 Languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`. Backends: `ollama` (default), `llama.cpp`, `st`.
+Language models: `anthropic`, `ollama`, `claude-cli`, none by default.
 
 ## Tooling
 
@@ -206,6 +224,81 @@ something broke. This is that record, so a rule is never argued from taste.
 - A worktree index under /srv/mono joined every root search and nested
   under the main tree, which put the count of a root query back on the
   listing path. Hence a search reads the indexes of its own checkout.
+
+### Answering
+
+- A stored index holds where a chunk is, not what it says. On the first
+  real question against a tree of 74,737 chunks, retrieval put the
+  expected section first and second, and the model still said the
+  documents did not cover it: every chunk had empty text, and the model
+  read 696 tokens of titles for ten sources. Read from the file, the same
+  question read 2,867 tokens and cited the expected section. Hence
+  `read_lines` in the answer use case.
+- Ollama starts a model with a window of a few thousand tokens and drops
+  the rest of a prompt with no signal. An answer may send 60,000
+  characters. Hence `num_ctx` of 20,480 on every request.
+- A model with no citation feature cited a source by its title instead of
+  its id, which the use case drops. Naming the id as the bare number in
+  the prompt fixed it on claude-haiku-5-5 and qwen2.5-coder:7b.
+- First scored run of `ask`, 25 questions over a private specification
+  tree of 74,737 chunks, claude-sonnet-5-5 through claude-cli: the
+  expected section cited for 14 of 21 answerable questions, all 4
+  unanswerable ones refused, 5.4 s and 8,126 input tokens a question,
+  median. Six of the seven misses never reached the model: the expected
+  section was not in the ten chunks retrieved. Given the section, the
+  model cited it 14 times in 15. Retrieval is the limit, not the model.
+  claude-haiku-5-5 scored the same 14, question by question.
+- Recall over the same 21 questions: 16 at 10 chunks, 20 at 30, 21 at 50.
+  The expected spec ranked 15th to 32nd behind test cases that share the
+  wording. A cap per file reached 17. A rerank by claude-haiku-5-5 of the
+  top 50, from the first 300 characters of each, put all 21 in its ten:
+  21 of 21 cited, 21 of 21 answered, 4 of 4 refused, in three runs out of
+  three. 13,984 rerank and 7,639 answer input tokens, 11.6 s, median.
+  At 30 candidates it fell to 19, because one source ranked 32nd. Hence
+  `rerank_model` and 50 `rerank_candidates`.
+- Follow-up searches, the same 25 questions, rerank and claude-haiku-5-5,
+  `ask_turns = 3`: 19 answered in one turn. The model searched again for
+  2 hard questions and for all 4 uncovered ones, and still refused the 4.
+  20 of 21 cited, the miss the q07 label that accepts one of several
+  sources. 14.8 s against about 13, 0.4 cents against 0.3 an answer. An
+  agent that greps the tree found a firmware handler that ish cannot,
+  for 211k input tokens, because the handler is one case of a switch
+  that one chunk holds whole.
+- A register table that a specification assembled with `include::` held
+  the directives and none of the values, so the question "which registers
+  control the watchdog timer, with reset values" found the names and no
+  values. 21,820 includes over 2,488 AsciiDoc files, 90 % through an
+  attribute path. With includes resolved, the same question found all 13
+  registers with precision and reset value in the first search, where it
+  had needed three follow-up turns. A register table split by the cap kept
+  its header only in the first piece, and one table holds one embedding of
+  up to a dozen registers. The re-index embedded 6,841 chunks in 85 minutes,
+  about 1.3 a second, and the other trees parsed again in under a minute.
+  The 25 questions scored 20 of 21 cited, 21 of 21 answered, 4 of 4
+  refused, the miss a label that names one section of two valid ones.
+  Answer input rose from 9,839 to 16,203 tokens, output from 2,747 to
+  4,257, 0.43 to 0.5 cents. Hence `_asciidoc.py`.
+- The miss was the cost of resolving includes into prose. A section of
+  1,109 characters of prose and four includes grew to 15,417, its first
+  chunk mostly register rows, and it fell from the top 50 to rank 141 for
+  the question its prose answers. With an include of more than 600
+  characters split into a `table` chunk of its own, the 25 questions
+  scored 21 of 21 cited, 21 of 21 answered, 4 of 4 refused, the register
+  question still found its 13 rows in the first search, and an answer read
+  9,388 input tokens and wrote 3,254, 0.45 cents. Hence `INLINE_CHARS`.
+- `refresh_indexes()` reads the configuration beside each tree again, and
+  only *overrides* survive it, so a `cache_dir` set on the settings it is
+  given is lost and the run writes to the default index. A test run that
+  meant to fill a copy refreshed the index a resident server kept.
+- `claude -p` run inside a tree loaded the auto memory of that tree with
+  `--setting-sources ""`, and on 2.1.296 also with
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`:
+  5,534 input tokens either way. Run in an empty directory, it loaded none,
+  2,300 tokens. A managed policy of an organization still loads. Hence an
+  empty directory for every call, and the Anthropic API for a server.
+- `claude --bare` skips the login as well as the hooks. The claude-cli
+  backend turns off settings, tools, and MCP servers one by one instead,
+  and runs in an empty directory.
 
 ### Embedding
 

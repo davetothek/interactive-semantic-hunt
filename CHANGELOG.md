@@ -8,6 +8,77 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- AsciiDoc files are read as a reader sees them. An `include::`
+  resolves, with attribute paths and tagged regions, so a section that
+  assembles a register table from other files holds its rows and their
+  values. A table that fits stays in one chunk, and a longer one keeps
+  its header row in every chunk it divides into. A figure reads as a
+  line of text with its alt text or file name. An include that brings
+  in more than a few lines, such as a register table, is a `table`
+  chunk of its own on its lines, and the section keeps its prose in
+  another, so a question about the prose still finds it. The chunking
+  stamp is raised, so the next refresh reads every AsciiDoc file again
+  and embeds only the text it has not seen.
+
+### Added
+
+- `ish --ask "question" PATH` answers a question from the chunks a search
+  finds, in Markdown: the question as a heading, the answer with a
+  Markdown footnote for each claim, `[^1]`, and the cited sources as
+  footnotes with links that open each file at its lines. It pipes into an editor as a document.
+  An answer opens with a short answer, gives each part of the question
+  a section, a procedure numbered steps, and registers or values a
+  table, and gathers what the documents leave open in one block. Each
+  source shows its file and lines, its type, its heading, and its
+  directory. The `ask` MCP tool returns the same layout as data. A
+  table keeps to a few words a cell and leaves out a column with no
+  values, so it reads in a terminal. When the documents do not answer
+  it, ish says so, lists the closest sources, and exits 2. A language
+  model writes the answer, and it is off by default: set
+  `language_model`, `answer_model`, and `allowed_language_models`. The
+  `anthropic` backend reads its key from `ANTHROPIC_API_KEY`. The
+  `ollama` backend runs a generation model on the local daemon and
+  refuses a host that is not this machine. The `claude-cli` backend runs
+  the Claude Code CLI on the account it is logged in to, with every
+  tool, MCP server, and settings file off. It suits one person on their
+  own machine, not a shared server. A search never builds a language
+  model.
+- `rerank_model` lets a cheap model of the same backend pick the ten
+  chunks an answer reads from a wider search of `rerank_candidates`, 50
+  by default, from the start of each chunk. Measured on 25 questions
+  over a private specification tree, the expected source reached the
+  answer for 21 of 21 questions against 16 of 21, and every answer
+  cited it.
+- `ish --ask` shows on stderr what it is doing while the models work,
+  with the seconds each step has run: searching, choosing what to read,
+  reading, writing the answer, and each follow-up search, which stays on
+  the screen as a notice. stdout holds
+  only the answer, so it pipes into an editor. Ctrl-C stops it with
+  exit code 130 and no traceback, and stops a `claude` call with it.
+- `ask_turns` lets the model ask for up to three follow-up searches a
+  turn, for that many turns, before it answers. ish runs them with the
+  same filters and adds what they find within the same budget. The
+  model sees only what ish sends, so it works on a tree of documents
+  alone. `ish --ask` lists the searches below the sources, and the
+  `ask` tool returns them with the number of turns.
+- The instructions a language model receives are text files that ship
+  with ish. `prompt_dir` names a directory whose files replace them one
+  by one, so an operator changes what a model is told without changing
+  code. The limits an instruction names come from the code.
+- The MCP server offers an `ask` tool. It returns JSON: the answer with
+  `[n]` markers, and per citation the path, the location as data, and a
+  link that opens the source. When the documents do not answer the
+  question, `covered` is false and `sources` lists the closest chunks.
+- `ish-mcp --http HOST:PORT` serves the same tools over MCP Streamable
+  HTTP at `/mcp`, for clients on other machines. Every request carries
+  the token in `ISH_MCP_TOKEN` as a bearer token, and the server refuses
+  to start without one. A bare port listens on `127.0.0.1` only.
+- `link_base` publishes the links of an answer under a base URL, such as
+  `https://docs.example.com/spec/a.adoc#L120-164`. Empty links to the
+  file on disk.
+
 ## 0.6.2 - 2026-10-29
 
 ### Changed

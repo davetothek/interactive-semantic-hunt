@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import (
     display_path,
@@ -94,3 +96,367 @@ class TestTheBase:
         assert render(chunk(), "plain", 0.5, base=base).startswith("[0.50] src/a.py:")
         assert render(chunk(), "plain", base=base).startswith("src/a.py:")
         assert render(chunk(), "grep", 0.5, base=base).startswith("src/a.py:12:1:")
+
+
+class TestFormatAnswer:
+    """An answer prints as Markdown, so it reads in a terminal and in an editor."""
+
+    @staticmethod
+    def _chunk(name: str, line: int = 1):
+        from ish.domain.chunk import Chunk
+
+        return Chunk(
+            Path(f"/d/{name}.adoc"), "t", "section", "asciidoc", name, line, line + 4
+        )
+
+    @staticmethod
+    def _link(chunk) -> str:
+        return f"https://docs.example.com/{chunk.path.name}#{chunk.location.fragment()}"
+
+    def test_each_source_is_numbered_once_in_order_of_first_citation(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.interfaces.format import format_answer
+
+        a, b = self._chunk("a"), self._chunk("b", 10)
+        answer = Answer(
+            parts=(
+                AnswerPart("B says so", (b,)),
+                AnswerPart(", and A agrees", (a, b)),
+                AnswerPart("."),
+            ),
+            covered=True,
+            sources=(a, b),
+        )
+        assert format_answer(answer, "Who  agrees?\n", self._link, Path("/d")) == (
+            "# Who agrees?\n"
+            "\n"
+            "B says so [^1], and A agrees [^2] [^1].\n"
+            "\n"
+            "## Sources\n"
+            "\n"
+            "[^1]: [b.adoc:10-14](https://docs.example.com/b.adoc#L10-14)\n"
+            "    b\n"
+            "    ./\n"
+            "[^2]: [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
+            "    a\n"
+            "    ./"
+        )
+
+    def test_not_covered_lists_the_closest_sources(self) -> None:
+        from ish.application.answer import Answer
+        from ish.interfaces.format import NOT_COVERED_TEXT, format_answer
+
+        a = self._chunk("a")
+        answer = Answer(parts=(), covered=False, sources=(a,))
+        assert format_answer(answer, "MTBF?", self._link, Path("/d")) == (
+            f"# MTBF?\n\n> {NOT_COVERED_TEXT}\n\n## Closest sources\n\n"
+            "1. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
+            "   a\n"
+            "   ./"
+        )
+
+    def test_paragraphs_wrap_at_80_and_a_marker_stays_on_its_word(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.interfaces.format import WIDTH, format_answer
+
+        a = self._chunk("a")
+        long = "word " * 40 + "end"
+        answer = Answer(
+            parts=(AnswerPart(long + "\n\n", (a,)), AnswerPart("Second.", (a,))),
+            covered=True,
+            sources=(a,),
+        )
+        out = format_answer(answer, "q", self._link, Path("/d"))
+        body = out.split("## Sources")[0].strip().split("\n")[2:]
+        assert all(len(line) <= WIDTH for line in body)
+        assert body[-3].endswith("end [^1]")
+        assert body[-2:] == ["", "Second. [^1]"]
+
+    def test_a_long_heading_wraps_under_its_source(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import WIDTH, format_answer
+
+        heading = " > ".join(["Overview of the function"] * 6)
+        chunk = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", heading, 1, 2)
+        answer = Answer(
+            parts=(AnswerPart("x", (chunk,)),), covered=True, sources=(chunk,)
+        )
+        out = format_answer(answer, "q", self._link, Path("/d"))
+        below = out.split("## Sources\n\n")[1].split("\n")[1:-1]
+        assert len(below) > 1
+        assert all(line.startswith("   ") and len(line) <= WIDTH for line in below)
+
+
+class TestPartsAreSpaced:
+    """Claude returned sentences as parts with no space between them."""
+
+    @staticmethod
+    def _answer(*texts: str):
+        from ish.application.answer import Answer, AnswerPart
+
+        return Answer(
+            parts=tuple(AnswerPart(t) for t in texts), covered=True, sources=()
+        )
+
+    @pytest.mark.parametrize(
+        ("texts", "joined"),
+        [
+            (("It stops.", "Then it resets."), "It stops. Then it resets."),
+            (("It stops ", "and resets."), "It stops and resets."),
+            (("It stops", ", then resets", "."), "It stops, then resets."),
+            (("A", "", "B"), "A B"),
+        ],
+    )
+    def test_parts_join_with_one_space(self, texts, joined) -> None:
+        from ish.interfaces.format import number_citations
+
+        assert number_citations(self._answer(*texts))[0] == joined
+
+
+class TestParagraphs:
+    """A part that ends a paragraph ends in newlines, after its markers."""
+
+    def test_markers_stay_before_the_paragraph_break(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import number_citations
+
+        a = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        b = Chunk(Path("/d/b.adoc"), "t", "section", "asciidoc", "b", 3, 4)
+        answer = Answer(
+            parts=(
+                AnswerPart("It resets.\n\n", (a,)),
+                AnswerPart("It is refused in test mode.", (b,)),
+            ),
+            covered=True,
+            sources=(a, b),
+        )
+        assert number_citations(answer)[0] == (
+            "It resets.[1]\n\nIt is refused in test mode.[2]"
+        )
+
+
+class TestFollowUpSearchesAreShown:
+    def test_the_searches_follow_the_sources(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import format_answer
+
+        a = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        answer = Answer(
+            parts=(AnswerPart("x", (a,)),),
+            covered=True,
+            sources=(a,),
+            searches=("the handler", "the register"),
+        )
+        out = format_answer(answer, "q", lambda c: "file:///d/a.adoc#L1-2", Path("/d"))
+        assert out.endswith("## Follow-up searches\n\n- the handler\n- the register")
+
+
+class TestLayout:
+    """A structured answer reads from the top down, as a person reads it."""
+
+    @staticmethod
+    def _chunk(name: str, line: int = 1):
+        from ish.domain.chunk import Chunk
+
+        return Chunk(
+            Path(f"/d/spec/{name}.adoc"),
+            "t",
+            "section",
+            "asciidoc",
+            f"{name} head",
+            line,
+            line + 4,
+        )
+
+    def _answer(self):
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerRow
+
+        a, b, c = self._chunk("a"), self._chunk("b", 10), self._chunk("c", 20)
+        blocks = (
+            AnswerBlock("summary", parts=(AnswerPart("It is 49 ms.", (a,)),)),
+            AnswerBlock(
+                "table",
+                heading="Registers",
+                columns=("Name", "Bits"),
+                rows=(
+                    AnswerRow(("ERR_MODE_TIMER", "25:24"), (b,)),
+                    AnswerRow(("A|B", "1"), (a, b)),
+                ),
+            ),
+            AnswerBlock(
+                "steps",
+                heading="How",
+                parts=(
+                    AnswerPart("Write 0x01 to CTRL_CMD.", (c,)),
+                    AnswerPart("Set CTRL_GO."),
+                ),
+            ),
+            AnswerBlock("prose", heading="Why", parts=(AnswerPart("Because.", (b,)),)),
+            AnswerBlock("gaps", parts=(AnswerPart("CLK_IN is open.", (c,)),)),
+        )
+        return Answer(parts=(), covered=True, sources=(a, b, c), blocks=blocks)
+
+    def _out(self) -> str:
+        from ish.interfaces.format import format_answer
+
+        return format_answer(
+            self._answer(),
+            "q",
+            lambda ch: f"file://{ch.path}",
+            Path("/d"),
+            kind_of=lambda ch: "doc",
+        )
+
+    def test_the_short_answer_comes_first(self) -> None:
+        assert self._out().split("\n")[2] == "**Short answer:** It is 49 ms. [^1]"
+
+    def test_a_table_lines_up_escapes_pipes_and_cites_each_row(self) -> None:
+        out = self._out()
+        table = out.split("### Registers\n\n")[1].split("\n\n")[0].split("\n")
+        assert table == [
+            "| Name           | Bits  | Sources   |",
+            "|----------------|-------|-----------|",
+            "| ERR_MODE_TIMER | 25:24 | [^2]      |",
+            "| A\\|B           | 1     | [^1] [^2] |",
+        ]
+
+    def test_steps_are_numbered(self) -> None:
+        steps = self._out().split("### How\n\n")[1].split("\n\n")[0]
+        assert steps == "1. Write 0x01 to CTRL_CMD. [^3]\n2. Set CTRL_GO."
+
+    def test_what_is_open_is_gathered_in_one_block(self) -> None:
+        out = self._out()
+        assert "> **Not in the documents**\n>\n> - CLK_IN is open. [^3]" in out
+
+    def test_a_long_gap_wraps_inside_the_quote(self) -> None:
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart
+        from ish.interfaces.format import WIDTH, format_answer
+
+        gap = AnswerBlock("gaps", parts=(AnswerPart("word " * 40),))
+        answer = Answer(parts=(), covered=True, sources=(), blocks=(gap,))
+        out = format_answer(answer, "q", lambda ch: "")
+        quoted = [line for line in out.split("\n") if line.startswith(">")]
+        assert quoted[2].startswith("> - ")
+        assert all(line.startswith(">   ") for line in quoted[3:])
+        assert all(len(line) <= WIDTH for line in quoted)
+
+    def test_sources_name_the_file_then_the_type_heading_and_directory(self) -> None:
+        sources = self._out().split("## Sources\n\n")[1].split("\n")
+        assert sources[:3] == [
+            "[^1]: [a.adoc:1-5](file:///d/spec/a.adoc)",
+            "    doc · a head",
+            "    spec/",
+        ]
+        assert len(sources) == 9
+
+    def test_the_data_numbers_citations_as_the_text_does(self) -> None:
+        from ish.interfaces.format import layout_data
+
+        data, cited = layout_data(self._answer())
+        assert [b["kind"] for b in data] == [
+            "summary",
+            "table",
+            "steps",
+            "prose",
+            "gaps",
+        ]
+        assert data[0]["text"] == "It is 49 ms.[1]"
+        assert data[1]["rows"][1] == {"cells": ["A|B", "1"], "cites": "[1][2]"}
+        assert data[2]["items"] == ["Write 0x01 to CTRL_CMD.[3]", "Set CTRL_GO."]
+        assert data[4]["items"] == ["CLK_IN is open.[3]"]
+        assert [c.path.name for c in cited] == ["a.adoc", "b.adoc", "c.adoc"]
+
+    def test_an_answer_with_no_layout_is_one_prose_block(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.interfaces.format import layout_data
+
+        a = self._chunk("a")
+        data, _ = layout_data(
+            Answer(parts=(AnswerPart("Flat.", (a,)),), covered=True, sources=(a,))
+        )
+        assert data == [{"kind": "prose", "heading": "", "text": "Flat.[1]"}]
+
+    def test_a_table_with_a_note_prints_it_above(self) -> None:
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerRow
+        from ish.interfaces.format import format_answer
+
+        table = AnswerBlock(
+            "table",
+            parts=(AnswerPart("Values at 40 fps."),),
+            columns=("Q",),
+            rows=(AnswerRow(("49 ms",)),),
+        )
+        out = format_answer(
+            Answer(parts=(), covered=True, sources=(), blocks=(table,)), "q", str
+        )
+        assert "Values at 40 fps.\n\n| Q     | Sources |" in out
+
+
+def test_a_long_follow_up_search_wraps_under_its_dash() -> None:
+    from ish.application.answer import Answer
+    from ish.interfaces.format import format_answer
+
+    answer = Answer(
+        parts=(), covered=True, sources=(), searches=("word " * 30, "short")
+    )
+    tail = format_answer(answer, "q", str).split("## Follow-up searches\n\n")[1]
+    lines = tail.split("\n")
+    assert lines[0].startswith("- word")
+    assert lines[1].startswith("  word")
+    assert [line for line in lines if line.startswith("- ")] == [lines[0], "- short"]
+
+
+class TestFootnotes:
+    """Markers link to their sources in Markdown, and stay plain in JSON."""
+
+    def test_each_marker_has_a_definition_in_the_sources(self) -> None:
+        import re
+
+        out = TestLayout()._out()
+        used = set(re.findall(r"\[\^(\d+)\](?!:)", out))
+        defined = set(re.findall(r"^\[\^(\d+)\]:", out, re.M))
+        assert used == defined == {"1", "2", "3"}
+
+    def test_a_definition_continues_on_indented_lines(self) -> None:
+        sources = TestLayout()._out().split("## Sources\n\n")[1].split("\n")
+        assert all(line.startswith(("[^", "    ")) for line in sources if line)
+
+    def test_closest_sources_cite_nothing_so_they_are_a_list(self) -> None:
+        from ish.application.answer import Answer
+        from ish.domain.chunk import Chunk
+        from ish.interfaces.format import format_answer
+
+        a = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        out = format_answer(Answer(parts=(), covered=False, sources=(a,)), "q", str)
+        assert "\n1. [a.adoc:1-2]" in out
+        assert "[^" not in out
+
+    def test_plain_markers_for_json_and_plain_text(self) -> None:
+        from ish.interfaces.format import bracket, footnote
+
+        assert (bracket(3), footnote(3)) == ("[3]", " [^3]")
+
+
+def test_footnote_markers_stand_apart_from_words_and_each_other() -> None:
+    import re
+
+    out = TestLayout()._out()
+    body = out.split("## Sources")[0]
+    assert not re.search(r"\S\[\^\d+\]", body.replace("| [^", "|  [^"))
+
+
+def test_a_wrapped_heading_path_never_starts_a_quote() -> None:
+    from ish.application.answer import Answer, AnswerPart
+    from ish.domain.chunk import Chunk
+    from ish.interfaces.format import format_answer
+
+    heading = " > ".join(["Overview", "Function Description", "Operating State"] * 4)
+    chunk = Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", heading, 1, 2)
+    answer = Answer(parts=(AnswerPart("x", (chunk,)),), covered=True, sources=(chunk,))
+    sources = format_answer(answer, "q", str).split("## Sources")[1].split("\n")
+    assert len([line for line in sources if line.startswith("    ")]) > 2
+    assert not any(line.lstrip().startswith(">") for line in sources)
+    assert "Overview › Function Description" in "\n".join(sources)

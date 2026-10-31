@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from ish.domain.location import LineRange, Location
+
 
 @dataclass(frozen=True, slots=True)
 class Chunk:
@@ -28,3 +30,12 @@ class Chunk:
     symbol: str | None
     start_line: int
     end_line: int
+
+    @property
+    def location(self) -> Location:
+        """Return where the chunk sits in its file.
+
+        Derive it from the line fields, so the stored form of a chunk
+        stays the same for every file that is read in lines.
+        """
+        return LineRange(self.start_line, self.end_line)

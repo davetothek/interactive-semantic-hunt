@@ -144,6 +144,106 @@ a wider window is worth its re-index only when the table moves. The
 `llama.cpp` backend takes the window the same way. The `st` backend reads
 it from the model card, so there only the cap follows.
 
+## Answer questions
+
+`ish --ask` and the `ask` MCP tool send the text of the chunks a search
+finds to a language model. Nothing is sent until the configuration names a
+backend and allows it:
+
+```toml
+language_model = "anthropic"
+answer_model = "claude-sonnet-5-5"
+allowed_language_models = ["anthropic"]
+```
+
+`allowed_language_models` is the gate. A backend that it does not name is
+never built, even when `language_model` names it. There is no default model
+and no fallback: when the backend fails, the answer fails. No call can change
+these three options, because they decide where the text of a document goes.
+
+| Backend | Where the text goes | Citations | Use it for |
+|---|---|---|---|
+| `anthropic` | The Anthropic Messages API, `api.anthropic.com` only. The key comes from `ANTHROPIC_API_KEY` | Native | A shared server |
+| `ollama` | A generation model on the local daemon. A host that is not this machine is refused | From a JSON schema | Text that must stay on the machine |
+| `claude-cli` | The Claude Code CLI, on the account it is logged in to, with every tool and settings file off | From a JSON schema | One person on their own machine |
+
+An answer reads at most ten chunks and at most 60,000 characters of them.
+A chunk that does not fit is skipped, and the answer counts it.
+
+A search ranks the right source too low when other chunks share the
+wording of the question, such as test cases of the rule the question
+asks about. `rerank_model` lets a model of the same backend look at the
+start of each of `rerank_candidates` chunks, 50 by default, and pick the
+ten worth reading in full:
+
+```toml
+language_model = "anthropic"
+answer_model = "claude-haiku-5-5"
+rerank_model = "claude-haiku-5-5"
+allowed_language_models = ["anthropic"]
+```
+
+Measured on 25 questions over a private specification tree: the expected
+source reached the answer for 21 of 21 questions with the rerank, against
+16 of 21 without. It costs one more call of about 14,000 input tokens, and
+with Haiku 5.5 for both calls an answer costs about a third of a cent at
+API prices.
+
+`ask_turns` lets the model ask for follow-up searches before it answers,
+up to that many turns. It reads the first sources, and when they fall short
+or name a term worth finding, it sends up to three new queries. ish runs
+them with the same filters, adds the best chunks it has not read, and asks
+again. The model still sees only what ish sends, so this works the same on
+a tree of documents with no code at all. `ish --ask` lists the follow-up
+searches below the sources.
+
+```toml
+ask_turns = 3
+```
+
+Measured on 25 questions with the rerank and Haiku 5.5: 19 were answered in
+one turn, so they cost the same. The model searched again for two hard
+questions and for all four that the documents do not answer, and it still
+refused those four. An answer cost about 0.4 cents against 0.3.
+
+### Change what the model is told
+
+The instructions a language model receives are text files that ship with
+ish: `answer.md` for an answer, `answer_cited.md` for the `anthropic`
+answer with native citations, `step.md` for a turn that may ask for
+searches, and `select.md` for the rerank. Copy the ones to change into a
+directory, edit them, and point `prompt_dir` at it:
+
+```toml
+prompt_dir = "~/.config/ish/prompts"
+```
+
+A file in that directory replaces the default of the same name. A file it
+does not hold keeps the default. The lines of a paragraph join into one
+line, so wrap them as you like, and a blank line starts a new paragraph.
+`$max_gaps`, `$searches_a_turn`, and `$not_covered` are filled in by ish,
+so an instruction always names the limit the code enforces. `step.md`
+starts with `$answer`, the answer instruction. Write `$$` for a dollar
+sign. A placeholder ish does not fill stops ish with an error that names
+the file.
+
+The JSON a reply must follow stays in code, because the parser reads it.
+An instruction can ask for a different layout only within that schema.
+
+To compare two sets of instructions, run the evaluation with each:
+
+```sh
+uv run python scripts/evaluate_ask.py questions.yaml TREE \
+  --language-model claude-cli --answer-model claude-haiku-5-5 \
+  --prompt-dir ./prompts-b
+```
+
+`link_base` publishes the links of an answer under a base URL. With
+`link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164
+of `spec/a.adoc` under the tree links to
+`https://docs.example.com/tree/spec/a.adoc#L120-164`. Without it, a link is
+a `file://` URI.
+
 ## Name one config file
 
 Point ish at a file with `--config PATH`, its short form `-c`, or the

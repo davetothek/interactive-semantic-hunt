@@ -264,6 +264,71 @@ class Settings:
             metavar="MS",
         ),
     )
+    link_base: str = field(
+        default="",
+        metadata=_opt(
+            "Base URL where the tree is published. Empty links to files on disk.",
+            metavar="URL",
+        ),
+    )
+    # Index scope, so that no call can override them. These three decide
+    # where the text of a document may go. Only the operator of a server
+    # sets them, in the config file or on the command line.
+    language_model: str = field(
+        default="",
+        metadata=_opt(
+            "Language model backend that writes answers. Empty turns answers off.",
+            metavar="NAME",
+        ),
+    )
+    answer_model: str = field(
+        default="",
+        metadata=_opt(
+            "Model the language model backend runs. Empty uses its default.",
+            metavar="MODEL",
+        ),
+    )
+    rerank_model: str = field(
+        default="",
+        metadata=_opt(
+            "Model of the same backend that picks which chunks an answer reads, "
+            "from a wider search. Empty reads the best chunks as ranked.",
+            metavar="MODEL",
+        ),
+    )
+    rerank_candidates: int = field(
+        default=50,
+        metadata=_opt(
+            "Chunks a search returns for the rerank model to choose from.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    ask_turns: int = field(
+        default=0,
+        metadata=_opt(
+            "Follow-up searches the model may ask for before it answers. "
+            "0 answers from the first search alone.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    prompt_dir: str = field(
+        default="",
+        metadata=_opt(
+            "Directory of instruction files that replace the ones a language "
+            "model receives, file by file. Empty uses the shipped ones.",
+            metavar="DIR",
+        ),
+    )
+    allowed_language_models: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            "Language model backends that may receive text. Empty allows none.",
+            nargs="+",
+            metavar="NAME",
+        ),
+    )
     refresh: bool = field(
         default=False,
         metadata=_opt(

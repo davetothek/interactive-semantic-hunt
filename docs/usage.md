@@ -86,6 +86,63 @@ starting a second index of the same files.
 nvim $(ish -i src/)
 ```
 
+## Ask a question
+
+`--ask` answers the query as a question, from the chunks a search finds:
+
+```sh
+ish --ask "how does the release branch get its version" docs/
+```
+
+ish prints Markdown a person reads from the top down: a short answer, a
+section for each part of the question, numbered steps for a procedure, a
+table for registers, addresses, or values, and one block for what the
+documents leave open. Each claim carries a numbered citation, and each
+source is a link that opens the file at its lines:
+
+```markdown
+# how do I trigger a software reset
+
+**Short answer:** write 0x01 to CTRL_CMD, then 0x1 to CTRL_GO.[1][2]
+
+### Procedure
+
+1. Set CTRL_CMD to 0x01, the software reset command.[1]
+2. Set CTRL_GO to 0x1 to trigger it.[1][2]
+
+> **Not in the documents**
+>
+> - The register addresses are in an appendix the sources do not hold.[1]
+
+## Sources
+
+1. [startup.adoc:329-364](file:///srv/docs/spec/startup.adoc#L329-364)
+   doc · Function Description > Reset By Communication
+   spec/
+2. [reset.yaml:21-61](file:///srv/docs/tests/reset.yaml#L21-61)
+   test · Verify Reset By Communication
+   tests/
+```
+
+It reads well in a terminal, and an editor shows it as a document:
+
+```sh
+ish --ask "how does the release branch get its version" docs/ | nvim -c 'set ft=markdown' -
+```
+
+In Neovim, `gx` on a link opens the source. With `link_base` set, the
+links point at the published tree instead of the files on disk.
+
+A language model writes the answer, and it reads only the chunks the search
+returned. When they do not answer the question, ish says so, lists the
+closest sources, and exits 2. It does not answer from anything else. The
+filter words work in a question as in a query: `--ask "type:doc how is X
+done"`.
+
+Answers are off until you choose a model. See
+[Answer questions](configuration.md#answer-questions). A plain search never
+builds a language model and sends no text anywhere.
+
 ## Options
 
 | Flag | Purpose |
@@ -114,6 +171,15 @@ nvim $(ish -i src/)
 | `--sweep` | Delete the vectors no index of the path's repository references, and stop |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
+| `--ask` | Answer the query as a question, with the sources it cites |
+| `--language-model NAME` | Language model backend that writes answers: `anthropic`, `ollama`, `claude-cli` |
+| `--answer-model MODEL` | Model that backend runs. Required, there is no default |
+| `--allowed-language-models NAME ...` | Backends that may receive text. Empty allows none |
+| `--rerank-model MODEL` | Model of the same backend that picks the chunks an answer reads |
+| `--rerank-candidates N` | Chunks the rerank model chooses from (default 50) |
+| `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
+| `--prompt-dir DIR` | Instruction files that replace the shipped ones, file by file |
+| `--link-base URL` | Base URL where the tree is published, for the links of an answer |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
 or parsed is counted in one line; `-v` names them.

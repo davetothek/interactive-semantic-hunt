@@ -1,17 +1,17 @@
-"""Speak the Model Context Protocol over stdio.
+"""Speak the Model Context Protocol: decode, dispatch, and reply.
 
-MCP frames JSON-RPC 2.0 messages one per line on stdin and stdout. That
-is small enough to implement directly, which keeps ish free of a
-protocol dependency.
-
-Nothing may write to stdout except a protocol message. Logging goes to
-stderr, which the host shows as server output.
+MCP carries JSON-RPC 2.0 messages. That is small enough to implement
+directly, which keeps ish free of a protocol dependency. How a message
+travels is the business of a transport in ``transport.py``. This module
+only turns one message into its reply.
 """
 
 import json
 import logging
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
+
+from ish.interfaces.mcp.transport import StdioTransport, Transport
 
 log = logging.getLogger(__name__)
 
@@ -63,16 +63,13 @@ class Server:
     # ------------------------------------------------------------------
 
     def serve(self, stream_in: TextIO, stream_out: TextIO) -> None:
-        """Read messages until the host closes stdin."""
+        """Serve messages one per line on two streams, until input closes."""
+        self.serve_on(StdioTransport(stream_in, stream_out))
+
+    def serve_on(self, transport: Transport) -> None:
+        """Serve messages over *transport* until its client goes away."""
         log.info("MCP server ready with %d tools", len(self._tools))
-        for line in stream_in:
-            line = line.strip()
-            if not line:
-                continue
-            reply = self.handle_line(line)
-            if reply is not None:
-                stream_out.write(json.dumps(reply) + "\n")
-                stream_out.flush()
+        transport.serve(self)
         log.info("MCP server stopped")
 
     def handle_line(self, line: str) -> dict[str, Any] | None:

@@ -8,9 +8,10 @@ import os
 import sys
 
 from ish import bootstrap
-from ish.interfaces.busy import ProgressLine
+from ish.application.answer import FOLLOWING, AnswerStep
+from ish.interfaces.busy import ProgressLine, Ticker
 from ish.interfaces.cli.args import CliArgs
-from ish.interfaces.format import format_selection, render
+from ish.interfaces.format import format_answer, format_selection, render
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
 
@@ -35,6 +36,45 @@ def _run_query(args: CliArgs) -> int:
         for chunk, score in ish.search(args.query):
             sys.stdout.write(f"{render(chunk, args.settings.format, score)}\n")
     return 0
+
+
+def _run_ask(args: CliArgs) -> int:
+    """Answer the query as a question and print it as Markdown.
+
+    Return 0 when the documents answer it, and 2 when they do not, so a
+    script can tell the two apart. Show each step on stderr while the
+    models work, and keep stdout for the answer, so it pipes into an
+    editor. Return 130 on Ctrl-C, with no traceback.
+    """
+    if not args.query:
+        log.error("--ask needs a question.")
+        return 1
+    line = ProgressLine()
+    ticker = Ticker()
+    with Ish(args.path, settings=args.settings) as ish:
+        try:
+            ish.index(on_progress=line.show)
+            line.clear()
+            answer = ish.ask(args.query, on_step=lambda step: _report(ticker, step))
+        except KeyboardInterrupt:
+            # Ctrl-C reaches a claude child as well, which stops with it.
+            # Leave a clean line and the exit code a shell expects.
+            line.clear()
+            ticker.stop()
+            sys.stderr.write("ish: interrupted\n")
+            return 130
+        finally:
+            ticker.stop()
+        text = format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
+        sys.stdout.write(f"{text}\n")
+    return 0 if answer.covered else 2
+
+
+def _report(ticker: Ticker, step: AnswerStep) -> None:
+    """Show *step* on the busy line, and leave a follow-up search standing."""
+    if step.stage == FOLLOWING:
+        ticker.note(str(step))
+    ticker.show(str(step))
 
 
 def _sync_terminal_size() -> None:
@@ -152,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
                 overrides=args.overrides,
             )
             line.clear()
+        if args.ask:
+            return _run_ask(args)
         if args.query:
             return _run_query(args)
         if args.interactive:
