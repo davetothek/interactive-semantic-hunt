@@ -16,3 +16,8 @@ unfinished, or unconfirmed, one point a passage. Do not use knowledge
 from outside the sources, and do not guess. If the sources do not answer
 the question, set covered to false and leave summary, sections, and gaps
 empty.
+
+Keep a table narrow enough to read in a terminal. Give a cell a few words
+or a value, never a sentence: put an explanation in the prose of the
+section instead. Leave out a column that holds no value for any row, and
+say in gaps what is missing instead of writing "not stated" in a cell.

@@ -125,3 +125,10 @@ class TestInjection:
         own = Prompts(answer="A", answer_cited="C", step="S", select="P")
         made = LANGUAGE_MODELS[backend]("m", prompts=own)
         assert made._prompts is own
+
+
+def test_the_shipped_answer_keeps_tables_narrow() -> None:
+    answer = load().answer
+    assert "narrow enough to read in a terminal" in answer
+    assert answer.count("\n\n") == 1
+    assert load().step.startswith(answer + " ")

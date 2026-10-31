@@ -18,7 +18,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   a section, a procedure numbered steps, and registers or values a
   table, and gathers what the documents leave open in one block. Each
   source shows its file and lines, its type, its heading, and its
-  directory. The `ask` MCP tool returns the same layout as data. When the documents do not answer
+  directory. The `ask` MCP tool returns the same layout as data. A
+  table keeps to a few words a cell and leaves out a column with no
+  values, so it reads in a terminal. When the documents do not answer
   it, ish says so, lists the closest sources, and exits 2. A language
   model writes the answer, and it is off by default: set
   `language_model`, `answer_model`, and `allowed_language_models`. The
