@@ -103,12 +103,12 @@ source is a link that opens the file at its lines:
 ```markdown
 # how do I trigger a software reset
 
-**Short answer:** write 0x01 to CMD_ID, then 0x1 to CMD_TRG.[1][2]
+**Short answer:** write 0x01 to CTRL_CMD, then 0x1 to CTRL_GO.[1][2]
 
 ### Procedure
 
-1. Set CMD_ID to 0x01, the software reset command.[1]
-2. Set CMD_TRG to 0x1 to trigger it.[1][2]
+1. Set CTRL_CMD to 0x01, the software reset command.[1]
+2. Set CTRL_GO to 0x1 to trigger it.[1][2]
 
 > **Not in the documents**
 >

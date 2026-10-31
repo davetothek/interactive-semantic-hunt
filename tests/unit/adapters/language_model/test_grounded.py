@@ -71,11 +71,11 @@ class TestParse:
                     "Registers",
                     [],
                     ["Name", "Bits"],
-                    [{"cells": ["ERR_MODE", "25:24"], "source_ids": ["2"]}],
+                    [{"cells": ["MODE_REG", "25:24"], "source_ids": ["2"]}],
                 ),
                 _section("steps", "How", [{"text": "Set it.", "source_ids": []}]),
             ],
-            gaps=[{"text": "INCK is open.", "source_ids": ["3"]}],
+            gaps=[{"text": "CLK_IN is open.", "source_ids": ["3"]}],
         )
         reply = _grounded.parse(text, "m", input_tokens=10, output_tokens=3)
         assert reply.covered
@@ -88,14 +88,14 @@ class TestParse:
         ]
         table = reply.blocks[2]
         assert (table.heading, table.columns) == ("Registers", ("Name", "Bits"))
-        assert table.rows[0].cells == ("ERR_MODE", "25:24")
+        assert table.rows[0].cells == ("MODE_REG", "25:24")
         assert table.rows[0].source_ids == ("2",)
         assert [(p.text, p.source_ids) for p in reply.passages] == [
             ("Short.", ("1",)),
             ("Because", ("1", "2")),
-            ("ERR_MODE | 25:24", ("2",)),
+            ("MODE_REG | 25:24", ("2",)),
             ("Set it.", ()),
-            ("INCK is open.", ("3",)),
+            ("CLK_IN is open.", ("3",)),
         ]
         assert (reply.input_tokens, reply.output_tokens) == (10, 3)
 

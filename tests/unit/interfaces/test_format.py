@@ -282,7 +282,7 @@ class TestLayout:
                 heading="Registers",
                 columns=("Name", "Bits"),
                 rows=(
-                    AnswerRow(("ERR_MODE_WDT", "25:24"), (b,)),
+                    AnswerRow(("ERR_MODE_TIMER", "25:24"), (b,)),
                     AnswerRow(("A|B", "1"), (a, b)),
                 ),
             ),
@@ -290,12 +290,12 @@ class TestLayout:
                 "steps",
                 heading="How",
                 parts=(
-                    AnswerPart("Write 0x01 to CMD_ID.", (c,)),
-                    AnswerPart("Set CMD_TRG."),
+                    AnswerPart("Write 0x01 to CTRL_CMD.", (c,)),
+                    AnswerPart("Set CTRL_GO."),
                 ),
             ),
             AnswerBlock("prose", heading="Why", parts=(AnswerPart("Because.", (b,)),)),
-            AnswerBlock("gaps", parts=(AnswerPart("INCK is open.", (c,)),)),
+            AnswerBlock("gaps", parts=(AnswerPart("CLK_IN is open.", (c,)),)),
         )
         return Answer(parts=(), covered=True, sources=(a, b, c), blocks=blocks)
 
@@ -317,19 +317,19 @@ class TestLayout:
         out = self._out()
         table = out.split("### Registers\n\n")[1].split("\n\n")[0].split("\n")
         assert table == [
-            "| Name         | Bits  | Sources   |",
-            "|--------------|-------|-----------|",
-            "| ERR_MODE_WDT | 25:24 | [^2]      |",
-            "| A\\|B         | 1     | [^1] [^2] |",
+            "| Name           | Bits  | Sources   |",
+            "|----------------|-------|-----------|",
+            "| ERR_MODE_TIMER | 25:24 | [^2]      |",
+            "| A\\|B           | 1     | [^1] [^2] |",
         ]
 
     def test_steps_are_numbered(self) -> None:
         steps = self._out().split("### How\n\n")[1].split("\n\n")[0]
-        assert steps == "1. Write 0x01 to CMD_ID. [^3]\n2. Set CMD_TRG."
+        assert steps == "1. Write 0x01 to CTRL_CMD. [^3]\n2. Set CTRL_GO."
 
     def test_what_is_open_is_gathered_in_one_block(self) -> None:
         out = self._out()
-        assert "> **Not in the documents**\n>\n> - INCK is open. [^3]" in out
+        assert "> **Not in the documents**\n>\n> - CLK_IN is open. [^3]" in out
 
     def test_a_long_gap_wraps_inside_the_quote(self) -> None:
         from ish.application.answer import Answer, AnswerBlock, AnswerPart
@@ -365,8 +365,8 @@ class TestLayout:
         ]
         assert data[0]["text"] == "It is 49 ms.[1]"
         assert data[1]["rows"][1] == {"cells": ["A|B", "1"], "cites": "[1][2]"}
-        assert data[2]["items"] == ["Write 0x01 to CMD_ID.[3]", "Set CMD_TRG."]
-        assert data[4]["items"] == ["INCK is open.[3]"]
+        assert data[2]["items"] == ["Write 0x01 to CTRL_CMD.[3]", "Set CTRL_GO."]
+        assert data[4]["items"] == ["CLK_IN is open.[3]"]
         assert [c.path.name for c in cited] == ["a.adoc", "b.adoc", "c.adoc"]
 
     def test_an_answer_with_no_layout_is_one_prose_block(self) -> None:

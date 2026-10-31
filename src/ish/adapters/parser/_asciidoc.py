@@ -1,7 +1,7 @@
 """Resolve the includes of an AsciiDoc file, as the text a reader would see.
 
 A specification assembles its tables from other files. A section lists
-its registers as ``include::{_IR_SY_WDT_COUNTER_LOAD}[{IR_SY_WDT_COUNTER_LOAD}]``,
+its registers as ``include::{_REG_TIMER_LOAD}[{REG_TIMER_LOAD}]``,
 where one attribute names the file and another the tagged region of it,
 and both are defined in attribute files that the document includes first.
 Left as written, the section holds the directives and none of the values.

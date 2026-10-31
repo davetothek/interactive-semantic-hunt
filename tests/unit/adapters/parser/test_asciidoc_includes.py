@@ -29,7 +29,7 @@ def spec(tmp_path: Path) -> Path:
         "// tag::header_row[]\n|Name |Reset\n// end::header_row[]\n"
     )
     (tmp_path / "common" / "detail" / "regs.adoc").write_text(
-        "// tag::REG_A[]\n|REG_A\n|0x1B7740\n// end::REG_A[]\n"
+        "// tag::REG_A[]\n|REG_A\n|0x00C350\n// end::REG_A[]\n"
         "// tag::REG_B[]\n|REG_B\n|0x0\n// end::REG_B[]\n"
     )
     doc = tmp_path / "spec.adoc"
@@ -51,7 +51,7 @@ def spec(tmp_path: Path) -> Path:
 class TestExpand:
     def test_an_attribute_names_the_file_and_the_tag(self, spec: Path) -> None:
         expanded = _expand(spec)
-        assert expanded[8] == "|REG_A\n|0x1B7740\n"
+        assert expanded[8] == "|REG_A\n|0x00C350\n"
 
     def test_a_tag_selects_its_region_and_drops_the_markers(self, spec: Path) -> None:
         assert _expand(spec)[7] == "|Name |Reset\n"
@@ -202,7 +202,7 @@ class TestParser:
     def test_a_section_holds_the_rows_it_includes(self, spec: Path) -> None:
         chunks = MarkupParser.asciidoc().parse(spec, spec.read_text())
         registers = next(c for c in chunks if c.symbol == "Spec > Registers")
-        assert "|REG_A\n|0x1B7740\n" in registers.text
+        assert "|REG_A\n|0x00C350\n" in registers.text
         assert "|Name |Reset" in registers.text
         assert (registers.start_line, registers.end_line) == (6, 10)
 
