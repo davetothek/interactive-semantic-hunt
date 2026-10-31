@@ -51,7 +51,8 @@ def _run_ask(args: CliArgs) -> int:
         ish.index(on_progress=line.show)
         line.clear()
         answer = ish.ask(args.query)
-        sys.stdout.write(f"{format_answer(answer, args.query, ish.link)}\n")
+        text = format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
+        sys.stdout.write(f"{text}\n")
     return 0 if answer.covered else 2
 
 

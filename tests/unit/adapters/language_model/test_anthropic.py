@@ -261,8 +261,9 @@ class TestStep:
             "content": [
                 {
                     "type": "text",
-                    "text": '{"covered": true, "passages": '
-                    '[{"text": "x", "source_ids": ["1"]}], "search": []}',
+                    "text": '{"covered": true, "summary": '
+                    '{"text": "x", "source_ids": ["1"]}, "sections": [], '
+                    '"gaps": [], "search": []}',
                 }
             ],
         }

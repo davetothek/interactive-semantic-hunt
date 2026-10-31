@@ -518,3 +518,18 @@ class TestAskTurns:
         with Ish(project, settings=settings) as ish:
             assert ish.ask("configure").turns == 1
         assert agent.turns_seen == [2]
+
+
+class TestKindOf:
+    def test_a_chunk_is_sorted_the_way_the_type_filter_sorts_it(
+        self, project: Path
+    ) -> None:
+        from ish.domain.chunk import Chunk
+
+        def chunk(rel: str, language: str) -> Chunk:
+            return Chunk(project.resolve() / rel, "t", "k", language, None, 1, 2)
+
+        with _ish(project) as ish:
+            assert ish.kind_of(chunk("docs/guide.md", "markdown")) == "doc"
+            assert ish.kind_of(chunk("tests/test_app.py", "python")) == "test"
+            assert ish.kind_of(chunk("src/app.py", "python")) == "code"

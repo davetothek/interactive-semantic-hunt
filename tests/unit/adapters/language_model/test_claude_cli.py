@@ -22,7 +22,9 @@ class Runner:
                 "result": "{}",
                 "structured_output": {
                     "covered": True,
-                    "passages": [{"text": "At boot.", "source_ids": ["1"]}],
+                    "summary": {"text": "At boot.", "source_ids": ["1"]},
+                    "sections": [],
+                    "gaps": [],
                 },
                 "usage": {
                     "input_tokens": 2,

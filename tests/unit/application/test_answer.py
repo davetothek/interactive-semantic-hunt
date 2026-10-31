@@ -398,3 +398,42 @@ class TestFollowUpSearches:
             "q"
         )
         assert (result.turns, result.searches, len(model.calls)) == (1, (), 1)
+
+
+class TestLayoutCarriesChunks:
+    def test_blocks_and_rows_cite_chunks_and_drop_unknown_ids(self) -> None:
+        from ish.application.ports.language_model import Block, Row
+
+        a = make_chunk("a")
+        reply = Reply(
+            passages=(Passage("Short.", ("1",)),),
+            covered=True,
+            blocks=(
+                Block("summary", passages=(Passage("Short.", ("1",)),)),
+                Block(
+                    "table",
+                    heading="Regs",
+                    columns=("N",),
+                    rows=(Row(("x",), ("1", "9")),),
+                ),
+            ),
+        )
+        result = AnswerQuestion(search=searching(a), model=FakeModel(reply)).answer("q")
+        summary, table = result.blocks
+        assert summary.parts[0].cites == (a,)
+        assert (table.heading, table.columns) == ("Regs", ("N",))
+        assert table.rows[0].cells == ("x",)
+        assert table.rows[0].cites == (a,)
+
+    def test_a_reply_not_covered_has_no_layout(self) -> None:
+        from ish.application.ports.language_model import Block
+
+        reply = Reply(
+            passages=(Passage("x"),),
+            covered=False,
+            blocks=(Block("summary", passages=(Passage("x"),)),),
+        )
+        result = AnswerQuestion(
+            search=searching(make_chunk("a")), model=FakeModel(reply)
+        ).answer("q")
+        assert result.blocks == ()

@@ -953,6 +953,10 @@ class TestAsk:
         assert "sources" not in reply
         assert (reply["rerank_input_tokens"], reply["rerank_output_tokens"]) == (0, 0)
         assert (reply["turns"], reply["searches"]) == (1, [])
+        assert reply["layout"] == [
+            {"kind": "prose", "heading": "", "text": "It loads the config[1]."}
+        ]
+        assert citation["type"] == "code"
 
     def test_not_covered_returns_the_closest_sources(
         self, tools: IshTools, project: Path, stub_backend, model

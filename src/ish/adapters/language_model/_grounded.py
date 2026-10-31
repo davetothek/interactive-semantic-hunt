@@ -1,18 +1,22 @@
 """Ask for an answer with citations from a model that has no citation feature.
 
 The model reads the sources, each under its id, and replies in JSON that
-a schema fixes: whether the sources cover the question, and the answer
-as passages that each name the ids they rest on. The use case drops an
-id it did not send, so a model that invents a citation cites nothing.
+a schema fixes: whether the sources cover the question, a short answer,
+sections of prose, steps, or tables, and what the sources leave open.
+Every passage and every table row names the ids it rests on. The use
+case drops an id it did not send, so a model that invents a citation
+cites nothing.
 """
 
 import json
 from collections.abc import Sequence
 
 from ish.application.ports.language_model import (
+    Block,
     LanguageModelError,
     Passage,
     Reply,
+    Row,
     Selection,
     Source,
 )
@@ -20,33 +24,72 @@ from ish.application.ports.language_model import (
 SYSTEM_PROMPT = (
     "You answer questions about a set of internal documents. Use only the "
     "sources in the message. Each source starts with its id, a number in "
-    "brackets such as [1], followed by its title. Reply in JSON. Split the "
-    "answer into passages, and list for each passage the ids of the sources "
-    'that support it, as the bare numbers such as "1", never the titles. '
-    "Write short paragraphs of one topic each, and end the text of the last "
-    "passage of a paragraph with two newline characters. "
-    "Do not use knowledge "
-    "from outside the sources, and do not guess. If the sources do not "
-    "answer the question, set covered to false and give no passages."
+    "brackets such as [1], followed by its title. Reply in JSON, and cite "
+    "every claim with the ids of the sources that support it, as the bare "
+    'numbers such as "1", never the titles. '
+    "Put the direct answer in summary, in one or two sentences. Then give "
+    "sections, one for each part of the question, each with a short heading; "
+    "a question with one part may have one section with no heading. Give a "
+    "section the style steps for a procedure, one step a passage; the style "
+    "table for registers, addresses, bit fields, values, or settings that "
+    "compare across rows, with columns and rows, each row citing its "
+    "sources; and the style prose otherwise. Write prose in short paragraphs "
+    "of two to four sentences, and end the text of the last passage of a "
+    "paragraph with two newline characters. Put in gaps the few points, at "
+    "most five, that the question asks and the sources leave open, "
+    "unfinished, or unconfirmed, one point a passage. Do not use knowledge "
+    "from outside the "
+    "sources, and do not guess. If the sources do not answer the question, "
+    "set covered to false and leave summary, sections, and gaps empty."
 )
 
-PASSAGES: dict[str, object] = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "text": {"type": "string"},
-            "source_ids": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["text", "source_ids"],
-        "additionalProperties": False,
+PASSAGE: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string"},
+        "source_ids": {"type": "array", "items": {"type": "string"}},
     },
+    "required": ["text", "source_ids"],
+    "additionalProperties": False,
+}
+
+PASSAGES: dict[str, object] = {"type": "array", "items": PASSAGE}
+
+SECTION: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "heading": {"type": "string"},
+        "style": {"type": "string", "enum": ["prose", "steps", "table"]},
+        "passages": PASSAGES,
+        "columns": {"type": "array", "items": {"type": "string"}},
+        "rows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "cells": {"type": "array", "items": {"type": "string"}},
+                    "source_ids": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["cells", "source_ids"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["heading", "style", "passages", "columns", "rows"],
+    "additionalProperties": False,
+}
+
+ANSWER_PROPERTIES: dict[str, object] = {
+    "covered": {"type": "boolean"},
+    "summary": PASSAGE,
+    "sections": {"type": "array", "items": SECTION},
+    "gaps": PASSAGES,
 }
 
 SCHEMA: dict[str, object] = {
     "type": "object",
-    "properties": {"covered": {"type": "boolean"}, "passages": PASSAGES},
-    "required": ["covered", "passages"],
+    "properties": ANSWER_PROPERTIES,
+    "required": ["covered", "summary", "sections", "gaps"],
     "additionalProperties": False,
 }
 
@@ -60,33 +103,84 @@ def prompt(question: str, sources: Sequence[Source]) -> str:
 def parse(
     text: str, backend: str, input_tokens: int = 0, output_tokens: int = 0
 ) -> Reply:
-    """Turn the JSON a model wrote into a reply.
+    """Turn the JSON a model wrote into a reply with its layout.
 
-    Raise ``LanguageModelError`` naming *backend* when the text is not the
-    JSON the schema asks for.
+    Lay the passages out flat as well, in the order a reader meets them:
+    the summary, each section with its steps and table rows, then the
+    gaps. Raise ``LanguageModelError`` naming *backend* when the text is
+    not the JSON the schema asks for.
     """
     try:
         data = json.loads(text)
         covered = data["covered"]
-        passages = tuple(
-            Passage(
-                text=str(p["text"]),
-                source_ids=tuple(str(i) for i in p.get("source_ids") or ()),
-            )
-            for p in data["passages"]
-        )
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        blocks = _blocks(data)
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
         raise LanguageModelError(
             f"{backend} did not reply in the JSON the answer needs: {exc}"
         ) from exc
     if not isinstance(covered, bool):
         raise LanguageModelError(f"{backend} replied with covered={covered!r}.")
+    passages = tuple(_flat(blocks))
     return Reply(
         passages=passages,
         covered=covered and bool(passages),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        blocks=blocks,
     )
+
+
+def _passage(data: dict) -> Passage:
+    return Passage(
+        text=str(data["text"]),
+        source_ids=tuple(str(i) for i in data.get("source_ids") or ()),
+    )
+
+
+def _blocks(data: dict) -> tuple[Block, ...]:
+    """Read the summary, the sections, and the gaps, and drop what is empty."""
+    blocks: list[Block] = []
+    summary = data.get("summary")
+    if summary and str(summary.get("text") or "").strip():
+        blocks.append(Block(kind="summary", passages=(_passage(summary),)))
+    for section in data.get("sections") or ():
+        style = str(section.get("style") or "prose")
+        kind = style if style in ("prose", "steps", "table") else "prose"
+        rows = tuple(
+            Row(
+                cells=tuple(str(c) for c in row["cells"]),
+                source_ids=tuple(str(i) for i in row.get("source_ids") or ()),
+            )
+            for row in section.get("rows") or ()
+        )
+        passages = tuple(
+            _passage(p) for p in section.get("passages") or () if str(p["text"]).strip()
+        )
+        if kind == "table" and not rows:
+            kind = "prose"
+        if passages or rows:
+            blocks.append(
+                Block(
+                    kind=kind,
+                    heading=str(section.get("heading") or "").strip(),
+                    passages=passages,
+                    columns=tuple(str(c) for c in section.get("columns") or ()),
+                    rows=rows if kind == "table" else (),
+                )
+            )
+    gaps = tuple(_passage(p) for p in data.get("gaps") or () if str(p["text"]).strip())
+    if gaps:
+        blocks.append(Block(kind="gaps", passages=gaps))
+    return tuple(blocks)
+
+
+def _flat(blocks: Sequence[Block]) -> list[Passage]:
+    """Return every passage and every table row, as passages, in reading order."""
+    flat: list[Passage] = []
+    for block in blocks:
+        flat.extend(block.passages)
+        flat.extend(Passage(" | ".join(r.cells), r.source_ids) for r in block.rows)
+    return flat
 
 
 SELECT_PROMPT = (
@@ -137,7 +231,8 @@ STEP_PROMPT = (
     SYSTEM_PROMPT
     + " You may ask for more searches before you answer. When the sources "
     "fall short, or name a term, an identifier, or a document worth finding, "
-    "put up to three new search queries in search and give no passages. "
+    "put up to three new search queries in search and leave the answer "
+    "empty. "
     "Write a query in new words: the search matches by meaning. When the "
     "sources are enough, or no turns are left, answer and leave search empty."
 )
@@ -145,11 +240,10 @@ STEP_PROMPT = (
 STEP_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {
-        "covered": {"type": "boolean"},
-        "passages": PASSAGES,
+        **ANSWER_PROPERTIES,
         "search": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["covered", "passages", "search"],
+    "required": ["covered", "summary", "sections", "gaps", "search"],
     "additionalProperties": False,
 }
 
@@ -181,4 +275,5 @@ def parse_step(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         searches=tuple(q for q in searches if q),
+        blocks=reply.blocks,
     )

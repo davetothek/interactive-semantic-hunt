@@ -297,6 +297,14 @@ class Ish:
         )
         return use_case.answer(question)
 
+    def kind_of(self, chunk: Chunk) -> str:
+        """Return what *chunk* holds: code, doc, test, or config.
+
+        Read the type the way the ``type:`` filter does, with the
+        ``type_patterns`` of this tree.
+        """
+        return self._words.categorize(chunk)
+
     def link(self, chunk: Chunk) -> str:
         """Return a URL that opens *chunk* at its location.
 

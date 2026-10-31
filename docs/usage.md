@@ -94,19 +94,34 @@ nvim $(ish -i src/)
 ish --ask "how does the release branch get its version" docs/
 ```
 
-ish prints Markdown: the question as a heading, the answer with a numbered
-citation after each claim, and the cited sources as links that open each
-file at its lines:
+ish prints Markdown a person reads from the top down: a short answer, a
+section for each part of the question, numbered steps for a procedure, a
+table for registers, addresses, or values, and one block for what the
+documents leave open. Each claim carries a numbered citation, and each
+source is a link that opens the file at its lines:
 
 ```markdown
-# how does the release branch get its version
+# how do I trigger a software reset
 
-The bump happens on a release branch[1], and a hook refuses it anywhere else[2].
+**Short answer:** write 0x01 to CMD_ID, then 0x1 to CMD_TRG.[1][2]
+
+### Procedure
+
+1. Set CMD_ID to 0x01, the software reset command.[1]
+2. Set CMD_TRG to 0x1 to trigger it.[1][2]
+
+> **Not in the documents**
+>
+> - The register addresses are in an appendix the sources do not hold.[1]
 
 ## Sources
 
-1. [RELEASING.md:12-30](file:///home/you/ish/RELEASING.md#L12-30) — Cut a release
-2. [.claude/hooks/guard_version.py:1-40](file:///home/you/ish/.claude/hooks/guard_version.py#L1-40) — guard_version
+1. [startup.adoc:329-364](file:///srv/docs/spec/startup.adoc#L329-364)
+   doc · Function Description > Reset By Communication
+   spec/
+2. [reset.yaml:21-61](file:///srv/docs/tests/reset.yaml#L21-61)
+   test · Verify Reset By Communication
+   tests/
 ```
 
 It reads well in a terminal, and an editor shows it as a document:

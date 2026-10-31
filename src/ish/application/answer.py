@@ -10,7 +10,12 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from ish.application.ports.language_model import LanguageModel, Reply, Source
+from ish.application.ports.language_model import (
+    Block,
+    LanguageModel,
+    Reply,
+    Source,
+)
 from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
@@ -42,6 +47,28 @@ class AnswerPart:
 
 
 @dataclass(frozen=True, slots=True)
+class AnswerRow:
+    """Hold one row of a table in an answer, and the chunks it cites."""
+
+    cells: tuple[str, ...]
+    cites: tuple[Chunk, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerBlock:
+    """Hold one part of the layout of an answer, with its citations as chunks.
+
+    *kind* is ``summary``, ``prose``, ``steps``, ``table``, or ``gaps``.
+    """
+
+    kind: str
+    heading: str = ""
+    parts: tuple[AnswerPart, ...] = ()
+    columns: tuple[str, ...] = ()
+    rows: tuple[AnswerRow, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Answer:
     """Hold the result of one question.
 
@@ -62,6 +89,9 @@ class Answer:
         searches: Follow-up queries the model asked for and ish ran, in
             order. Empty when the model answered from the first search.
         turns: Calls to the model that wrote the answer.
+        blocks: The layout of the answer, when the model gave one: a short
+            answer, sections of prose, steps, or tables, and what the
+            sources leave open. *parts* holds the same claims flat.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -75,6 +105,7 @@ class Answer:
     rerank_output_tokens: int = 0
     searches: tuple[str, ...] = ()
     turns: int = 0
+    blocks: tuple[AnswerBlock, ...] = ()
 
 
 class AnswerQuestion:
@@ -164,8 +195,10 @@ class AnswerQuestion:
             if reply.covered
             else ()
         )
+        blocks = tuple(_block(b, by_id) for b in reply.blocks) if reply.covered else ()
         return Answer(
             parts=parts,
+            blocks=blocks,
             covered=reply.covered,
             sources=tuple(kept),
             dropped=dropped,
@@ -214,6 +247,7 @@ class AnswerQuestion:
             covered=reply.covered and not (reply.searches and not reply.passages),
             input_tokens=read_in,
             output_tokens=wrote,
+            blocks=reply.blocks,
         )
         return final, texts, searched, turns, left
 
@@ -277,6 +311,18 @@ def _source(source_id: str, chunk: Chunk, text: str) -> Source:
     if chunk.symbol:
         title = f"{title} {chunk.symbol}"
     return Source(id=source_id, title=title, text=text)
+
+
+def _block(block: Block, by_id: dict[str, Chunk]) -> AnswerBlock:
+    return AnswerBlock(
+        kind=block.kind,
+        heading=block.heading,
+        parts=tuple(_part(p.text, p.source_ids, by_id) for p in block.passages),
+        columns=block.columns,
+        rows=tuple(
+            AnswerRow(r.cells, _part("", r.source_ids, by_id).cites) for r in block.rows
+        ),
+    )
 
 
 def _part(text: str, ids: Sequence[str], by_id: dict[str, Chunk]) -> AnswerPart:

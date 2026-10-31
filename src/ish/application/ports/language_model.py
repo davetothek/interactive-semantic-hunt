@@ -47,6 +47,35 @@ class Passage:
 
 
 @dataclass(frozen=True, slots=True)
+class Row:
+    """Hold one row of a table in an answer, and the sources it rests on."""
+
+    cells: tuple[str, ...]
+    source_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Block:
+    """Hold one part of the layout of an answer.
+
+    Attributes:
+        kind: ``summary`` for the short answer, ``prose`` for paragraphs,
+            ``steps`` for a procedure, ``table`` for values that compare
+            across rows, and ``gaps`` for what the sources leave open.
+        heading: The heading of a section, or empty.
+        passages: The text, in order. A step is one passage.
+        columns: The column names of a table.
+        rows: The rows of a table.
+    """
+
+    kind: str
+    heading: str = ""
+    passages: tuple[Passage, ...] = ()
+    columns: tuple[str, ...] = ()
+    rows: tuple[Row, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Reply:
     """Hold the answer a model wrote, and what it cost.
 
@@ -57,6 +86,9 @@ class Reply:
         output_tokens: Tokens the model wrote.
         searches: Queries the model asks to run before it answers. A reply
             that holds any is not an answer yet.
+        blocks: The layout of the answer, when the model gave one. Every
+            passage of the blocks is also in *passages*, in order, so a
+            reader of the flat text misses no claim and no citation.
     """
 
     passages: tuple[Passage, ...]
@@ -64,6 +96,7 @@ class Reply:
     input_tokens: int = 0
     output_tokens: int = 0
     searches: tuple[str, ...] = ()
+    blocks: tuple[Block, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

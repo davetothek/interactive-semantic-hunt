@@ -13,7 +13,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - `ish --ask "question" PATH` answers a question from the chunks a search
   finds, in Markdown: the question as a heading, the answer with a
   numbered citation for each claim, and the cited sources as links that
-  open each file at its lines. It pipes into an editor as a document. When the documents do not answer
+  open each file at its lines. It pipes into an editor as a document.
+  An answer opens with a short answer, gives each part of the question
+  a section, a procedure numbered steps, and registers or values a
+  table, and gathers what the documents leave open in one block. Each
+  source shows its file and lines, its type, its heading, and its
+  directory. The `ask` MCP tool returns the same layout as data. When the documents do not answer
   it, ish says so, lists the closest sources, and exits 2. A language
   model writes the answer, and it is off by default: set
   `language_model`, `answer_model`, and `allowed_language_models`. The

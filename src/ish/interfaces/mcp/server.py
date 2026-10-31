@@ -26,6 +26,7 @@ from ish.interfaces import heartbeat
 from ish.interfaces.format import (
     NOT_COVERED_TEXT,
     display_path,
+    layout_data,
     number_citations,
     render,
     symbol_of,
@@ -311,6 +312,7 @@ class IshTools:
             entry: dict[str, Any] = {} if number is None else {"n": number}
             entry |= {
                 "path": str(display_path(chunk.path, root)),
+                "type": session.kind_of(chunk),
                 "location": chunk.location.to_dict(),
                 "kind": chunk.kind,
                 "symbol": symbol_of(chunk),
@@ -331,7 +333,9 @@ class IshTools:
         }
         if answer.covered:
             text, cited = number_citations(answer)
+            layout, _ = layout_data(answer)
             reply["answer"] = text
+            reply["layout"] = layout
             reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
         else:
             reply["answer"] = NOT_COVERED_TEXT
@@ -445,8 +449,10 @@ class IshTools:
                 description=(
                     "Answer a question from the documents and code under a "
                     "path, with a citation for each claim. Returns JSON: the "
-                    "answer with [n] markers, and per citation the path, the "
-                    "location, and a link that opens the source. When the "
+                    "answer with [n] markers, its layout (a short answer, "
+                    "sections of prose, steps, or tables, and what the "
+                    "documents leave open), and per citation the path, the "
+                    "type, the location, and a link that opens the source. When the "
                     "documents do not answer the question, 'covered' is "
                     "false and 'sources' lists the closest chunks. Use it "
                     "for questions such as 'how is the watchdog configured'."

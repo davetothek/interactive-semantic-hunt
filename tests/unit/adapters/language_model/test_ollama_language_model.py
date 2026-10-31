@@ -35,7 +35,17 @@ class Recorder:
                 "content": json.dumps(
                     {
                         "covered": True,
-                        "passages": [{"text": "At boot.", "source_ids": ["1"]}],
+                        "summary": {"text": "", "source_ids": []},
+                        "sections": [
+                            {
+                                "heading": "",
+                                "style": "prose",
+                                "passages": [{"text": "At boot.", "source_ids": ["1"]}],
+                                "columns": [],
+                                "rows": [],
+                            }
+                        ],
+                        "gaps": [],
                     }
                 )
             },

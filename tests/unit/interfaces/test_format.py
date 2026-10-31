@@ -136,8 +136,10 @@ class TestFormatAnswer:
             "\n"
             "1. [b.adoc:10-14](https://docs.example.com/b.adoc#L10-14)\n"
             "   b\n"
+            "   ./\n"
             "2. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
-            "   a"
+            "   a\n"
+            "   ./"
         )
 
     def test_not_covered_lists_the_closest_sources(self) -> None:
@@ -149,7 +151,8 @@ class TestFormatAnswer:
         assert format_answer(answer, "MTBF?", self._link, Path("/d")) == (
             f"# MTBF?\n\n> {NOT_COVERED_TEXT}\n\n## Closest sources\n\n"
             "1. [a.adoc:1-5](https://docs.example.com/a.adoc#L1-5)\n"
-            "   a"
+            "   a\n"
+            "   ./"
         )
 
     def test_paragraphs_wrap_at_80_and_a_marker_stays_on_its_word(self) -> None:
@@ -180,7 +183,7 @@ class TestFormatAnswer:
             parts=(AnswerPart("x", (chunk,)),), covered=True, sources=(chunk,)
         )
         out = format_answer(answer, "q", self._link, Path("/d"))
-        below = out.split("## Sources\n\n")[1].split("\n")[1:]
+        below = out.split("## Sources\n\n")[1].split("\n")[1:-1]
         assert len(below) > 1
         assert all(line.startswith("   ") and len(line) <= WIDTH for line in below)
 
@@ -249,3 +252,144 @@ class TestFollowUpSearchesAreShown:
         )
         out = format_answer(answer, "q", lambda c: "file:///d/a.adoc#L1-2", Path("/d"))
         assert out.endswith("## Follow-up searches\n\n- the handler\n- the register")
+
+
+class TestLayout:
+    """A structured answer reads from the top down, as a person reads it."""
+
+    @staticmethod
+    def _chunk(name: str, line: int = 1):
+        from ish.domain.chunk import Chunk
+
+        return Chunk(
+            Path(f"/d/spec/{name}.adoc"),
+            "t",
+            "section",
+            "asciidoc",
+            f"{name} head",
+            line,
+            line + 4,
+        )
+
+    def _answer(self):
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerRow
+
+        a, b, c = self._chunk("a"), self._chunk("b", 10), self._chunk("c", 20)
+        blocks = (
+            AnswerBlock("summary", parts=(AnswerPart("It is 49 ms.", (a,)),)),
+            AnswerBlock(
+                "table",
+                heading="Registers",
+                columns=("Name", "Bits"),
+                rows=(
+                    AnswerRow(("ERR_MODE_WDT", "25:24"), (b,)),
+                    AnswerRow(("A|B", "1"), (a, b)),
+                ),
+            ),
+            AnswerBlock(
+                "steps",
+                heading="How",
+                parts=(
+                    AnswerPart("Write 0x01 to CMD_ID.", (c,)),
+                    AnswerPart("Set CMD_TRG."),
+                ),
+            ),
+            AnswerBlock("prose", heading="Why", parts=(AnswerPart("Because.", (b,)),)),
+            AnswerBlock("gaps", parts=(AnswerPart("INCK is open.", (c,)),)),
+        )
+        return Answer(parts=(), covered=True, sources=(a, b, c), blocks=blocks)
+
+    def _out(self) -> str:
+        from ish.interfaces.format import format_answer
+
+        return format_answer(
+            self._answer(),
+            "q",
+            lambda ch: f"file://{ch.path}",
+            Path("/d"),
+            kind_of=lambda ch: "doc",
+        )
+
+    def test_the_short_answer_comes_first(self) -> None:
+        assert self._out().split("\n")[2] == "**Short answer:** It is 49 ms.[1]"
+
+    def test_a_table_lines_up_escapes_pipes_and_cites_each_row(self) -> None:
+        out = self._out()
+        table = out.split("### Registers\n\n")[1].split("\n\n")[0].split("\n")
+        assert table == [
+            "| Name         | Bits  | Sources |",
+            "|--------------|-------|---------|",
+            "| ERR_MODE_WDT | 25:24 | [2]     |",
+            "| A\\|B         | 1     | [1][2]  |",
+        ]
+
+    def test_steps_are_numbered(self) -> None:
+        steps = self._out().split("### How\n\n")[1].split("\n\n")[0]
+        assert steps == "1. Write 0x01 to CMD_ID.[3]\n2. Set CMD_TRG."
+
+    def test_what_is_open_is_gathered_in_one_block(self) -> None:
+        out = self._out()
+        assert "> **Not in the documents**\n>\n> - INCK is open.[3]" in out
+
+    def test_a_long_gap_wraps_inside_the_quote(self) -> None:
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart
+        from ish.interfaces.format import WIDTH, format_answer
+
+        gap = AnswerBlock("gaps", parts=(AnswerPart("word " * 40),))
+        answer = Answer(parts=(), covered=True, sources=(), blocks=(gap,))
+        out = format_answer(answer, "q", lambda ch: "")
+        quoted = [line for line in out.split("\n") if line.startswith(">")]
+        assert quoted[2].startswith("> - ")
+        assert all(line.startswith(">   ") for line in quoted[3:])
+        assert all(len(line) <= WIDTH for line in quoted)
+
+    def test_sources_name_the_file_then_the_type_heading_and_directory(self) -> None:
+        sources = self._out().split("## Sources\n\n")[1].split("\n")
+        assert sources[:3] == [
+            "1. [a.adoc:1-5](file:///d/spec/a.adoc)",
+            "   doc · a head",
+            "   spec/",
+        ]
+        assert len(sources) == 9
+
+    def test_the_data_numbers_citations_as_the_text_does(self) -> None:
+        from ish.interfaces.format import layout_data
+
+        data, cited = layout_data(self._answer())
+        assert [b["kind"] for b in data] == [
+            "summary",
+            "table",
+            "steps",
+            "prose",
+            "gaps",
+        ]
+        assert data[0]["text"] == "It is 49 ms.[1]"
+        assert data[1]["rows"][1] == {"cells": ["A|B", "1"], "cites": "[1][2]"}
+        assert data[2]["items"] == ["Write 0x01 to CMD_ID.[3]", "Set CMD_TRG."]
+        assert data[4]["items"] == ["INCK is open.[3]"]
+        assert [c.path.name for c in cited] == ["a.adoc", "b.adoc", "c.adoc"]
+
+    def test_an_answer_with_no_layout_is_one_prose_block(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.interfaces.format import layout_data
+
+        a = self._chunk("a")
+        data, _ = layout_data(
+            Answer(parts=(AnswerPart("Flat.", (a,)),), covered=True, sources=(a,))
+        )
+        assert data == [{"kind": "prose", "heading": "", "text": "Flat.[1]"}]
+
+    def test_a_table_with_a_note_prints_it_above(self) -> None:
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerRow
+        from ish.interfaces.format import format_answer
+
+        table = AnswerBlock(
+            "table",
+            parts=(AnswerPart("Values at 40 fps."),),
+            columns=("Q",),
+            rows=(AnswerRow(("49 ms",)),),
+        )
+        out = format_answer(
+            Answer(parts=(), covered=True, sources=(), blocks=(table,)), "q", str
+        )
+        assert "Values at 40 fps.\n\n| Q     | Sources |" in out
