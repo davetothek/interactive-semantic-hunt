@@ -88,7 +88,8 @@ one module that joins them.
 | Adapter | `src/ish/adapters/language_model/anthropic.py` | Messages API with native citations |
 | Adapter | `src/ish/adapters/language_model/ollama.py` | A generation model on the local daemon |
 | Adapter | `src/ish/adapters/language_model/claude_cli.py` | The Claude Code CLI in print mode |
-| Adapter | `src/ish/adapters/language_model/_grounded.py` | Prompt, schema, and parser for a backend without citations |
+| Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
+| Adapter | `src/ish/adapters/language_model/prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |

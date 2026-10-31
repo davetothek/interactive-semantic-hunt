@@ -5,7 +5,10 @@ import json
 import pytest
 
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import LanguageModelError, Source
+
+PROMPTS = load_prompts()
 
 
 def test_the_prompt_puts_each_source_under_its_id_before_the_question() -> None:
@@ -18,19 +21,20 @@ def test_the_prompt_puts_each_source_under_its_id_before_the_question() -> None:
     )
 
 
-def test_the_system_prompt_forbids_outside_knowledge() -> None:
-    assert "only the sources" in _grounded.SYSTEM_PROMPT
-    assert "covered to false" in _grounded.SYSTEM_PROMPT
-
-
-def test_the_system_prompt_asks_for_paragraphs() -> None:
-    assert "short paragraphs" in _grounded.SYSTEM_PROMPT
-    assert "two newline characters" in _grounded.SYSTEM_PROMPT
-
-
-def test_the_system_prompt_asks_for_the_layout() -> None:
-    for part in ("summary", "sections", "steps", "table", "gaps", "at most five"):
-        assert part in _grounded.SYSTEM_PROMPT
+def test_the_shipped_answer_instruction_keeps_its_rules() -> None:
+    for part in (
+        "only the sources",
+        "covered to false",
+        "short paragraphs",
+        "two newline characters",
+        "summary",
+        "sections",
+        "steps",
+        "table",
+        "gaps",
+        "at most five",
+    ):
+        assert part in PROMPTS.answer
 
 
 def _reply(**fields) -> str:
@@ -173,8 +177,8 @@ class TestSelect:
         )
 
     def test_the_prompt_prefers_a_rule_over_a_test(self) -> None:
-        assert "test case" in _grounded.SELECT_PROMPT
-        assert "bare numbers" in _grounded.SELECT_PROMPT
+        assert "test case" in PROMPTS.select
+        assert "bare numbers" in PROMPTS.select
 
     def test_ids_keep_their_order_drop_repeats_and_stop_at_the_limit(self) -> None:
         selection = _grounded.parse_ids(
@@ -199,8 +203,8 @@ class TestStep:
         assert "- none" in _grounded.step_prompt("Why?", sources, [], 0)
 
     def test_the_step_prompt_extends_the_answer_prompt(self) -> None:
-        assert _grounded.STEP_PROMPT.startswith(_grounded.SYSTEM_PROMPT)
-        assert "up to three new search queries" in _grounded.STEP_PROMPT
+        assert PROMPTS.step.startswith(PROMPTS.answer)
+        assert "up to three new search queries" in PROMPTS.step
         assert _grounded.STEP_SCHEMA["required"] == [
             "covered",
             "summary",
@@ -229,3 +233,9 @@ class TestStep:
     def test_a_step_with_no_search_field(self) -> None:
         reply = _grounded.parse_step('{"covered": false}', "m")
         assert reply.searches == ()
+
+
+def test_no_more_gaps_than_the_instruction_allows() -> None:
+    gaps = [{"text": f"gap {n}", "source_ids": []} for n in range(9)]
+    reply = _grounded.parse(_reply(gaps=gaps), "m")
+    assert len(reply.blocks[0].passages) == _grounded.MAX_GAPS

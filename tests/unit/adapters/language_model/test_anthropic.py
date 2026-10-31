@@ -14,7 +14,10 @@ from ish.adapters.language_model.anthropic import (
     NOT_COVERED,
     AnthropicLanguageModel,
 )
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import LanguageModelError, Source
+
+PROMPTS = load_prompts()
 
 SOURCES = [
     Source(id="1", title="/docs/a.adoc:1-9 Boot", text="It starts at boot."),
@@ -229,7 +232,7 @@ class TestSelect:
         }
         selection = _model().select("q", SOURCES, 5)
         body = recorder.body
-        assert body["system"] == _grounded.SELECT_PROMPT
+        assert body["system"] == PROMPTS.select
         assert body["output_config"] == {
             "format": {"type": "json_schema", "schema": _grounded.SELECT_SCHEMA}
         }
@@ -269,7 +272,7 @@ class TestStep:
         }
         reply = _model().step("q", SOURCES, [], 0)
         body = recorder.body
-        assert body["system"] == _grounded.STEP_PROMPT
+        assert body["system"] == PROMPTS.step
         assert body["output_config"]["format"]["schema"] == _grounded.STEP_SCHEMA
         assert body["messages"][0]["content"] == _grounded.step_prompt(
             "q", SOURCES, [], 0

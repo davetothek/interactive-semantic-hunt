@@ -12,6 +12,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+# Queries one step may ask for that ish runs. A model that asks for more
+# has the rest dropped, so the instruction names this number.
+SEARCHES_A_TURN = 3
+
 
 class LanguageModelError(Exception):
     """Report that a language model cannot be built or did not answer."""

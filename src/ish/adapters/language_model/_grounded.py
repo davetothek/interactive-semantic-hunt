@@ -21,27 +21,9 @@ from ish.application.ports.language_model import (
     Source,
 )
 
-SYSTEM_PROMPT = (
-    "You answer questions about a set of internal documents. Use only the "
-    "sources in the message. Each source starts with its id, a number in "
-    "brackets such as [1], followed by its title. Reply in JSON, and cite "
-    "every claim with the ids of the sources that support it, as the bare "
-    'numbers such as "1", never the titles. '
-    "Put the direct answer in summary, in one or two sentences. Then give "
-    "sections, one for each part of the question, each with a short heading; "
-    "a question with one part may have one section with no heading. Give a "
-    "section the style steps for a procedure, one step a passage; the style "
-    "table for registers, addresses, bit fields, values, or settings that "
-    "compare across rows, with columns and rows, each row citing its "
-    "sources; and the style prose otherwise. Write prose in short paragraphs "
-    "of two to four sentences, and end the text of the last passage of a "
-    "paragraph with two newline characters. Put in gaps the few points, at "
-    "most five, that the question asks and the sources leave open, "
-    "unfinished, or unconfirmed, one point a passage. Do not use knowledge "
-    "from outside the "
-    "sources, and do not guess. If the sources do not answer the question, "
-    "set covered to false and leave summary, sections, and gaps empty."
-)
+# Points of what the sources leave open that an answer keeps. The answer
+# instruction asks for at most this many, and the parser keeps no more.
+MAX_GAPS = 5
 
 PASSAGE: dict[str, object] = {
     "type": "object",
@@ -168,7 +150,9 @@ def _blocks(data: dict) -> tuple[Block, ...]:
                     rows=rows if kind == "table" else (),
                 )
             )
-    gaps = tuple(_passage(p) for p in data.get("gaps") or () if str(p["text"]).strip())
+    gaps = tuple(_passage(p) for p in data.get("gaps") or () if str(p["text"]).strip())[
+        :MAX_GAPS
+    ]
     if gaps:
         blocks.append(Block(kind="gaps", passages=gaps))
     return tuple(blocks)
@@ -182,15 +166,6 @@ def _flat(blocks: Sequence[Block]) -> list[Passage]:
         flat.extend(Passage(" | ".join(r.cells), r.source_ids) for r in block.rows)
     return flat
 
-
-SELECT_PROMPT = (
-    "You choose the sources worth reading to answer a question. Each "
-    "candidate starts with its id, a number in brackets such as [1], then "
-    "its title and the start of its text. Reply in JSON with the ids of the "
-    "candidates most likely to hold the answer, best first, as the bare "
-    'numbers such as "1". Prefer a source that states a rule or a design '
-    "over one that only exercises it, such as a test case."
-)
 
 SELECT_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -226,16 +201,6 @@ def parse_ids(
         output_tokens=output_tokens,
     )
 
-
-STEP_PROMPT = (
-    SYSTEM_PROMPT
-    + " You may ask for more searches before you answer. When the sources "
-    "fall short, or name a term, an identifier, or a document worth finding, "
-    "put up to three new search queries in search and leave the answer "
-    "empty. "
-    "Write a query in new words: the search matches by meaning. When the "
-    "sources are enough, or no turns are left, answer and leave search empty."
-)
 
 STEP_SCHEMA: dict[str, object] = {
     "type": "object",

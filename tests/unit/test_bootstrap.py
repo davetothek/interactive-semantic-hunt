@@ -1376,7 +1376,7 @@ class TestBuildLanguageModel:
     def registry(self, monkeypatch) -> list[str]:
         built: list[str] = []
 
-        def stub(model: str) -> _StubModel:
+        def stub(model: str, *, prompts) -> _StubModel:
             built.append(model)
             return _StubModel(model)
 

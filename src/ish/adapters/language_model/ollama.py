@@ -13,6 +13,8 @@ from collections.abc import Sequence
 
 from ish.adapters.embedder.ollama import DEFAULT_HOST, _is_loopback, _normalize_host
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model.prompts import Prompts
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
     Reply,
@@ -40,6 +42,7 @@ class OllamaLanguageModel:
         model: str = "",
         *,
         host: str | None = None,
+        prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
     ) -> None:
         """Use *model*, such as ``qwen3:8b``, on the daemon at *host*.
@@ -58,13 +61,14 @@ class OllamaLanguageModel:
                 f"and {chosen} is another. Point OLLAMA_HOST at a local daemon."
             )
         self.model_name = model
+        self._prompts = prompts or load_prompts()
         self.host = chosen
         self._timeout = timeout
 
     def answer(self, question: str, sources: Sequence[Source]) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes."""
         text, read, wrote = self._chat(
-            _grounded.SYSTEM_PROMPT,
+            self._prompts.answer,
             _grounded.SCHEMA,
             _grounded.prompt(question, sources),
         )
@@ -79,7 +83,7 @@ class OllamaLanguageModel:
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
         text, read, wrote = self._chat(
-            _grounded.STEP_PROMPT,
+            self._prompts.step,
             _grounded.STEP_SCHEMA,
             _grounded.step_prompt(question, sources, searched, turns_left),
         )
@@ -92,7 +96,7 @@ class OllamaLanguageModel:
     ) -> Selection:
         """Choose at most *limit* candidates, in the JSON the schema fixes."""
         text, read, wrote = self._chat(
-            _grounded.SELECT_PROMPT,
+            self._prompts.select,
             _grounded.SELECT_SCHEMA,
             _grounded.select_prompt(question, candidates, limit),
         )

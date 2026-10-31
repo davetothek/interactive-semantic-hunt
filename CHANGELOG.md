@@ -41,6 +41,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   model sees only what ish sends, so it works on a tree of documents
   alone. `ish --ask` lists the searches below the sources, and the
   `ask` tool returns them with the number of turns.
+- The instructions a language model receives are text files that ship
+  with ish. `prompt_dir` names a directory whose files replace them one
+  by one, so an operator changes what a model is told without changing
+  code. The limits an instruction names come from the code.
 - The MCP server offers an `ask` tool. It returns JSON: the answer with
   `[n]` markers, and per citation the path, the location as data, and a
   link that opens the source. When the documents do not answer the

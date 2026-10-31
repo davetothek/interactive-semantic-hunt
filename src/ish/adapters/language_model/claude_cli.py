@@ -19,6 +19,8 @@ import tempfile
 from collections.abc import Mapping, Sequence
 
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model.prompts import Prompts
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
     Reply,
@@ -77,10 +79,7 @@ def environment(source: Mapping[str, str]) -> dict[str, str]:
 
 
 def command(
-    executable: str,
-    model: str,
-    system: str = _grounded.SYSTEM_PROMPT,
-    schema: dict[str, object] = _grounded.SCHEMA,
+    executable: str, model: str, system: str, schema: dict[str, object]
 ) -> list[str]:
     """Return the argument list that asks one question with nothing else loaded."""
     return [
@@ -106,7 +105,13 @@ def command(
 class ClaudeCliLanguageModel:
     """Write answers with the ``claude`` command in print mode."""
 
-    def __init__(self, model: str = "", *, timeout: float = TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self,
+        model: str = "",
+        *,
+        prompts: Prompts | None = None,
+        timeout: float = TIMEOUT_SECONDS,
+    ) -> None:
         """Use *model*, a Claude model id or alias such as ``sonnet``.
 
         Require the model and the ``claude`` command on the path.
@@ -121,13 +126,14 @@ class ClaudeCliLanguageModel:
                 f"The claude-cli backend needs the {EXECUTABLE!r} command on PATH."
             )
         self.model_name = model
+        self._prompts = prompts or load_prompts()
         self._executable = found
         self._timeout = timeout
 
     def answer(self, question: str, sources: Sequence[Source]) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes."""
         structured, read, wrote = self._run(
-            _grounded.SYSTEM_PROMPT,
+            self._prompts.answer,
             _grounded.SCHEMA,
             _grounded.prompt(question, sources),
         )
@@ -147,7 +153,7 @@ class ClaudeCliLanguageModel:
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
         structured, read, wrote = self._run(
-            _grounded.STEP_PROMPT,
+            self._prompts.step,
             _grounded.STEP_SCHEMA,
             _grounded.step_prompt(question, sources, searched, turns_left),
         )
@@ -160,7 +166,7 @@ class ClaudeCliLanguageModel:
     ) -> Selection:
         """Choose at most *limit* candidates, in the JSON the schema fixes."""
         structured, read, wrote = self._run(
-            _grounded.SELECT_PROMPT,
+            self._prompts.select,
             _grounded.SELECT_SCHEMA,
             _grounded.select_prompt(question, candidates, limit),
         )

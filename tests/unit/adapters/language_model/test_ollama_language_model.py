@@ -9,7 +9,10 @@ import pytest
 
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded
 from ish.adapters.language_model.ollama import OllamaLanguageModel
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import LanguageModelError, Source
+
+PROMPTS = load_prompts()
 
 SOURCES = [Source("1", "/d/a.adoc:1-9 A", "It starts at boot.")]
 
@@ -112,7 +115,7 @@ class TestAnswer:
         assert body["stream"] is False
         assert body["messages"][0] == {
             "role": "system",
-            "content": _grounded.SYSTEM_PROMPT,
+            "content": PROMPTS.answer,
         }
         assert body["messages"][1]["content"] == _grounded.prompt("How?", SOURCES)
         assert reply.covered
@@ -173,7 +176,7 @@ class TestSelect:
         selection = _model().select("q", SOURCES, 5)
         body = json.loads(recorder.requests[0][0].data)
         assert body["format"] == _grounded.SELECT_SCHEMA
-        assert body["messages"][0]["content"] == _grounded.SELECT_PROMPT
+        assert body["messages"][0]["content"] == PROMPTS.select
         assert body["messages"][1]["content"] == _grounded.select_prompt(
             "q", SOURCES, 5
         )
@@ -191,7 +194,7 @@ class TestStep:
         reply = _model().step("q", SOURCES, ["done"], 1)
         body = json.loads(recorder.requests[0][0].data)
         assert body["format"] == _grounded.STEP_SCHEMA
-        assert body["messages"][0]["content"] == _grounded.STEP_PROMPT
+        assert body["messages"][0]["content"] == PROMPTS.step
         assert body["messages"][1]["content"] == _grounded.step_prompt(
             "q", SOURCES, ["done"], 1
         )

@@ -14,6 +14,8 @@ import os
 from collections.abc import Sequence
 
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model.prompts import NOT_COVERED, Prompts
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
     Passage,
@@ -31,25 +33,17 @@ KEY_VARIABLE = "ANTHROPIC_API_KEY"
 MAX_TOKENS = 16_000
 TIMEOUT_SECONDS = 300
 
-# The reply the model gives when the documents do not answer the
-# question. Citations cannot be combined with structured output, so a
-# fixed word carries the flag.
-NOT_COVERED = "NOT_COVERED"
-
-SYSTEM_PROMPT = (
-    "You answer questions about a set of internal documents. Use only the "
-    "documents in the message. Cite the document that supports each claim. "
-    "Write short paragraphs of one topic each, separated by a blank line. "
-    "Do not use knowledge from outside the documents, and do not guess. "
-    "If the documents do not answer the question, reply with exactly "
-    f"{NOT_COVERED} and nothing else."
-)
-
 
 class AnthropicLanguageModel:
     """Write answers with a Claude model through the Messages API."""
 
-    def __init__(self, model: str = "", *, timeout: float = TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self,
+        model: str = "",
+        *,
+        prompts: Prompts | None = None,
+        timeout: float = TIMEOUT_SECONDS,
+    ) -> None:
         """Use *model*, a Claude model id such as ``claude-sonnet-5-5``.
 
         Require the model. A default chosen here would decide the cost of
@@ -60,11 +54,14 @@ class AnthropicLanguageModel:
                 "Set answer_model to a Claude model id for the anthropic backend."
             )
         self.model_name = model
+        self._prompts = prompts or load_prompts()
         self._timeout = timeout
 
     def answer(self, question: str, sources: Sequence[Source]) -> Reply:
         """Answer *question* from *sources*, with a citation per claim."""
-        body = self._post(_request(self.model_name, question, sources))
+        body = self._post(
+            _request(self.model_name, self._prompts.answer_cited, question, sources)
+        )
         stop = body.get("stop_reason")
         if stop == "refusal":
             raise LanguageModelError(f"{self.model_name} declined to answer.")
@@ -95,7 +92,7 @@ class AnthropicLanguageModel:
         native citations. The passages name their sources by id instead.
         """
         text, read, wrote = self._structured(
-            _grounded.STEP_PROMPT,
+            self._prompts.step,
             _grounded.STEP_SCHEMA,
             _grounded.step_prompt(question, sources, searched, turns_left),
         )
@@ -139,7 +136,7 @@ class AnthropicLanguageModel:
         schema, which the answer call cannot do beside citations.
         """
         text, read, wrote = self._structured(
-            _grounded.SELECT_PROMPT,
+            self._prompts.select,
             _grounded.SELECT_SCHEMA,
             _grounded.select_prompt(question, candidates, limit),
         )
@@ -188,7 +185,9 @@ class AnthropicLanguageModel:
             ) from exc
 
 
-def _request(model: str, question: str, sources: Sequence[Source]) -> dict[str, object]:
+def _request(
+    model: str, system: str, question: str, sources: Sequence[Source]
+) -> dict[str, object]:
     documents: list[dict[str, object]] = [
         {
             "type": "document",
@@ -201,7 +200,7 @@ def _request(model: str, question: str, sources: Sequence[Source]) -> dict[str, 
     return {
         "model": model,
         "max_tokens": MAX_TOKENS,
-        "system": SYSTEM_PROMPT,
+        "system": system,
         "messages": [
             {
                 "role": "user",

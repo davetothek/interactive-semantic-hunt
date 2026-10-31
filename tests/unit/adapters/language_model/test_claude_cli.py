@@ -8,7 +8,10 @@ import pytest
 
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded, claude_cli
 from ish.adapters.language_model.claude_cli import ClaudeCliLanguageModel, command
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import LanguageModelError, Source
+
+PROMPTS = load_prompts()
 
 SOURCES = [Source("1", "/d/a.adoc:1-9 A", "It starts at boot.")]
 
@@ -75,7 +78,7 @@ class TestCommand:
     """The model reads the sources and nothing else."""
 
     def test_every_tool_server_and_settings_file_is_off(self) -> None:
-        args = command("/usr/bin/claude", "sonnet")
+        args = command("/usr/bin/claude", "sonnet", PROMPTS.answer, _grounded.SCHEMA)
         flags = dict(zip(args[1::1], args[2::1], strict=False))
         assert args[0] == "/usr/bin/claude"
         assert "--print" in args
@@ -84,14 +87,16 @@ class TestCommand:
         assert "--strict-mcp-config" in args
         assert "--no-session-persistence" in args
         assert flags["--model"] == "sonnet"
-        assert flags["--system-prompt"] == _grounded.SYSTEM_PROMPT
+        assert flags["--system-prompt"] == PROMPTS.answer
         assert flags["--output-format"] == "json"
         assert json.loads(flags["--json-schema"]) == _grounded.SCHEMA
 
     def test_the_question_goes_on_stdin_in_an_empty_directory(self, runner) -> None:
         reply = ClaudeCliLanguageModel("sonnet", timeout=5).answer("How?", SOURCES)
         call = runner.calls[0]
-        assert call["args"] == command("/usr/bin/claude", "sonnet")
+        assert call["args"] == command(
+            "/usr/bin/claude", "sonnet", PROMPTS.answer, _grounded.SCHEMA
+        )
         assert call["input"] == _grounded.prompt("How?", SOURCES)
         assert call["timeout"] == 5
         assert call["cwd_existed"]
@@ -144,14 +149,14 @@ class TestSelect:
         selection = ClaudeCliLanguageModel("haiku", timeout=5).select("q", SOURCES, 1)
         call = runner.calls[0]
         assert call["args"] == command(
-            "/usr/bin/claude", "haiku", _grounded.SELECT_PROMPT, _grounded.SELECT_SCHEMA
+            "/usr/bin/claude", "haiku", PROMPTS.select, _grounded.SELECT_SCHEMA
         )
         assert call["input"] == _grounded.select_prompt("q", SOURCES, 1)
         assert selection.ids == ("2",)
         assert (selection.input_tokens, selection.output_tokens) == (500, 8)
 
     def test_select_keeps_every_tool_off(self) -> None:
-        args = command("/c", "m", _grounded.SELECT_PROMPT, _grounded.SELECT_SCHEMA)
+        args = command("/c", "m", PROMPTS.select, _grounded.SELECT_SCHEMA)
         assert args[args.index("--tools") + 1] == ""
         assert args[args.index("--setting-sources") + 1] == ""
         assert "--strict-mcp-config" in args
@@ -204,7 +209,7 @@ class TestStep:
         reply = ClaudeCliLanguageModel("haiku", timeout=5).step("q", SOURCES, [], 2)
         call = runner.calls[0]
         assert call["args"] == command(
-            "/usr/bin/claude", "haiku", _grounded.STEP_PROMPT, _grounded.STEP_SCHEMA
+            "/usr/bin/claude", "haiku", PROMPTS.step, _grounded.STEP_SCHEMA
         )
         assert call["input"] == _grounded.step_prompt("q", SOURCES, [], 2)
         assert reply.searches == ("where is it handled",)

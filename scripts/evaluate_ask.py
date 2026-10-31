@@ -210,6 +210,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--ask-turns", type=int, default=0, help="Follow-up searches allowed."
     )
+    parser.add_argument(
+        "--prompt-dir",
+        default="",
+        help="Instruction files that replace the shipped ones.",
+    )
     parser.add_argument("--price-in", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--price-out", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--only", nargs="+", default=(), help="Question ids to ask.")
@@ -225,6 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         answer_model=args.answer_model,
         rerank_model=args.rerank_model,
         ask_turns=args.ask_turns,
+        prompt_dir=args.prompt_dir,
         allowed_language_models=(args.language_model,),
     ) as ish:
         for item in items:

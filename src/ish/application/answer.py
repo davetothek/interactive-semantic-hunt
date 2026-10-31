@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ish.application.ports.language_model import (
+    SEARCHES_A_TURN,
     Block,
     LanguageModel,
     Reply,
@@ -29,8 +30,7 @@ DEFAULT_PICK = 10
 # it. Enough for the heading and the first sentences.
 PREVIEW_CHARS = 300
 
-# Queries a model may ask for in one turn, and chunks each one adds.
-SEARCHES_A_TURN = 3
+# Chunks each follow-up search adds.
 CHUNKS_A_SEARCH = 5
 
 # Characters of chunk text one question may send. About 15,000 tokens at

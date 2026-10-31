@@ -19,6 +19,8 @@ from typing import Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.language_model import LANGUAGE_MODELS
+from ish.adapters.language_model.prompts import Prompts
+from ish.adapters.language_model.prompts import load as load_prompts
 from ish.adapters.link.base_url import BaseUrl
 from ish.adapters.link.file_uri import FileUri
 from ish.adapters.parser import (
@@ -212,7 +214,13 @@ def _language_model(settings: Settings, model: str) -> LanguageModel:
         raise LanguageModelError(
             f"Unknown language model {name!r}. Valid backends: {valid}"
         ) from None
-    return backend(model)
+    return backend(model, prompts=build_prompts(settings))
+
+
+def build_prompts(settings: Settings) -> Prompts:
+    """Read the instructions, from ``prompt_dir`` where it holds a file."""
+    directory = Path(settings.prompt_dir).expanduser() if settings.prompt_dir else None
+    return load_prompts(directory)
 
 
 def build_link_resolver(settings: Settings, root: Path) -> LinkResolver:

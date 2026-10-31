@@ -313,6 +313,14 @@ class Settings:
             metavar="N",
         ),
     )
+    prompt_dir: str = field(
+        default="",
+        metadata=_opt(
+            "Directory of instruction files that replace the ones a language "
+            "model receives, file by file. Empty uses the shipped ones.",
+            metavar="DIR",
+        ),
+    )
     allowed_language_models: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

@@ -1,14 +1,20 @@
 """Every language model backend ish ships, and how to add one.
 
 A backend writes an answer from the sources it is given. Write a class
-that satisfies ``LanguageModel`` and takes the ``answer_model`` option:
+that satisfies ``LanguageModel``, takes the ``answer_model`` option, and
+sends the instructions it is given rather than its own:
 
     class MyModel:
-        def __init__(self, model: str = "") -> None:
+        def __init__(self, model: str = "", *, prompts: Prompts | None = None):
             self.model_name = model or "default-model"
+            self._prompts = prompts or load_prompts()
 
         def answer(self, question, sources) -> Reply:
-            ...                              # cite sources by their id
+            ...                              # send self._prompts.answer
+
+The instructions live as text files in ``prompts/``, and ``prompt_dir``
+replaces any of them. A backend with no citation feature replies in the
+JSON that ``_grounded`` fixes, and parses it there.
 
 To add a backend to ish:
 
@@ -21,14 +27,22 @@ when ``allowed_language_models`` names it, so a new entry here sends
 nothing anywhere until an operator allows it.
 """
 
-from collections.abc import Callable
+from typing import Protocol
 
 from ish.adapters.language_model.anthropic import AnthropicLanguageModel
 from ish.adapters.language_model.claude_cli import ClaudeCliLanguageModel
 from ish.adapters.language_model.ollama import OllamaLanguageModel
+from ish.adapters.language_model.prompts import Prompts
 from ish.application.ports.language_model import LanguageModel
 
-LANGUAGE_MODELS: dict[str, Callable[[str], LanguageModel]] = {
+
+class LanguageModelFactory(Protocol):
+    """What a registry entry is: a model option and instructions in, a backend out."""
+
+    def __call__(self, model: str, *, prompts: Prompts) -> LanguageModel: ...
+
+
+LANGUAGE_MODELS: dict[str, LanguageModelFactory] = {
     "anthropic": AnthropicLanguageModel,
     "ollama": OllamaLanguageModel,
     "claude-cli": ClaudeCliLanguageModel,

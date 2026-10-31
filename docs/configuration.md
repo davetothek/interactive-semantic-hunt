@@ -206,6 +206,38 @@ one turn, so they cost the same. The model searched again for two hard
 questions and for all four that the documents do not answer, and it still
 refused those four. An answer cost about 0.4 cents against 0.3.
 
+### Change what the model is told
+
+The instructions a language model receives are text files that ship with
+ish: `answer.md` for an answer, `answer_cited.md` for the `anthropic`
+answer with native citations, `step.md` for a turn that may ask for
+searches, and `select.md` for the rerank. Copy the ones to change into a
+directory, edit them, and point `prompt_dir` at it:
+
+```toml
+prompt_dir = "~/.config/ish/prompts"
+```
+
+A file in that directory replaces the default of the same name. A file it
+does not hold keeps the default. The lines of a paragraph join into one
+line, so wrap them as you like, and a blank line starts a new paragraph.
+`$max_gaps`, `$searches_a_turn`, and `$not_covered` are filled in by ish,
+so an instruction always names the limit the code enforces. `step.md`
+starts with `$answer`, the answer instruction. Write `$$` for a dollar
+sign. A placeholder ish does not fill stops ish with an error that names
+the file.
+
+The JSON a reply must follow stays in code, because the parser reads it.
+An instruction can ask for a different layout only within that schema.
+
+To compare two sets of instructions, run the evaluation with each:
+
+```sh
+uv run python scripts/evaluate_ask.py questions.yaml TREE \
+  --language-model claude-cli --answer-model claude-haiku-5-5 \
+  --prompt-dir ./prompts-b
+```
+
 `link_base` publishes the links of an answer under a base URL. With
 `link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164
 of `spec/a.adoc` under the tree links to
