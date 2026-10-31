@@ -12,7 +12,7 @@ recipe for adding one. This module only selects from them.
 
 import logging
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -132,6 +132,55 @@ def build_parsers(settings: Settings) -> list[Parser]:
             )
         )
     return parsers
+
+
+# Files a reader keeps parsed. An answer reads ten chunks, most of them
+# from a few files, and a follow-up search adds five more.
+READER_FILES = 32
+
+
+def build_reader(settings: Settings) -> Callable[[Chunk], str | None]:
+    """Return a function that reads the text of a chunk as it was indexed.
+
+    A parser may give a chunk text that the file does not hold line for
+    line: an AsciiDoc section has its includes resolved. Parse the file
+    again with the same parser and return the text of the chunk with the
+    same lines, so a model reads what the index embedded. Read the lines
+    of the file when the parse fails or no chunk has those lines, as when
+    the file changed after it was indexed.
+    """
+    from collections import OrderedDict
+
+    from ish.application.preview import read_lines
+
+    parsers = {parser.language: parser for parser in build_parsers(settings)}
+    parsed: OrderedDict[tuple[Path, float], dict[tuple[int, int], str]] = OrderedDict()
+
+    def read(chunk: Chunk) -> str | None:
+        parser = parsers.get(chunk.language)
+        try:
+            stamp = chunk.path.stat().st_mtime
+        except OSError:
+            return None
+        key = (chunk.path, stamp)
+        texts = parsed.get(key)
+        if texts is None and parser is not None:
+            try:
+                source = chunk.path.read_text(encoding="utf-8")
+                texts = {
+                    (c.start_line, c.end_line): c.text
+                    for c in parser.parse(chunk.path, source)
+                }
+            except Exception:
+                log.debug("Could not parse %s again", chunk.path, exc_info=True)
+                texts = {}
+            parsed[key] = texts
+            if len(parsed) > READER_FILES:
+                parsed.popitem(last=False)
+        text = (texts or {}).get((chunk.start_line, chunk.end_line))
+        return text if text is not None else read_lines(chunk)
+
+    return read
 
 
 def context_window(settings: Settings) -> int | None:

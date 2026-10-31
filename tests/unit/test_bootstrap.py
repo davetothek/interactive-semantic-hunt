@@ -1456,3 +1456,54 @@ class TestBuildLanguageModel:
         settings = Settings(language_model="nope", allowed_language_models=("nope",))
         with pytest.raises(LanguageModelError, match="Valid backends: none"):
             bootstrap.build_language_model(settings)
+
+
+class TestReader:
+    """A model reads the text the index embedded, includes resolved."""
+
+    def _doc(self, tmp_path: Path) -> Path:
+        (tmp_path / "part.adoc").write_text("|REG |0x1\n")
+        doc = tmp_path / "spec.adoc"
+        doc.write_text("= Spec\n\n== Regs\ninclude::part.adoc[]\n")
+        return doc
+
+    def _chunk(self, doc: Path, start: int, end: int, language: str = "asciidoc"):
+        from ish.domain.chunk import Chunk
+
+        return Chunk(doc, "", "section", language, "s", start, end)
+
+    def test_an_asciidoc_chunk_reads_with_its_includes(self, tmp_path: Path) -> None:
+        doc = self._doc(tmp_path)
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(doc, 3, 4)) == "== Regs\n|REG |0x1\n"
+
+    def test_lines_no_chunk_holds_read_from_the_file(self, tmp_path: Path) -> None:
+        doc = self._doc(tmp_path)
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(doc, 2, 3)) == "\n== Regs\n"
+
+    def test_a_language_with_no_parser_reads_the_file(self, tmp_path: Path) -> None:
+        doc = tmp_path / "notes.txt"
+        doc.write_text("one\ntwo\n")
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(doc, 2, 2, "text")) == "two\n"
+
+    def test_a_gone_file_reads_as_nothing(self, tmp_path: Path) -> None:
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(tmp_path / "gone.adoc", 1, 2)) is None
+
+    def test_a_file_that_fails_to_parse_reads_its_lines(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.py"
+        bad.write_text("def broken(:\n")
+        read = bootstrap.build_reader(Settings())
+        assert read(self._chunk(bad, 1, 1, "python")) == "def broken(:\n"
+
+    def test_the_reader_keeps_a_bounded_number_of_files(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(bootstrap, "READER_FILES", 2)
+        read = bootstrap.build_reader(Settings())
+        for n in range(4):
+            doc = tmp_path / f"d{n}.adoc"
+            doc.write_text(f"= D{n}\ntext {n}\n")
+            assert read(self._chunk(doc, 1, 2)) == f"= D{n}\ntext {n}\n"

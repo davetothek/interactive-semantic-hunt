@@ -20,7 +20,7 @@ free of layer imports, and `tests/unit/test_package.py` enforces that.
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
@@ -30,6 +30,7 @@ from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
 from ish.application.filters import Filters, parse_query
 from ish.application.ports.language_model import LanguageModel
 from ish.application.ports.link import LinkResolver
+from ish.application.preview import read_lines
 from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
@@ -81,6 +82,7 @@ class Ish:
         self._identity: bootstrap.Identity | None = None
         self._model: LanguageModel | None = None
         self._reranker: LanguageModel | None = None
+        self._reader: Callable[[Chunk], str | None] = read_lines
         self._links: LinkResolver | None = None
 
     # ------------------------------------------------------------------
@@ -284,6 +286,7 @@ class Ish:
         if self._model is None:
             self._model = bootstrap.build_language_model(self.settings)
             self._reranker = bootstrap.build_reranker(self.settings)
+            self._reader = bootstrap.build_reader(self.settings)
         # A rerank model sorts a wide search cheaply from the start of each
         # chunk. Without one, the best chunks as ranked are read in full.
         wide = self._reranker is not None
@@ -296,6 +299,7 @@ class Ish:
             reranker=self._reranker,
             pick=ASK_LIMIT,
             turns=self.settings.ask_turns,
+            read=self._reader,
             **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)
