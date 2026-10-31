@@ -169,7 +169,7 @@ def format_answer(
         lines.append(f"{indent}{display_path(chunk.path.parent, base).as_posix()}/")
     if answer.searches:
         lines += ["", "## Follow-up searches", ""]
-        lines += [_fill(query, "- ") for query in answer.searches]
+        lines += [_fill(query, "- ", "  ") for query in answer.searches]
     return "\n".join(lines)
 
 

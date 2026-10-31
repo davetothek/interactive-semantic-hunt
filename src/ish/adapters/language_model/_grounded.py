@@ -9,6 +9,7 @@ cites nothing.
 """
 
 import json
+import re
 from collections.abc import Sequence
 
 from ish.application.ports.language_model import (
@@ -112,9 +113,18 @@ def parse(
     )
 
 
+# A marker such as [16] that a model wrote into its own text. It names a
+# source by the id the model saw, which is not the number a reader sees.
+_OWN_MARKER = re.compile(r" ?\[\d+\]")
+
+
 def _passage(data: dict) -> Passage:
+    """Read one passage, and drop any citation marker written into its text.
+
+    ish numbers the citations itself, from the ids a passage lists.
+    """
     return Passage(
-        text=str(data["text"]),
+        text=_OWN_MARKER.sub("", str(data["text"])),
         source_ids=tuple(str(i) for i in data.get("source_ids") or ()),
     )
 
@@ -130,7 +140,7 @@ def _blocks(data: dict) -> tuple[Block, ...]:
         kind = style if style in ("prose", "steps", "table") else "prose"
         rows = tuple(
             Row(
-                cells=tuple(str(c) for c in row["cells"]),
+                cells=tuple(_OWN_MARKER.sub("", str(c)) for c in row["cells"]),
                 source_ids=tuple(str(i) for i in row.get("source_ids") or ()),
             )
             for row in section.get("rows") or ()

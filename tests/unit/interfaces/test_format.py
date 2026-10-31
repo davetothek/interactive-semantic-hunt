@@ -393,3 +393,17 @@ class TestLayout:
             Answer(parts=(), covered=True, sources=(), blocks=(table,)), "q", str
         )
         assert "Values at 40 fps.\n\n| Q     | Sources |" in out
+
+
+def test_a_long_follow_up_search_wraps_under_its_dash() -> None:
+    from ish.application.answer import Answer
+    from ish.interfaces.format import format_answer
+
+    answer = Answer(
+        parts=(), covered=True, sources=(), searches=("word " * 30, "short")
+    )
+    tail = format_answer(answer, "q", str).split("## Follow-up searches\n\n")[1]
+    lines = tail.split("\n")
+    assert lines[0].startswith("- word")
+    assert lines[1].startswith("  word")
+    assert [line for line in lines if line.startswith("- ")] == [lines[0], "- short"]

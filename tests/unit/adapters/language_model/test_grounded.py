@@ -239,3 +239,25 @@ def test_no_more_gaps_than_the_instruction_allows() -> None:
     gaps = [{"text": f"gap {n}", "source_ids": []} for n in range(9)]
     reply = _grounded.parse(_reply(gaps=gaps), "m")
     assert len(reply.blocks[0].passages) == _grounded.MAX_GAPS
+
+
+def test_markers_a_model_writes_into_its_text_are_dropped() -> None:
+    """A model wrote "[16][17]", the ids it saw, which mean nothing to a reader."""
+    reply = _grounded.parse(
+        _reply(
+            sections=[
+                _section(
+                    "table",
+                    "",
+                    [{"text": "Fields [16][17] and more [2].", "source_ids": ["2"]}],
+                    ["Reg"],
+                    [{"cells": ["A [3]"], "source_ids": ["3"]}],
+                )
+            ]
+        ),
+        "m",
+    )
+    block = reply.blocks[0]
+    assert block.passages[0].text == "Fields and more."
+    assert block.rows[0].cells == ("A",)
+    assert block.passages[0].source_ids == ("2",)
