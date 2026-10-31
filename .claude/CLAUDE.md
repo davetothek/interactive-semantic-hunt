@@ -264,6 +264,24 @@ something broke. This is that record, so a rule is never argued from taste.
   agent that greps the tree found a firmware handler that ish cannot,
   for 211k input tokens, because the handler is one case of a switch
   that one chunk holds whole.
+- A register table that a specification assembled with `include::` held
+  the directives and none of the values, so the question "which registers
+  control the watchdog timer, with reset values" found the names and no
+  values. 21,820 includes over 2,488 AsciiDoc files, 90 % through an
+  attribute path. With includes resolved, the same question found all 13
+  registers with precision and reset value in the first search, where it
+  had needed three follow-up turns. A register table split by the cap kept
+  its header only in the first piece, and one table holds one embedding of
+  up to a dozen registers. The re-index embedded 6,841 chunks in 85 minutes,
+  about 1.3 a second, and the other trees parsed again in under a minute.
+  The 25 questions scored 20 of 21 cited, 21 of 21 answered, 4 of 4
+  refused, the miss a label that names one section of two valid ones.
+  Answer input rose from 9,839 to 16,203 tokens, output from 2,747 to
+  4,257, 0.43 to 0.5 cents. Hence `_asciidoc.py`.
+- `refresh_indexes()` reads the configuration beside each tree again, and
+  only *overrides* survive it, so a `cache_dir` set on the settings it is
+  given is lost and the run writes to the default index. A test run that
+  meant to fill a copy refreshed the index a resident server kept.
 - `claude -p` run inside a tree loaded the auto memory of that tree with
   `--setting-sources ""`, and on 2.1.296 also with
   `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`:
