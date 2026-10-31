@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.7.0 - 2026-10-31
+
 ### Changed
 
 - AsciiDoc files are read as a reader sees them. An `include::`
