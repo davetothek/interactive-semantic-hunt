@@ -92,7 +92,7 @@ class MarkupParser:
             trail.append(title)
 
             chunks.extend(
-                self._pieces(
+                self._section(
                     path,
                     lines,
                     expanded,
@@ -103,6 +103,84 @@ class MarkupParser:
                 )
             )
         return chunks
+
+    def _section(
+        self,
+        path: Path,
+        lines: list[str],
+        expanded: list[str],
+        start: int,
+        end: int,
+        *,
+        kind: str,
+        symbol: str,
+    ) -> list[Chunk]:
+        """Return a section, with what its large includes bring in apart.
+
+        A section of a few prose lines that includes a register table
+        holds far more table than prose once the include resolves, and
+        its embedding then stands for the table and not for what the
+        prose says. Give each large include, or the table that holds it,
+        a chunk of its own on its lines, and keep the section's own text,
+        with those includes left as their directives, in another. A
+        section with no prose of its own outside them yields the tables
+        alone.
+        """
+        blocks = self._blocks(lines, expanded, start, end)
+        if not blocks:
+            return self._pieces(
+                path, lines, expanded, start, end, kind=kind, symbol=symbol
+            )
+        held = {n for first, last in blocks for n in range(first, last + 1)}
+        own = [
+            lines[n - 1] if n in held else expanded[n - 1]
+            for n in range(1, len(lines) + 1)
+        ]
+        prose = any(
+            _is_prose(lines[n - 1]) for n in range(start + 1, end + 1) if n not in held
+        )
+        chunks = (
+            self._pieces(path, lines, own, start, end, kind=kind, symbol=symbol)
+            if prose
+            else []
+        )
+        for first, last in blocks:
+            chunks += self._pieces(
+                path,
+                lines,
+                expanded,
+                first,
+                last,
+                kind="table",
+                symbol=f"{symbol} (table)",
+            )
+        return chunks
+
+    @staticmethod
+    def _blocks(
+        lines: list[str], expanded: list[str], start: int, end: int
+    ) -> list[tuple[int, int]]:
+        """Return the lines a large include claims: its table, or its run of lines."""
+        large = [
+            n
+            for n in range(start, end + 1)
+            if lines[n - 1].startswith("include::")
+            and len(expanded[n - 1]) > INLINE_CHARS
+        ]
+        if not large:
+            return []
+        tables, _ = _tables(expanded, start, end, MAX_CHUNK_CHARS)
+        spans: list[tuple[int, int]] = []
+        for number in large:
+            table = next(
+                (t for t in tables.values() if t.opens <= number <= t.closes), None
+            )
+            first, last = (table.opens, table.closes) if table else (number, number)
+            if spans and first <= spans[-1][1] + 1:
+                spans[-1] = (spans[-1][0], max(spans[-1][1], last))
+            else:
+                spans.append((first, last))
+        return spans
 
     def _expand(self, path: Path, lines: list[str]) -> list[str]:
         """Return the text each line stands for, as a reader would see it.
@@ -196,7 +274,7 @@ class MarkupParser:
         if not any(_is_prose(line) for _number, line in self._outside_fences(lines)):
             return []
         expanded = self._expand(path, lines)
-        return self._pieces(
+        return self._section(
             path, lines, expanded, 1, len(lines), kind="document", symbol=path.stem
         )
 
@@ -233,6 +311,11 @@ def _is_prose(line: str) -> bool:
 
 # A table opens and closes on a line of four or more equal signs after a
 # pipe. A block title starts with one dot and a word.
+# Characters an include may bring into a section before it gets a chunk of
+# its own. A sentence or a short list stays inline. A register table does
+# not, because it would outweigh the prose around it.
+INLINE_CHARS = 600
+
 _DELIMITER = re.compile(r"^\|={3,}\s*$")
 _CLOSE = "|===\n"
 _IMAGE = re.compile(r"^image::([^\[]+)\[([^\]]*)\]\s*$")

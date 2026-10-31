@@ -15,9 +15,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   assembles a register table from other files holds its rows and their
   values. A table that fits stays in one chunk, and a longer one keeps
   its header row in every chunk it divides into. A figure reads as a
-  line of text with its alt text or file name. The chunking stamp is
-  raised, so the next refresh reads every AsciiDoc file again and
-  embeds only the text it has not seen.
+  line of text with its alt text or file name. An include that brings
+  in more than a few lines, such as a register table, is a `table`
+  chunk of its own on its lines, and the section keeps its prose in
+  another, so a question about the prose still finds it. The chunking
+  stamp is raised, so the next refresh reads every AsciiDoc file again
+  and embeds only the text it has not seen.
 
 ### Added
 

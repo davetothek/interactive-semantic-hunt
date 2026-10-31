@@ -232,8 +232,9 @@ class TestParser:
         parser.limit = 1000
         with caplog.at_level(logging.INFO, logger="ish.adapters.parser.markup"):
             chunks = parser.parse(doc, doc.read_text())
-        assert [len(c.text) for c in chunks] == [6, 1000]
-        assert (chunks[1].start_line, chunks[1].end_line) == (2, 2)
+        # The heading has no prose of its own, so the include alone remains.
+        assert [(len(c.text), c.kind) for c in chunks] == [(1000, "table")]
+        assert (chunks[0].start_line, chunks[0].end_line) == (2, 2)
         assert "1 lines expand past 1000" in caplog.text
 
     def test_a_file_with_no_heading_resolves_too(self, tmp_path: Path) -> None:
@@ -377,3 +378,79 @@ class TestFigures:
         doc.write_text("# Doc\n.not a title\n")
         (chunk,) = MarkupParser.markdown().parse(doc, doc.read_text())
         assert ".not a title" in chunk.text
+
+
+class TestLargeIncludesStandApart:
+    """A section of prose that includes a table embedded as the table.
+
+    A section of 1,109 characters of prose and four includes grew to 15,417
+    characters, and its first chunk, mostly register rows, fell from the top
+    50 to rank 141 for a question its prose answers.
+    """
+
+    @staticmethod
+    def _parse(tmp_path: Path, body: str) -> list:
+        doc = tmp_path / "d.adoc"
+        doc.write_text(body)
+        return list(MarkupParser.asciidoc().parse(doc, doc.read_text()))
+
+    @staticmethod
+    def _rows(tmp_path: Path, count: int) -> None:
+        rows = "".join(
+            f"|REG{n} |0x{n:04x} |a register of the table\n" for n in range(count)
+        )
+        (tmp_path / "rows.adoc").write_text(rows)
+
+    def test_the_prose_and_the_table_are_separate_chunks(self, tmp_path: Path) -> None:
+        self._rows(tmp_path, 40)
+        body = (
+            "= Doc\n\n== Errors\n\nTrigger a fault to test the notification path.\n\n"
+            "|===\n|Name |Reset\n\ninclude::rows.adoc[]\n|===\n"
+        )
+        chunks = self._parse(tmp_path, body)
+        prose = next(
+            c for c in chunks if c.kind == "section" and c.symbol == "Doc > Errors"
+        )
+        table = next(c for c in chunks if c.kind == "table")
+        assert "Trigger a fault" in prose.text
+        assert "|REG1 " not in prose.text
+        assert "include::rows.adoc[]" in prose.text
+        assert (prose.start_line, prose.end_line) == (3, 11)
+        assert table.symbol == "Doc > Errors (table)"
+        assert (table.start_line, table.end_line) == (7, 11)
+        assert table.text.startswith("|===\n|Name |Reset\n")
+
+    def test_a_small_include_stays_in_the_prose(self, tmp_path: Path) -> None:
+        (tmp_path / "note.adoc").write_text("A short included sentence.\n")
+        chunks = self._parse(tmp_path, "= Doc\n\nProse here.\ninclude::note.adoc[]\n")
+        assert [c.kind for c in chunks] == ["document"]
+        assert "A short included sentence." in chunks[0].text
+
+    def test_a_section_of_only_a_table_yields_only_the_table(
+        self, tmp_path: Path
+    ) -> None:
+        self._rows(tmp_path, 40)
+        chunks = self._parse(
+            tmp_path, "= Doc\n\n== Regs\n\n|===\ninclude::rows.adoc[]\n|===\n"
+        )
+        assert [c.kind for c in chunks if "Regs" in c.symbol] == ["table"]
+
+    def test_a_large_include_outside_a_table_stands_alone(self, tmp_path: Path) -> None:
+        self._rows(tmp_path, 40)
+        body = (
+            "= Doc\n\nSome prose.\n"
+            "include::rows.adoc[]\ninclude::rows.adoc[]\n"
+            "More prose.\n"
+        )
+        chunks = self._parse(tmp_path, body)
+        tables = [c for c in chunks if c.kind == "table"]
+        assert [(c.start_line, c.end_line) for c in tables][0][0] == 4
+        assert tables[-1].end_line == 5
+        assert "More prose." in chunks[0].text and "|REG1 " not in chunks[0].text
+
+    def test_markdown_keeps_one_chunk_a_section(self, tmp_path: Path) -> None:
+        doc = tmp_path / "d.md"
+        doc.write_text("# Doc\n\ninclude::rows.adoc[]\n")
+        assert [
+            c.kind for c in MarkupParser.markdown().parse(doc, doc.read_text())
+        ] == ["document"]

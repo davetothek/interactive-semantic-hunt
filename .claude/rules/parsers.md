@@ -55,7 +55,10 @@ The `add-language` skill walks through it.
   true, and the parser divides a long section itself, between lines of the
   file, under the `limit` that `build_parsers()` sets. A table that fits is
   kept whole. A longer one divides between rows, and each piece repeats its
-  head and closes it. A figure reads as `Figure: alt text`.
+  head and closes it. A figure reads as `Figure: alt text`. An include
+  that brings in more than `INLINE_CHARS` is a `table` chunk of its own,
+  its table with it, and the section keeps its prose, with the directive
+  left in place, as another.
 - `ask` reads a chunk through `build_reader()`, which parses the file again,
   so a model reads the text the index embedded, includes resolved.
 - `tree_sitter.py` reads C and C++ as one parser, `cpp`, which owns `.h`. A
