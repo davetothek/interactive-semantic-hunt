@@ -278,6 +278,14 @@ something broke. This is that record, so a rule is never argued from taste.
   refused, the miss a label that names one section of two valid ones.
   Answer input rose from 9,839 to 16,203 tokens, output from 2,747 to
   4,257, 0.43 to 0.5 cents. Hence `_asciidoc.py`.
+- The miss was the cost of resolving includes into prose. A section of
+  1,109 characters of prose and four includes grew to 15,417, its first
+  chunk mostly register rows, and it fell from the top 50 to rank 141 for
+  the question its prose answers. With an include of more than 600
+  characters split into a `table` chunk of its own, the 25 questions
+  scored 21 of 21 cited, 21 of 21 answered, 4 of 4 refused, the register
+  question still found its 13 rows in the first search, and an answer read
+  9,388 input tokens and wrote 3,254, 0.45 cents. Hence `INLINE_CHARS`.
 - `refresh_indexes()` reads the configuration beside each tree again, and
   only *overrides* survive it, so a `cache_dir` set on the settings it is
   given is lost and the run writes to the default index. A test run that
