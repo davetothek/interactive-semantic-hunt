@@ -106,6 +106,10 @@ class SizeLimited:
         )
 
 
+# The kind of chunk an included file brings into a document. It does not
+# count toward a file's own chunks.
+INCLUDED_KIND = "table"
+
 # How many chunks one file may yield before it is read as generated.
 # The largest hand-written file measured, a header, split into 374
 # pieces. The generated register map yielded 32,768.
@@ -119,6 +123,10 @@ class CountLimited:
     that names the file still finds it, and say so once. Wrap outside
     ``SizeLimited``, so a large definition divided into pieces is
     counted as the pieces it became.
+
+    Count a file's own chunks, not the ``table`` chunks its includes
+    bring in. A hand-written specification of 39 sections and 900
+    includes yields about a thousand chunks, and it is not generated.
     """
 
     def __init__(
@@ -136,14 +144,15 @@ class CountLimited:
     def parse(self, path: Path, source: str) -> Sequence[Chunk]:
         """Parse, and collapse a file that yields more than the limit."""
         chunks = self._inner.parse(path, source)
-        if len(chunks) <= self._limit:
+        own = sum(1 for chunk in chunks if chunk.kind != INCLUDED_KIND)
+        if own <= self._limit:
             return chunks
         log.warning(
             "%s yields %d chunks, more than max_chunks=%d, so it is indexed as "
             "one chunk. A file that large is generated. Exclude it, or raise "
             "the limit.",
             path,
-            len(chunks),
+            own,
             self._limit,
         )
         text = source[: self._head]
