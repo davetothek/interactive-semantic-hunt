@@ -86,3 +86,60 @@ class TestAGeneratedFileCostsOneChunk:
     def test_a_limit_below_one_still_keeps_one(self) -> None:
         chunks, _source = parse(3, limit=0)
         assert len(chunks) == 1
+
+
+class TestIncludedTablesDoNotCount:
+    """A specification of 39 sections and 900 includes yielded 1,005 chunks.
+
+    966 were tables its includes brought in. Counted whole, it read as
+    generated, and the whole specification was indexed as one chunk.
+    """
+
+    class Spec:
+        language = "asciidoc"
+        suffixes = frozenset({".adoc"})
+
+        def __init__(self, sections: int, tables: int) -> None:
+            self.sections, self.tables = sections, tables
+
+        def parse(self, path, source):
+            def chunk(kind: str, n: int) -> Chunk:
+                return Chunk(path, f"text {n}", kind, "asciidoc", f"s{n}", n, n)
+
+            own = [chunk("section", n) for n in range(1, self.sections + 1)]
+            included = [chunk("table", n) for n in range(1, self.tables + 1)]
+            return own + included
+
+    def test_tables_beyond_the_limit_keep_the_file_whole(self) -> None:
+        chunks = CountLimited(self.Spec(39, 966), limit=1000).parse(
+            Path("/p/spec.adoc"), "= Spec\n"
+        )
+        assert len(chunks) == 1005
+
+    def test_own_sections_beyond_the_limit_still_collapse(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING):
+            chunks = CountLimited(self.Spec(11, 0), limit=10).parse(
+                Path("/p/spec.adoc"), "= Spec\n"
+            )
+        assert [c.kind for c in chunks] == ["file"]
+        assert "yields 11 chunks" in caplog.text
+
+    def test_the_warning_counts_own_chunks_only(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING):
+            CountLimited(self.Spec(11, 500), limit=10).parse(
+                Path("/p/spec.adoc"), "= Spec\n"
+            )
+        assert "yields 11 chunks" in caplog.text
+
+    def test_the_parser_marks_included_tables_with_the_kind_not_counted(
+        self, tmp_path: Path
+    ) -> None:
+        from ish.adapters.parser._limits import INCLUDED_KIND
+        from ish.adapters.parser.markup import MarkupParser
+
+        rows = "".join(f"|REG{n} |0x{n:04x} |a register\n" for n in range(40))
+        (tmp_path / "rows.adoc").write_text(rows)
+        doc = tmp_path / "d.adoc"
+        doc.write_text("= Doc\n\nProse.\n\n|===\ninclude::rows.adoc[]\n|===\n")
+        kinds = {c.kind for c in MarkupParser.asciidoc().parse(doc, doc.read_text())}
+        assert INCLUDED_KIND in kinds

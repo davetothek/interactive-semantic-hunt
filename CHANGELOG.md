@@ -8,6 +8,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixed
+
+- A long AsciiDoc specification with many includes no longer reads as a
+  generated file. `max_chunks` counts a file's own sections and not the
+  `table` chunks its includes bring in. One specification of 39
+  sections and 900 includes yielded 1,005 chunks, and was indexed as
+  one chunk under the default limit of 1000.
+
 ## 0.8.0 - 2026-11-02
 
 ### Added

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ish.adapters.parser._asciidoc import Expander
-from ish.adapters.parser._limits import MAX_CHUNK_CHARS
+from ish.adapters.parser._limits import INCLUDED_KIND, MAX_CHUNK_CHARS
 from ish.domain.chunk import Chunk
 
 # A fence is three or more backticks or tildes in Markdown, and four
@@ -151,7 +151,7 @@ class MarkupParser:
                 expanded,
                 first,
                 last,
-                kind="table",
+                kind=INCLUDED_KIND,
                 symbol=f"{symbol} (table)",
             )
         return chunks
