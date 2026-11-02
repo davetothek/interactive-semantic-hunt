@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.8.0 - 2026-11-02
+
 ### Added
 
 - `ish --brief "question"` answers in a sentence or two, as plain text
