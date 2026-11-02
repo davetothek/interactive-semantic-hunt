@@ -33,6 +33,22 @@ class TestForget:
         assert main(["--forget", str(indexed)]) == 0
         assert list((tmp_path / "idx").glob("*.db")) == []
 
+    def test_each_tree_under_the_path_is_named(
+        self, indexed: Path, tmp_path: Path, capsys
+    ) -> None:
+        below = indexed / "sub"
+        below.mkdir()
+        SqliteVectorStore(
+            tmp_path / "idx" / "sub.db", model_id="m", root=below.resolve()
+        ).close()
+        assert main(["--forget", str(indexed)]) == 0
+        assert list((tmp_path / "idx").glob("*.db")) == []
+        said = [line.split(":")[0] for line in capsys.readouterr().err.splitlines()]
+        assert said == [
+            f"Removed the index of {indexed.resolve()}",
+            f"Removed the index of {below.resolve()}",
+        ]
+
     def test_a_tree_without_an_index_is_an_error(
         self, indexed: Path, tmp_path: Path, caplog
     ) -> None:

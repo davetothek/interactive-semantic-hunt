@@ -726,28 +726,38 @@ def indexes_for(
     ]
 
 
-def forget_index(settings: Settings, path: Path) -> list[Path]:
-    """Remove the stored index of the tree at *path*. Return the files removed.
+def forget_index(settings: Settings, path: Path) -> dict[Path, list[Path]]:
+    """Remove the stored index of every tree at or under *path*.
 
-    Raise ``LookupError`` when no index describes the tree. Leave the
-    vectors where they are. A checkout at an older commit still needs
-    the vectors of text the main checkout has since changed, and a
-    vector costs a second of embedding to make again. Sweeping is a
-    separate act, through ``sweep_vectors()``.
+    Return the files removed, by tree. A worktree indexes the subtrees
+    that matter, not its top, so the path of a worktree has to reach the
+    indexes below it. Raise ``LookupError`` when no index describes a
+    tree there. Leave the vectors where they are. A checkout at an older
+    commit still needs the vectors of text the main checkout has since
+    changed, and a vector costs a second of embedding to make again.
+    Sweeping is a separate act, through ``sweep_vectors()``.
     """
 
     resolved = path.resolve()
     indexes = catalog(settings)
     known = indexes.entries()
-    entry = next((e for e in known if e.tree == resolved), None)
-    if entry is None:
-        raise LookupError(f"No stored index describes {resolved}.")
-    removed = indexes.forget(entry)
-    log.info("Removed the index of %s: %d file(s).", resolved, len(removed))
-    if entry.repository is not None:
+    entries = sorted(
+        (e for e in known if e.tree.is_relative_to(resolved)), key=lambda e: e.tree
+    )
+    if not entries:
+        raise LookupError(f"No stored index describes {resolved} or a tree under it.")
+    removed: dict[Path, list[Path]] = {}
+    for entry in entries:
+        removed[entry.tree] = indexes.forget(entry)
+        log.info(
+            "Removed the index of %s: %d file(s).",
+            entry.tree,
+            len(removed[entry.tree]),
+        )
+    for repository in sorted({e.repository for e in entries if e.repository}):
         log.info(
             "The vectors stay in %s. Sweep them on purpose with --sweep.",
-            indexes.shared_store_for(entry.repository),
+            indexes.shared_store_for(repository),
         )
     return removed
 
