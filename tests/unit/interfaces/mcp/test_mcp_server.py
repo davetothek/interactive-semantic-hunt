@@ -400,7 +400,7 @@ class TestOnlyQueryScopeIsOverridable:
     ) -> None:
         from ish.settings import query_scope_names
 
-        allowed = set(query_scope_names()) | {"query", "question", "path"}
+        allowed = set(query_scope_names()) | {"query", "question", "brief", "path"}
         assert self._properties(tools) <= allowed
 
     def test_search_offers_the_narrowing_options(self, tools: IshTools) -> None:
@@ -926,7 +926,7 @@ class TestAsk:
     @pytest.fixture()
     def model(self, monkeypatch) -> "TestAsk.Model":
         made = self.Model()
-        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: made)
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: made)
         return made
 
     def test_the_answer_carries_numbered_citations_with_links(
@@ -979,6 +979,26 @@ class TestAsk:
     def test_a_question_is_required(self, tools: IshTools) -> None:
         with pytest.raises(ValueError, match="question"):
             tools.ask({"question": "  "})
+
+    def test_brief_returns_the_short_answer_with_no_citations(
+        self, tools: IshTools, project: Path, stub_backend, monkeypatch
+    ) -> None:
+        import json
+
+        made = self.Model()
+        asked: list[bool] = []
+
+        def build(settings, *, brief=False):
+            asked.append(brief)
+            return made
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        reply = json.loads(
+            tools.ask({"question": "config", "path": str(project), "brief": True})
+        )
+        assert reply["answer"] == "It loads the config."
+        assert "citations" not in reply and "layout" not in reply
+        assert asked == [True]
 
     def test_no_model_set_is_a_tool_error(
         self, tools: IshTools, project: Path, stub_backend

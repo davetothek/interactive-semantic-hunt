@@ -26,6 +26,7 @@ from ish.interfaces import heartbeat
 from ish.interfaces.format import (
     NOT_COVERED_TEXT,
     display_path,
+    format_brief,
     layout_data,
     number_citations,
     render,
@@ -306,7 +307,8 @@ class IshTools:
         root = self._resolve(arguments.get("path"))
         session = self._session_for(root)
         self._keep_current(root, session)
-        answer = session.ask(question, **self._narrowing(arguments))
+        brief = bool(arguments.get("brief"))
+        answer = session.ask(question, brief=brief, **self._narrowing(arguments))
 
         def described(chunk: Chunk, number: int | None = None) -> dict[str, Any]:
             entry: dict[str, Any] = {} if number is None else {"n": number}
@@ -331,6 +333,9 @@ class IshTools:
             "turns": answer.turns,
             "searches": list(answer.searches),
         }
+        if brief:
+            reply["answer"] = format_brief(answer)
+            return json.dumps(reply, ensure_ascii=False)
         if answer.covered:
             text, cited = number_citations(answer)
             layout, _ = layout_data(answer)
@@ -465,6 +470,13 @@ class IshTools:
                             "description": "The question, in plain language.",
                         },
                         "path": _PATH_PROPERTY,
+                        "brief": {
+                            "type": "boolean",
+                            "description": (
+                                "Answer in a sentence or two with no citations. "
+                                "Ask again without it for the sources."
+                            ),
+                        },
                         "lang": _QUERY_PROPERTIES["lang"],
                         "under": _QUERY_PROPERTIES["under"],
                         "type": _QUERY_PROPERTIES["type"],

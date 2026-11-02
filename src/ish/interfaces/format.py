@@ -198,6 +198,28 @@ def format_answer(
     return "\n".join(lines)
 
 
+def format_brief(answer: Answer) -> str:
+    """Return the short answer alone, as plain text with no citations.
+
+    A brief answer is for a reader who wants the fact and not the proof,
+    such as a prompt or a script. The same question without brevity
+    gives the sources. For a question the documents do not cover, say
+    so in one line.
+    """
+    if not answer.covered:
+        return NOT_COVERED_TEXT.split(".")[0] + "."
+    summary = next((b for b in answer.blocks if b.kind == "summary"), None)
+    parts = summary.parts if summary else answer.parts
+    text = number_citations(
+        Answer(parts=tuple(parts), covered=True, sources=()), mark=_unmarked
+    )[0]
+    return _fill(text)
+
+
+def _unmarked(number: int) -> str:
+    return ""
+
+
 def layout_data(answer: Answer) -> tuple[list[dict[str, object]], list[Chunk]]:
     """Return the layout of an answer as plain data, and the cited chunks.
 

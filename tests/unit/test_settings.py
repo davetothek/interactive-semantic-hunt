@@ -31,6 +31,7 @@ NOT_OPTIONS = {
     "path",
     "interactive",
     "ask",
+    "brief",
     CONFIG_OPTION,
 }
 

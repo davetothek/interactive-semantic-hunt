@@ -139,6 +139,17 @@ closest sources, and exits 2. It does not answer from anything else. The
 filter words work in a question as in a query: `--ask "type:doc how is X
 done"`.
 
+For the fact alone, ask with `--brief`. The model writes a sentence or two
+and nothing else, and ish prints it as plain text with no citations, which
+suits a script or a shell prompt:
+
+```sh
+ish --brief "how long is the watchdog period while streaming" docs/
+```
+
+Ask again without `--brief` for the sources. A brief answer costs about a
+third of the output tokens and half the time.
+
 Answers are off until you choose a model. See
 [Answer questions](configuration.md#answer-questions). A plain search never
 builds a language model and sends no text anywhere.
@@ -172,6 +183,7 @@ builds a language model and sends no text anywhere.
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
 | `--ask` | Answer the query as a question, with the sources it cites |
+| `--brief` | Answer the query in a sentence or two, with no sources |
 | `--language-model NAME` | Language model backend that writes answers: `anthropic`, `ollama`, `claude-cli` |
 | `--answer-model MODEL` | Model that backend runs. Required, there is no default |
 | `--allowed-language-models NAME ...` | Backends that may receive text. Empty allows none |

@@ -211,7 +211,8 @@ refused those four. An answer cost about 0.4 cents against 0.3.
 The instructions a language model receives are text files that ship with
 ish: `answer.md` for an answer, `answer_cited.md` for the `anthropic`
 answer with native citations, `step.md` for a turn that may ask for
-searches, and `select.md` for the rerank. Copy the ones to change into a
+searches, `select.md` for the rerank, and `brief.md`, which `--brief` adds
+to the instruction that writes the answer. Copy the ones to change into a
 directory, edit them, and point `prompt_dir` at it:
 
 ```toml

@@ -56,7 +56,7 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _model(monkeypatch: pytest.MonkeyPatch, model: FakeModel) -> None:
-    monkeypatch.setattr(bootstrap, "build_language_model", lambda settings: model)
+    monkeypatch.setattr(bootstrap, "build_language_model", lambda settings, **_: model)
 
 
 class TestAsk:
@@ -108,7 +108,7 @@ class TestAsk:
     def test_a_model_error_is_reported(
         self, project: Path, monkeypatch, caplog
     ) -> None:
-        def broken(settings):
+        def broken(settings, **_):
             raise LanguageModelError("The Anthropic API did not answer within 5 s.")
 
         monkeypatch.setattr(bootstrap, "build_language_model", broken)
@@ -120,7 +120,7 @@ class TestAsk:
     ) -> None:
         """Without --ask the word "ask" is a query, as it always was."""
 
-        def refuse(settings):
+        def refuse(settings, **_):
             raise AssertionError("a search built a language model")
 
         monkeypatch.setattr(bootstrap, "build_language_model", refuse)
@@ -255,3 +255,44 @@ class TestFollowUpSearchesStand:
         _model(monkeypatch, Agent())
         assert main(["--ask", "q", str(project), *FLAGS, "--ask-turns", "2"]) == 0
         assert notes == ["Searching again: the reset command"]
+
+
+class TestBrief:
+    def test_brief_prints_the_short_answer_alone(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        from ish.application.ports.language_model import Block, Passage, Reply
+
+        kinds: list[bool] = []
+
+        class Model:
+            model_name = "m"
+
+            def answer(self, question, sources):
+                return Reply(
+                    passages=(Passage("It resets the board.", ("1",)),),
+                    covered=True,
+                    blocks=(
+                        Block(
+                            "summary",
+                            passages=(Passage("It resets the board.", ("1",)),),
+                        ),
+                    ),
+                )
+
+        def build(settings, *, brief=False):
+            kinds.append(brief)
+            return Model()
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        code = main(["--brief", "what does the watchdog do", str(project), *FLAGS])
+        assert code == 0
+        assert capsys.readouterr().out == "It resets the board.\n"
+        assert kinds == [True]
+
+    def test_brief_with_nothing_covered_exits_2(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        _model(monkeypatch, FakeModel(covered=False))
+        assert main(["--brief", "what is the MTBF", str(project), *FLAGS]) == 2
+        assert capsys.readouterr().out == "The documents do not answer this.\n"

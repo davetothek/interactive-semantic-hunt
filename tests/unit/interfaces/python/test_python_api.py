@@ -77,7 +77,7 @@ class TestReading:
     ) -> None:
         """A search sends no text anywhere but the embedder."""
 
-        def refuse(settings):
+        def refuse(settings, **_):
             raise AssertionError("a search built a language model")
 
         monkeypatch.setattr(bootstrap, "build_language_model", refuse)
@@ -390,7 +390,7 @@ class TestAsk:
         built: list[object] = []
         model = self.Model()
 
-        def build(settings):
+        def build(settings, **_):
             built.append(settings)
             return model
 
@@ -407,7 +407,7 @@ class TestAsk:
         self, project: Path, offline, monkeypatch
     ) -> None:
         model = self.Model()
-        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
         with _ish(project) as ish:
             ish.ask("configure", type=["doc"])
         assert model.sources
@@ -417,7 +417,7 @@ class TestAsk:
         self, project: Path, offline, monkeypatch
     ) -> None:
         model = self.Model()
-        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
         with _ish(project) as ish:
             ish.ask("lang:python configure")
         assert model.sources
@@ -431,7 +431,7 @@ class TestAsk:
         for n in range(api.ASK_LIMIT + 3):
             (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
         model = self.Model()
-        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: model)
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
         with _ish(project) as ish:
             ish.ask("function")
         assert len(model.sources) == api.ASK_LIMIT
@@ -489,7 +489,7 @@ class TestAskWithRerank:
                 shown.append(len(candidates))
                 return Selection(ids=tuple(c.id for c in candidates)[:limit])
 
-        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: Model())
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: Model())
         monkeypatch.setattr(bootstrap, "build_reranker", lambda s: Model())
         settings = Settings(no_cache=True, git=False, rerank_candidates=14)
         with Ish(project, settings=settings) as ish:
@@ -513,7 +513,7 @@ class TestAskTurns:
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
         agent = Agent()
-        monkeypatch.setattr(bootstrap, "build_language_model", lambda s: agent)
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: agent)
         settings = Settings(no_cache=True, git=False, ask_turns=2)
         with Ish(project, settings=settings) as ish:
             assert ish.ask("configure").turns == 1
@@ -533,3 +533,30 @@ class TestKindOf:
             assert ish.kind_of(chunk("docs/guide.md", "markdown")) == "doc"
             assert ish.kind_of(chunk("tests/test_app.py", "python")) == "test"
             assert ish.kind_of(chunk("src/app.py", "python")) == "code"
+
+
+class TestAskBrief:
+    def test_brief_and_full_answers_use_their_own_models(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply
+
+        built: list[bool] = []
+
+        class Model:
+            def __init__(self, brief: bool) -> None:
+                self.model_name = "brief" if brief else "full"
+
+            def answer(self, question, sources):
+                return Reply(passages=(Passage("ok", ("1",)),), covered=True)
+
+        def build(settings, *, brief=False):
+            built.append(brief)
+            return Model(brief)
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        with _ish(project) as ish:
+            assert ish.ask("configure", brief=True).model == "brief"
+            assert ish.ask("configure").model == "full"
+            assert ish.ask("configure", brief=True).model == "brief"
+        assert built == [True, False]
