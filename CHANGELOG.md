@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.8.1 - 2026-11-02
+
 ### Fixed
 
 - A long AsciiDoc specification with many includes no longer reads as a
