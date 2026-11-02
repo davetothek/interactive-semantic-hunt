@@ -11,7 +11,12 @@ from ish import bootstrap
 from ish.application.answer import FOLLOWING, AnswerStep
 from ish.interfaces.busy import ProgressLine, Ticker
 from ish.interfaces.cli.args import CliArgs
-from ish.interfaces.format import format_answer, format_selection, render
+from ish.interfaces.format import (
+    format_answer,
+    format_brief,
+    format_selection,
+    render,
+)
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
 
@@ -55,7 +60,11 @@ def _run_ask(args: CliArgs) -> int:
         try:
             ish.index(on_progress=line.show)
             line.clear()
-            answer = ish.ask(args.query, on_step=lambda step: _report(ticker, step))
+            answer = ish.ask(
+                args.query,
+                on_step=lambda step: _report(ticker, step),
+                brief=args.brief,
+            )
         except KeyboardInterrupt:
             # Ctrl-C reaches a claude child as well, which stops with it.
             # Leave a clean line and the exit code a shell expects.
@@ -65,7 +74,11 @@ def _run_ask(args: CliArgs) -> int:
             return 130
         finally:
             ticker.stop()
-        text = format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
+        text = (
+            format_brief(answer)
+            if args.brief
+            else format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
+        )
         sys.stdout.write(f"{text}\n")
     return 0 if answer.covered else 2
 

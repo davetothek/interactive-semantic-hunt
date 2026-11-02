@@ -222,14 +222,15 @@ def build_embedder(settings: Settings) -> Embedder:
     return backend.from_option(settings.model, context_tokens=context_window(settings))
 
 
-def build_language_model(settings: Settings) -> LanguageModel:
+def build_language_model(settings: Settings, *, brief: bool = False) -> LanguageModel:
     """Construct the language model that writes answers.
 
     Build a backend only when ``allowed_language_models`` names it. A
     backend receives the text of the documents, so there is no default
     and no fallback: an unset, unknown, or disallowed backend raises.
+    With *brief*, its instructions ask for the short answer alone.
     """
-    return _language_model(settings, settings.answer_model)
+    return _language_model(settings, settings.answer_model, brief=brief)
 
 
 def build_reranker(settings: Settings) -> LanguageModel | None:
@@ -244,7 +245,9 @@ def build_reranker(settings: Settings) -> LanguageModel | None:
     return _language_model(settings, settings.rerank_model)
 
 
-def _language_model(settings: Settings, model: str) -> LanguageModel:
+def _language_model(
+    settings: Settings, model: str, *, brief: bool = False
+) -> LanguageModel:
     name = settings.language_model
     if not name:
         raise LanguageModelError(
@@ -263,7 +266,8 @@ def _language_model(settings: Settings, model: str) -> LanguageModel:
         raise LanguageModelError(
             f"Unknown language model {name!r}. Valid backends: {valid}"
         ) from None
-    return backend(model, prompts=build_prompts(settings))
+    prompts = build_prompts(settings)
+    return backend(model, prompts=prompts.briefly() if brief else prompts)
 
 
 def build_prompts(settings: Settings) -> Prompts:

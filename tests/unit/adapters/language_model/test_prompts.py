@@ -134,3 +134,42 @@ def test_the_shipped_answer_keeps_tables_narrow() -> None:
     assert "narrow enough to read in a terminal" in answer
     assert answer.count("\n\n") == 1
     assert load().step.startswith(answer + " ")
+
+
+class TestBrief:
+    def test_brief_follows_each_instruction_that_answers(self) -> None:
+        loaded = load()
+        brief = loaded.briefly()
+        assert brief.answer == f"{loaded.answer}\n\n{loaded.brief}"
+        assert brief.answer_cited == f"{loaded.answer_cited}\n\n{loaded.brief}"
+        assert brief.step == f"{loaded.step}\n\n{loaded.brief}"
+        assert brief.select == loaded.select
+
+    def test_the_shipped_brief_keeps_to_the_summary(self) -> None:
+        assert "summary" in load().brief
+        assert "Leave sections and gaps empty" in load().brief
+
+    def test_an_own_brief_replaces_the_shipped_one(self, tmp_path: Path) -> None:
+        (tmp_path / "brief.md").write_text("One sentence.")
+        assert load(tmp_path).briefly().answer.endswith("\n\nOne sentence.")
+
+
+def test_bootstrap_builds_a_brief_backend_with_brief_instructions(monkeypatch) -> None:
+    from ish import bootstrap
+    from ish.settings import Settings
+
+    given: list[Prompts] = []
+
+    def stub(model: str, *, prompts: Prompts):
+        given.append(prompts)
+        return object()
+
+    monkeypatch.setitem(bootstrap.LANGUAGE_MODELS, "stub", stub)
+    settings = Settings(
+        language_model="stub", answer_model="m", allowed_language_models=("stub",)
+    )
+    bootstrap.build_language_model(settings)
+    bootstrap.build_language_model(settings, brief=True)
+    plain, brief = given
+    assert plain.answer == load().answer
+    assert brief.answer == load().briefly().answer

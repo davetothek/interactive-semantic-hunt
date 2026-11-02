@@ -3,7 +3,8 @@
 Each instruction is one file in the ``prompts`` directory beside this
 module: ``answer.md`` for an answer in JSON, ``answer_cited.md`` for an
 answer with native citations, ``step.md`` for a turn that may ask for
-searches, and ``select.md`` for a rerank. A directory that an operator
+searches, ``select.md`` for a rerank, and ``brief.md``, which a brief
+answer adds to the instruction that writes it. A directory that an operator
 names holds files of the same names, and each one it holds replaces the
 default. A file it does not hold keeps the default.
 
@@ -20,7 +21,7 @@ with the parser, and an instruction that changes one must change both.
 import logging
 import string
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from ish.application.ports.language_model import SEARCHES_A_TURN, LanguageModelE
 
 log = logging.getLogger(__name__)
 
-NAMES = ("answer", "answer_cited", "step", "select")
+NAMES = ("answer", "answer_cited", "step", "select", "brief")
 
 # The reply word a backend with native citations gives when the
 # documents do not answer. It cannot reply in JSON beside its citations.
@@ -46,6 +47,20 @@ class Prompts:
     answer_cited: str
     step: str
     select: str
+    brief: str = ""
+
+    def briefly(self) -> "Prompts":
+        """Return these instructions with ``brief.md`` after each that answers.
+
+        A brief answer is the same call told to keep to its short
+        answer, so the model writes no section it would only drop.
+        """
+        return replace(
+            self,
+            answer=f"{self.answer}\n\n{self.brief}",
+            answer_cited=f"{self.answer_cited}\n\n{self.brief}",
+            step=f"{self.step}\n\n{self.brief}",
+        )
 
 
 def load(directory: Path | None = None, **values: int | str) -> Prompts:

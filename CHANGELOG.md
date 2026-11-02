@@ -8,6 +8,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `ish --brief "question"` answers in a sentence or two, as plain text
+  with no citations, for a script or a shell prompt. The model is told
+  to write the short answer alone, so it writes about a third of the
+  output tokens of a full answer, in about half the time. The `ask` MCP
+  tool takes `brief` too. `brief.md` holds the instruction, and
+  `prompt_dir` can replace it.
+
 ## 0.7.0 - 2026-10-31
 
 ### Changed

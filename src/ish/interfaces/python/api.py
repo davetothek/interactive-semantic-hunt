@@ -80,7 +80,8 @@ class Ish:
         self._indexed = False
         self._vocabulary: bootstrap.Vocabulary | None = None
         self._identity: bootstrap.Identity | None = None
-        self._model: LanguageModel | None = None
+        self._models: dict[bool, LanguageModel] = {}
+        self._built = False
         self._reranker: LanguageModel | None = None
         self._reader: Callable[[Chunk], str | None] = read_lines
         self._links: LinkResolver | None = None
@@ -273,6 +274,7 @@ class Ish:
         under: str = "",
         type: Sequence[str] = (),
         on_step: AnswerCallback | None = None,
+        brief: bool = False,
     ) -> Answer:
         """Answer *question* from the chunks a search of this tree returns.
 
@@ -281,12 +283,17 @@ class Ish:
         model on the first question, so a session that only searches
         never builds one. Raise ``LanguageModelError`` when no model is
         set or allowed. Report each step to *on_step*, because a model
-        call takes seconds.
+        call takes seconds. With *brief*, the model writes the short answer
+        alone, which costs a fraction of the output.
         """
-        if self._model is None:
-            self._model = bootstrap.build_language_model(self.settings)
+        if brief not in self._models:
+            self._models[brief] = bootstrap.build_language_model(
+                self.settings, brief=brief
+            )
+        if self._reranker is None and not self._built:
             self._reranker = bootstrap.build_reranker(self.settings)
             self._reader = bootstrap.build_reader(self.settings)
+            self._built = True
         # A rerank model sorts a wide search cheaply from the start of each
         # chunk. Without one, the best chunks as ranked are read in full.
         wide = self._reranker is not None
@@ -295,7 +302,7 @@ class Ish:
             search=lambda text: self.search(
                 text, limit, lang=lang, under=under, type=type
             ),
-            model=self._model,
+            model=self._models[brief],
             reranker=self._reranker,
             pick=ASK_LIMIT,
             turns=self.settings.ask_turns,

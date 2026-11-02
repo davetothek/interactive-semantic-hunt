@@ -460,3 +460,59 @@ def test_a_wrapped_heading_path_never_starts_a_quote() -> None:
     assert len([line for line in sources if line.startswith("    ")]) > 2
     assert not any(line.lstrip().startswith(">") for line in sources)
     assert "Overview › Function Description" in "\n".join(sources)
+
+
+class TestFormatBrief:
+    """A brief answer is the short answer alone, with no citations."""
+
+    @staticmethod
+    def _chunk():
+        from ish.domain.chunk import Chunk
+
+        return Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+
+    def test_the_summary_alone_with_no_markers(self) -> None:
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart
+        from ish.interfaces.format import format_brief
+
+        a = self._chunk()
+        answer = Answer(
+            parts=(),
+            covered=True,
+            sources=(a,),
+            blocks=(
+                AnswerBlock("summary", parts=(AnswerPart("It is 49 ms.", (a,)),)),
+                AnswerBlock(
+                    "prose", heading="More", parts=(AnswerPart("Detail.", (a,)),)
+                ),
+            ),
+        )
+        assert format_brief(answer) == "It is 49 ms."
+
+    def test_an_answer_with_no_layout_is_its_text(self) -> None:
+        from ish.application.answer import Answer, AnswerPart
+        from ish.interfaces.format import format_brief
+
+        a = self._chunk()
+        answer = Answer(
+            parts=(AnswerPart("First.", (a,)), AnswerPart("Second.")),
+            covered=True,
+            sources=(a,),
+        )
+        assert format_brief(answer) == "First. Second."
+
+    def test_a_long_answer_wraps(self) -> None:
+        from ish.application.answer import Answer, AnswerBlock, AnswerPart
+        from ish.interfaces.format import WIDTH, format_brief
+
+        long = AnswerBlock("summary", parts=(AnswerPart("word " * 40),))
+        out = format_brief(Answer(parts=(), covered=True, sources=(), blocks=(long,)))
+        assert all(len(line) <= WIDTH for line in out.split("\n"))
+        assert "\n" in out
+
+    def test_not_covered_is_one_line(self) -> None:
+        from ish.application.answer import Answer
+        from ish.interfaces.format import format_brief
+
+        answer = Answer(parts=(), covered=False, sources=(self._chunk(),))
+        assert format_brief(answer) == "The documents do not answer this."
