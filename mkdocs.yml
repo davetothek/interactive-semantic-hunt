@@ -14,6 +14,7 @@ nav:
   - Clients: clients.md
   - Configure: configuration.md
   - Index: indexing.md
+  - How it works: how-it-works.md
   - Extend: extending.md
 
 theme:
@@ -40,7 +41,11 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   # The home page includes README.md, so the two cannot drift apart.
   - pymdownx.snippets:
       base_path: ["."]

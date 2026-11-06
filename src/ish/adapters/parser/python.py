@@ -4,6 +4,7 @@ Satisfy the ``Parser`` port defined in ``ish.application.ports.parser``.
 """
 
 import ast
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -24,7 +25,11 @@ class PythonParser:
         decides how to report the failure.
         """
         try:
-            tree = ast.parse(source, filename=str(path))
+            # A SyntaxWarning in the parsed file is for its author, not
+            # for the person who indexes it.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(source, filename=str(path))
         except SyntaxError as exc:
             raise ParseError(str(exc)) from exc
         lines = source.splitlines(keepends=True)

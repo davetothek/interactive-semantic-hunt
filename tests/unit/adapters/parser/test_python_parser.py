@@ -1,5 +1,6 @@
 """Test the PythonParser adapter against known source strings."""
 
+import warnings
 from pathlib import Path
 
 import pytest
@@ -216,6 +217,28 @@ class TestSyntaxErrorHandling:
         with pytest.raises(ParseError) as exc_info:
             parser.parse(DUMMY_PATH, "def broken(:\n")
         assert isinstance(exc_info.value.__cause__, SyntaxError)
+
+
+class TestParsedFileWarningsStayQuiet:
+    """A ``SyntaxWarning`` in a parsed file belongs to its author. An
+    index run of a documentation tree printed 13 of them for one helper
+    script, because ``ast.parse`` raises them for an invalid escape."""
+
+    SOURCE = 'import re\n\ndef match(line):\n    return re.match("\\[x\\]", line)\n'
+
+    def test_invalid_escape_does_not_warn(self, parser: PythonParser) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            chunks = parser.parse(DUMMY_PATH, self.SOURCE)
+        assert caught == []
+        assert [c.symbol for c in chunks] == ["match"]
+
+    def test_warnings_outside_the_parse_still_show(self, parser: PythonParser) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parser.parse(DUMMY_PATH, self.SOURCE)
+            warnings.warn("after the parse", SyntaxWarning, stacklevel=1)
+        assert [str(w.message) for w in caught] == ["after the parse"]
 
 
 # ------------------------------------------------------------------
