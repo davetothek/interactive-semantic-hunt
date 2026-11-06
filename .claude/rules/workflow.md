@@ -25,6 +25,7 @@
 ## Pull requests
 
 - Do not open a pull request unless the user asks. Use `/pr` when they do.
+  `/release` opens and merges its own.
 - Reference the issues the branch closes. Describe what was measured.
 
 ## Releases
@@ -32,8 +33,11 @@
 - A version bump is its own pull request from a `release/X.Y.Z` or
   `hotfix/X.Y.Z` branch, merged with a merge commit. Never bundle it with
   other work. A hook blocks a bump on any other branch.
-- Pushing a tag publishes to PyPI. Only the user pushes a tag. Use
-  `/release`, which stops and prints the commands.
+- Pushing a tag publishes to PyPI. Only `/release` pushes a tag, and only
+  the user starts `/release`. It opens the release pull request, merges it
+  when CI passes, and pushes the tag.
+- `guard_git` allows one tag push: a single `vX.Y.Z` to `origin`, whose
+  commit is on `origin/main` and whose `pyproject.toml` declares `X.Y.Z`.
 
 ## Dependencies
 
