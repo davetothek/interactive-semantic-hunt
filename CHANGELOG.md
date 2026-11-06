@@ -13,6 +13,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - `ish-mcp --http` no longer warns about `ISH_MCP_TOKEN` at start. The
   settings read every `ISH_*` variable as an option, and logged the
   token as an unknown one three times beside a token that worked.
+- An index run no longer prints the `SyntaxWarning`s of the Python files
+  it reads. A warning such as an invalid escape belongs to the author of
+  the file. One helper script in a documentation tree printed 13.
 
 ## 0.8.1 - 2026-11-02
 
