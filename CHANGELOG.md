@@ -17,6 +17,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   plain search and `-i` still read the local tree.
 - The `ask` tool of the MCP server adds the answer as Markdown, the text
   `ish --ask` prints.
+- `contrib/nvim/ish_link.lua` opens the source of an answer in Neovim, at
+  the lines its link names. It reads a file URI from disk and an https
+  link with curl, so the links of a server with `link_base` open too.
 
 ## 0.8.2 - 2026-11-06
 
