@@ -2,9 +2,13 @@
 
 PreToolUse on Bash. Three groups of commands are judged:
 
-- A push to the default branch, a push of a tag, and a forced push are
-  denied. The first breaks the repository's own rule, the second
-  publishes to PyPI, and the third rewrites history.
+- A push to the default branch and a forced push are denied. The first
+  breaks the repository's own rule, and the second rewrites history.
+- A push of a tag publishes to PyPI. It is allowed for one release tag
+  ``vX.Y.Z`` alone, when its commit is on ``origin/main`` and its
+  ``pyproject.toml`` declares ``X.Y.Z``. That is the last step of
+  ``/release``, after its pull request merged. Every other tag push is
+  denied, and so is one the hook cannot check.
 - A command that discards uncommitted work is denied. A model once
   reverted its own unfinished rewrite with ``git checkout -- file``.
 - A command that adds a dependency asks first. The repository's ground
@@ -14,8 +18,10 @@ A compound command is judged one segment at a time, so ``cd x && git
 push origin main`` is still a push to main.
 """
 
+import os
 import re
 import shlex
+import subprocess
 import sys
 
 from _common import Decision, allow, answer, ask, deny, read_input
@@ -26,6 +32,22 @@ PROTECTED_BRANCHES = frozenset({"main", "master"})
 
 # A push target that names a tag. Tags in this repository are versions.
 _TAG_LIKE = re.compile(r"^(refs/tags/|v\d)")
+
+# The one tag a push may carry: a release, as ``/release`` names it.
+_RELEASE_TAG = re.compile(r"^(?:refs/tags/)?(v(\d+\.\d+\.\d+))$")
+
+# The version a ``pyproject.toml`` declares.
+_VERSION_LINE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
+
+RELEASE_REMOTE = "origin"
+RELEASED_FROM = "origin/main"
+
+# Seconds one git query may take before the tag counts as unchecked.
+GIT_TIMEOUT = 5
+
+# A command that moves the shell to another directory. After it, the
+# hook cannot tell which repository a tag push reads.
+_MOVES = frozenset({"cd", "pushd", "popd"})
 
 # A short option cluster that carries ``-f``, such as ``-f`` or ``-fu``.
 _FORCE_SHORT = re.compile(r"^-[a-zA-Z]*f[a-zA-Z]*$")
@@ -46,12 +68,16 @@ DEPENDENCY_COMMANDS = (
 )
 
 
-def judge(command: str) -> Decision:
-    """Return the decision for one Bash command line."""
+def judge(command: str, cwd: str | None = None) -> Decision:
+    """Return the decision for one Bash command line run in *cwd*."""
+    where = cwd or os.getcwd()
+    moved = False
     worst = allow()
     for segment in _SEGMENT.split(command):
-        verdict = _judge_segment(segment)
+        verdict = _judge_segment(segment, None if moved else where)
         worst = _stricter(worst, verdict)
+        tokens = _tokens(segment)
+        moved = moved or bool(tokens and tokens[0] in _MOVES)
     return worst
 
 
@@ -61,7 +87,8 @@ def _stricter(first: Decision, second: Decision) -> Decision:
     return second if order[second.kind] > order[first.kind] else first
 
 
-def _judge_segment(segment: str) -> Decision:
+def _judge_segment(segment: str, cwd: str | None) -> Decision:
+    """Judge one command. A *cwd* of None means the directory is unknown."""
     tokens = _tokens(segment)
     while tokens and _ASSIGNMENT.match(tokens[0]):
         tokens = tokens[1:]
@@ -82,7 +109,8 @@ def _judge_segment(segment: str) -> Decision:
     subcommand, args = rest[0], rest[1:]
 
     if subcommand == "push":
-        return _judge_push(args)
+        options = tokens[1 : len(tokens) - len(rest)]
+        return _judge_push(args, _repository(options, cwd))
     if subcommand == "checkout":
         return _judge_checkout(args)
     if subcommand == "restore":
@@ -96,11 +124,14 @@ def _judge_segment(segment: str) -> Decision:
     return allow()
 
 
-def _judge_push(args: list[str]) -> Decision:
+def _judge_push(args: list[str], repository: str | None) -> Decision:
     if "--force" in args or any(_FORCE_SHORT.match(a) for a in args):
         return deny("git push --force rewrites history. Push without it.")
     if "--tags" in args or "--follow-tags" in args:
-        return deny("Pushing a tag publishes to PyPI. The user pushes tags.")
+        return deny(
+            "Pushing tags publishes to PyPI. "
+            f"Push one release tag alone: git push {RELEASE_REMOTE} vX.Y.Z"
+        )
 
     positional = [a for a in args if not a.startswith("-")]
     for target in positional[1:]:
@@ -111,11 +142,66 @@ def _judge_push(args: list[str]) -> Decision:
                 f"Pushing to {destination} is not allowed. Push a branch and open a PR."
             )
         if _TAG_LIKE.match(destination):
-            return deny("Pushing a tag publishes to PyPI. The user pushes tags.")
+            return _judge_tag_push(positional, repository)
 
     if any(a.startswith("--force-with-lease") for a in args):
         return ask("a lease push still rewrites the branch on the remote")
     return allow()
+
+
+def _judge_tag_push(positional: list[str], repository: str | None) -> Decision:
+    """Allow a push of one merged release tag. Deny every other tag push."""
+    if len(positional) != 2 or positional[0] != RELEASE_REMOTE:
+        return deny(
+            "Pushing a tag publishes to PyPI. "
+            f"Push one release tag alone: git push {RELEASE_REMOTE} vX.Y.Z"
+        )
+    found = _RELEASE_TAG.match(positional[1])
+    if found is None:
+        return deny(f"{positional[1]} is not a release tag vX.Y.Z.")
+    tag, version = found.groups()
+    if repository is None:
+        return deny("Cannot tell which repository the tag push reads. Drop the cd.")
+
+    commit = _git(repository, "rev-parse", "--verify", "--quiet", f"{tag}^{{commit}}")
+    if commit is None:
+        return deny(f"Cannot find the tag {tag} in {repository}.")
+    if _git(repository, "merge-base", "--is-ancestor", commit, RELEASED_FROM) is None:
+        return deny(
+            f"{tag} is not on {RELEASED_FROM}. Merge the release pull request, "
+            "then fetch origin main."
+        )
+    pyproject = _git(repository, "show", f"{commit}:pyproject.toml")
+    declared = _VERSION_LINE.search(pyproject or "")
+    if declared is None or declared.group(1) != version:
+        return deny(f"pyproject.toml at {tag} does not declare version {version}.")
+    return allow()
+
+
+def _git(repository: str, *args: str) -> str | None:
+    """Return what git prints, stripped, or None when it fails or cannot run."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", repository, *args],
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _repository(options: list[str], cwd: str | None) -> str | None:
+    """Return the directory git runs in: *cwd*, moved by each ``-C``."""
+    if cwd is None:
+        return None
+    where = cwd
+    for index, option in enumerate(options[:-1]):
+        if option == "-C":
+            where = os.path.join(where, options[index + 1])
+    return where
 
 
 def _judge_checkout(args: list[str]) -> Decision:
@@ -163,7 +249,8 @@ def main() -> int:
     command = data.get("tool_input", {}).get("command", "")
     if not isinstance(command, str):
         return 0
-    return answer(judge(command), HOOK)
+    cwd = data.get("cwd")
+    return answer(judge(command, cwd if isinstance(cwd, str) else None), HOOK)
 
 
 if __name__ == "__main__":

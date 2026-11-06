@@ -23,9 +23,9 @@ HOOK = Path(guard_git.__file__)
         ("git push origin feature/x", ALLOW, ""),
         ("git push -u origin claude/branch", ALLOW, ""),
         ("git push", ALLOW, ""),
-        # Pushing a tag publishes.
-        ("git push origin v0.2.0", DENY, "PyPI"),
-        ("git push origin refs/tags/v1.0.0", DENY, "PyPI"),
+        # Pushing a tag publishes. Outside a repository no tag can be checked.
+        ("git push origin v0.2.0", DENY, "cannot find the tag"),
+        ("git push origin refs/tags/v1.0.0", DENY, "cannot find the tag"),
         ("git push --tags", DENY, "PyPI"),
         ("git push --follow-tags origin main", DENY, ""),
         ("git tag v0.2.0", ALLOW, ""),
@@ -66,8 +66,8 @@ HOOK = Path(guard_git.__file__)
         ("", ALLOW, ""),
     ],
 )
-def test_one_command(command: str, kind: str, why: str) -> None:
-    decision = guard_git.judge(command)
+def test_one_command(command: str, kind: str, why: str, tmp_path: Path) -> None:
+    decision = guard_git.judge(command, str(tmp_path))
     assert decision.kind == kind, decision.reason
     assert why.lower() in decision.reason.lower()
 
@@ -147,3 +147,122 @@ class TestProcess:
         )
         assert result.returncode == 0
         assert result.stdout == ""
+
+
+def _git(where: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(where), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _commit(where: Path, version: str) -> None:
+    (where / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+    _git(where, "add", "pyproject.toml")
+    _git(where, "commit", "-q", "-m", f"Release {version}")
+
+
+@pytest.fixture
+def released(tmp_path: Path) -> Path:
+    """Return a clone whose origin/main holds the commit tagged v1.2.3."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "-q", str(origin), str(clone))
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    _git(clone, "switch", "-q", "-c", "main")
+    _commit(clone, "1.2.3")
+    _git(clone, "tag", "v1.2.3")
+    _git(clone, "push", "-q", "origin", "main")
+    _git(clone, "fetch", "-q", "origin")
+    return clone
+
+
+class TestReleaseTagPush:
+    """A release tag on origin/main may be pushed. Nothing else that tags."""
+
+    def test_merged_release_tag_is_allowed(self, released: Path) -> None:
+        decision = guard_git.judge("git push origin v1.2.3", str(released))
+        assert decision.kind == ALLOW, decision.reason
+
+    def test_full_tag_ref_is_allowed(self, released: Path) -> None:
+        decision = guard_git.judge("git push origin refs/tags/v1.2.3", str(released))
+        assert decision.kind == ALLOW, decision.reason
+
+    def test_tag_not_on_main_is_denied(self, released: Path) -> None:
+        _git(released, "switch", "-q", "-c", "release/1.2.4")
+        _commit(released, "1.2.4")
+        _git(released, "tag", "v1.2.4")
+        decision = guard_git.judge("git push origin v1.2.4", str(released))
+        assert decision.kind == DENY
+        assert "not on origin/main" in decision.reason
+
+    def test_tag_that_misnames_the_version_is_denied(self, released: Path) -> None:
+        _git(released, "tag", "v1.2.4")
+        decision = guard_git.judge("git push origin v1.2.4", str(released))
+        assert decision.kind == DENY
+        assert "does not declare version 1.2.4" in decision.reason
+
+    def test_missing_tag_is_denied(self, released: Path) -> None:
+        decision = guard_git.judge("git push origin v9.9.9", str(released))
+        assert decision.kind == DENY
+        assert "cannot find the tag" in decision.reason.lower()
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git push origin v1.2.3 feature",
+            "git push origin v1.2.3 v1.2.3",
+            "git push upstream v1.2.3",
+            "git push --tags origin",
+            "git push --follow-tags origin v1.2.3",
+        ],
+    )
+    def test_anything_beside_one_tag_to_origin_is_denied(
+        self, released: Path, command: str
+    ) -> None:
+        decision = guard_git.judge(command, str(released))
+        assert decision.kind == DENY
+        assert "PyPI" in decision.reason
+
+    @pytest.mark.parametrize("tag", ["v1.2", "v1.2.3-rc1", "refs/tags/latest"])
+    def test_a_tag_that_is_not_a_release_is_denied(
+        self, released: Path, tag: str
+    ) -> None:
+        decision = guard_git.judge(f"git push origin {tag}", str(released))
+        assert decision.kind == DENY
+        assert "not a release tag" in decision.reason
+
+    def test_dash_c_names_the_repository(self, released: Path) -> None:
+        command = f"git -C {released} push origin v1.2.3"
+        decision = guard_git.judge(command, str(released.parent))
+        assert decision.kind == ALLOW, decision.reason
+
+    def test_a_cd_before_the_push_is_denied(self, released: Path) -> None:
+        command = f"cd {released} && git push origin v1.2.3"
+        decision = guard_git.judge(command, str(released))
+        assert decision.kind == DENY
+        assert "cd" in decision.reason
+
+    def test_git_that_cannot_run_is_denied(
+        self, released: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def broken(*_args: object, **_kwargs: object) -> None:
+            raise OSError("no git")
+
+        monkeypatch.setattr(guard_git.subprocess, "run", broken)
+        decision = guard_git.judge("git push origin v1.2.3", str(released))
+        assert decision.kind == DENY
+
+    def test_the_process_reads_cwd_from_its_input(self, released: Path) -> None:
+        result = _run(
+            {
+                "tool_name": "Bash",
+                "cwd": str(released),
+                "tool_input": {"command": "git push origin v1.2.3"},
+            }
+        )
+        assert result.returncode == 0, result.stderr

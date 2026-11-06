@@ -20,8 +20,9 @@ root. Read `src/` before a substantial change.
 | rewrite prose into the house style | `/ste-writing` |
 
 Three hooks run on every matching tool call: `route_model` picks the cheapest
-model for a subtask, `guard_git` blocks a push to `main`, a tag push, a forced
-push, and every command that discards uncommitted work, and `guard_version`
+model for a subtask, `guard_git` blocks a push to `main`, a tag push other
+than one merged release, a forced push, and every command that discards
+uncommitted work, and `guard_version`
 blocks a version bump outside a release branch. `poe hooks` tests them.
 
 ## The four interfaces
