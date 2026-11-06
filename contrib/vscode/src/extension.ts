@@ -160,6 +160,13 @@ class IndexWatch implements vscode.Disposable {
         finish(false);
         return;
       }
+      // The server answers one call at a time, and a status call on a
+      // large index takes longer than the poll interval. While the
+      // picker is open, leave the connection to the searches.
+      if (active !== undefined) {
+        this.timer = setTimeout(() => void tick(), WATCH_MS);
+        return;
+      }
       let state;
       try {
         state = await server.status(root);
