@@ -95,12 +95,12 @@ class TestRemoteAsk:
     ) -> None:
         made, url = server
         argv = ["--ask", QUESTION, "--remote", url, "--lang", "asciidoc"]
-        argv += ["--under", "apf/SYS.2", "--type", "doc"]
+        argv += ["--under", "docs/requirements", "--type", "doc"]
         assert main(argv) == 0
         (call,) = made.calls
         assert (call["lang"], call["under"], call["type"]) == (
             ["asciidoc"],
-            "apf/SYS.2",
+            "docs/requirements",
             ["doc"],
         )
 
