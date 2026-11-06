@@ -150,6 +150,27 @@ ish --brief "how long is the watchdog period while streaming" docs/
 Ask again without `--brief` for the sources. A brief answer costs about a
 third of the output tokens and half the time.
 
+### Ask a server
+
+`--ask` and `--brief` can ask an `ish-mcp --http` server instead of the
+tree on this machine. Name the server with `--remote`, or with `remote` in
+the config file, and put its token in `ISH_MCP_TOKEN`:
+
+```sh
+export ISH_MCP_TOKEN="<the token of the server>"
+ish --remote https://docs.example.com/mcp --ask "how is the watchdog configured"
+```
+
+The server searches its own tree and writes the answer with its own
+language model, so this machine needs no index and no model. The filter
+words and the `--lang`, `--under`, and `--type` flags travel with the
+question. The path argument does not, because a path on this machine
+means nothing to the server. The exit codes are the same as for a local
+answer. A plain search and `-i` still read the local tree.
+
+The links in the answer are the ones the server makes. Set `link_base` on
+the server, so they point at a published tree rather than at its disk.
+
 Answers are off until you choose a model. See
 [Answer questions](configuration.md#answer-questions). A plain search never
 builds a language model and sends no text anywhere.
@@ -192,6 +213,7 @@ builds a language model and sends no text anywhere.
 | `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
 | `--prompt-dir DIR` | Instruction files that replace the shipped ones, file by file |
 | `--link-base URL` | Base URL where the tree is published, for the links of an answer |
+| `--remote URL` | MCP server that answers `--ask` and `--brief`, with its token in `ISH_MCP_TOKEN` |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
 or parsed is counted in one line; `-v` names them.

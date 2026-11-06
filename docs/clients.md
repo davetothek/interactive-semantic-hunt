@@ -124,3 +124,6 @@ Point a client at it:
 
 The server speaks plain HTTP. Put it behind a reverse proxy that holds the
 certificate when the token crosses a network you do not trust.
+
+The `ish` command asks such a server with `--remote`. See
+[Ask a server](usage.md#ask-a-server).
