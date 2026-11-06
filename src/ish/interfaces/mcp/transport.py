@@ -15,6 +15,8 @@ import logging
 import threading
 from typing import Any, Protocol, TextIO, runtime_checkable
 
+from ish.settings import MCP_TOKEN_ENV_VAR
+
 log = logging.getLogger(__name__)
 
 
@@ -58,7 +60,7 @@ class StdioTransport:
                 self._out.flush()
 
 
-TOKEN_VARIABLE = "ISH_MCP_TOKEN"
+TOKEN_VARIABLE = MCP_TOKEN_ENV_VAR
 MCP_PATH = "/mcp"
 
 # A JSON-RPC message from a client is small. A body beyond this is not

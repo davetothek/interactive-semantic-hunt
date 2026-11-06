@@ -5,12 +5,14 @@ from dataclasses import fields
 import pytest
 
 from ish.interfaces.cli.args import build_parser
+from ish.interfaces.mcp.transport import TOKEN_VARIABLE
 from ish.settings import (
     CONFIG_BASENAME,
     CONFIG_DIRNAME,
     CONFIG_ENV_VAR,
     CONFIG_FILENAME,
     CONFIG_OPTION,
+    MCP_TOKEN_ENV_VAR,
     ConfigError,
     Settings,
     find_project_config,
@@ -176,6 +178,23 @@ class TestBadConfig:
         with caplog.at_level("WARNING"):
             load_settings(start=tmp_path, environ={"ISH_NOPE": "1"})
         assert "nope" in caplog.text
+
+
+class TestTokenIsNotAnOption:
+    """``ISH_MCP_TOKEN`` carries the HTTP secret. Reading options must not
+    report it as unknown: a served container logged the warning three
+    times at every start, beside a token that worked."""
+
+    def test_token_variable_does_not_warn(self, tmp_path, caplog) -> None:
+        with caplog.at_level("WARNING"):
+            settings = load_settings(
+                start=tmp_path, environ={MCP_TOKEN_ENV_VAR: "secret"}
+            )
+        assert caplog.text == ""
+        assert settings == Settings()
+
+    def test_token_variable_is_the_one_the_transport_reads(self) -> None:
+        assert MCP_TOKEN_ENV_VAR == TOKEN_VARIABLE == "ISH_MCP_TOKEN"
 
 
 class TestBoolCoercion:

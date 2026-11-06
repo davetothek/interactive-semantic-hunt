@@ -41,6 +41,13 @@ option set that the command line and the file share.
 CONFIG_ENV_VAR = ENV_PREFIX + CONFIG_OPTION.upper()
 """The environment variable that names a config file."""
 
+MCP_TOKEN_ENV_VAR = ENV_PREFIX + "MCP_TOKEN"
+"""The environment variable that holds the bearer token of MCP over HTTP.
+
+It is a secret, not an option. A secret must not sit in a config file
+or show as a flag, so the name stays out of the option set.
+"""
+
 DEFAULT_EMBEDDER = "ollama"
 DEFAULT_IGNORE = (".git", ".venv", "venv", "__pycache__")
 
@@ -538,13 +545,14 @@ def project_configs(start: Path) -> list[Path]:
 def _from_env(environ: Mapping[str, str]) -> dict[str, Any]:
     """Read options from ``ISH_*`` environment variables.
 
-    Pass over ``ISH_CONFIG``. It names a file to read, so it is not an
-    option, and reporting it as one unknown would be wrong.
+    Pass over ``ISH_CONFIG`` and ``ISH_MCP_TOKEN``. One names a file to
+    read and the other holds a secret. Neither is an option, and
+    reporting one as unknown would be wrong.
     """
     raw = {
         key.removeprefix(ENV_PREFIX).lower(): value
         for key, value in environ.items()
-        if key.startswith(ENV_PREFIX) and key != CONFIG_ENV_VAR
+        if key.startswith(ENV_PREFIX) and key not in (CONFIG_ENV_VAR, MCP_TOKEN_ENV_VAR)
     }
     return _accept("the environment", raw)
 

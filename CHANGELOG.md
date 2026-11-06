@@ -8,6 +8,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixed
+
+- `ish-mcp --http` no longer warns about `ISH_MCP_TOKEN` at start. The
+  settings read every `ISH_*` variable as an option, and logged the
+  token as an unknown one three times beside a token that worked.
+
 ## 0.8.1 - 2026-11-02
 
 ### Fixed
