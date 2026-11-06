@@ -32,6 +32,22 @@ notice on its next poll, up to `refresh_seconds` later.
 starts on the first search and is reused after that, which cuts a keystroke
 from about 500 ms to about 150 ms. Copy it beside the picker.
 
+`contrib/nvim/ish_link.lua` opens a source of an answer at the lines it
+names. Copy it to `lua/utils/ish_link.lua` and bind it:
+
+```lua
+map('n', '<leader>gf', function() require('utils.ish_link').open() end,
+    { desc = 'Open the ish link under the cursor' })
+```
+
+It takes the link under the cursor, or the first link on the line, so it
+works on the label of a footnote too. A file URI opens the file. An http or
+https link, which a server gives when it sets `link_base`, is read with curl
+into a buffer named after the link, at the first line of its `#L` range, and
+`:w` keeps a copy. curl reads `~/.netrc`, so a tree behind basic
+authentication needs one line there. The fetch runs in the background, and
+only a failure shows a message.
+
 ## Use from VS Code
 
 `contrib/vscode/` is an extension that drives the same `ish-mcp` server
