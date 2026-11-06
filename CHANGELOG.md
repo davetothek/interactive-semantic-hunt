@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.9.0 - 2026-11-06
+
 ### Added
 
 - `ish --ask` and `ish --brief` can ask an `ish-mcp --http` server. Name
