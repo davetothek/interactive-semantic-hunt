@@ -8,6 +8,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `ish --ask` and `ish --brief` can ask an `ish-mcp --http` server. Name
+  it with `--remote URL` or `remote` in the config file, and put its
+  token in `ISH_MCP_TOKEN`. The server searches its own tree and writes
+  the answer, so the machine that asks needs no index and no model. A
+  plain search and `-i` still read the local tree.
+- The `ask` tool of the MCP server adds the answer as Markdown, the text
+  `ish --ask` prints.
+
 ## 0.8.2 - 2026-11-06
 
 ### Added

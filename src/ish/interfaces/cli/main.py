@@ -3,6 +3,7 @@
 Parse arguments, delegate wiring to the bootstrap module, format output.
 """
 
+import json
 import logging
 import os
 import sys
@@ -19,6 +20,7 @@ from ish.interfaces.format import (
 )
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
+from ish.settings import MCP_TOKEN_ENV_VAR
 
 log = logging.getLogger("ish.cli")
 
@@ -54,6 +56,8 @@ def _run_ask(args: CliArgs) -> int:
     if not args.query:
         log.error("--ask needs a question.")
         return 1
+    if args.settings.remote:
+        return _run_remote_ask(args)
     line = ProgressLine()
     ticker = Ticker()
     with Ish(args.path, settings=args.settings) as ish:
@@ -81,6 +85,55 @@ def _run_ask(args: CliArgs) -> int:
         )
         sys.stdout.write(f"{text}\n")
     return 0 if answer.covered else 2
+
+
+def _run_remote_ask(args: CliArgs) -> int:
+    """Ask the server that ``remote`` names, and print its answer.
+
+    Keep the exit codes of a local answer. The server searches its own
+    tree, so the path given here does not travel. The filters do.
+    """
+    from ish.interfaces.mcp.client import RemoteClient, RemoteError
+
+    settings = args.settings
+    arguments: dict[str, object] = {"question": args.query, "brief": args.brief}
+    if settings.lang:
+        arguments["lang"] = list(settings.lang)
+    if settings.under:
+        arguments["under"] = settings.under
+    if settings.type:
+        arguments["type"] = list(settings.type)
+
+    ticker = Ticker()
+    try:
+        client = RemoteClient(settings.remote, os.environ.get(MCP_TOKEN_ENV_VAR, ""))
+        ticker.show(f"Asking {client.host}")
+        text = client.call("ask", arguments)
+    except KeyboardInterrupt:
+        ticker.stop()
+        sys.stderr.write("ish: interrupted\n")
+        return 130
+    except RemoteError as exc:
+        ticker.stop()
+        log.error("%s", exc)
+        return 1
+    finally:
+        ticker.stop()
+
+    try:
+        reply = json.loads(text)
+    except ValueError:
+        log.error("%s did not answer the question with JSON.", settings.remote)
+        return 1
+    shown = reply.get("answer") if args.brief else reply.get("markdown")
+    if not isinstance(shown, str):
+        log.error(
+            "%s sent no Markdown for the answer. Update ish on the server.",
+            settings.remote,
+        )
+        return 1
+    sys.stdout.write(f"{shown}\n")
+    return 0 if reply.get("covered") else 2
 
 
 def _report(ticker: Ticker, step: AnswerStep) -> None:

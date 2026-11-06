@@ -278,6 +278,13 @@ class Settings:
             metavar="URL",
         ),
     )
+    remote: str = field(
+        default="",
+        metadata=_opt(
+            "MCP server URL that answers --ask and --brief. Empty answers here.",
+            metavar="URL",
+        ),
+    )
     # Index scope, so that no call can override them. These three decide
     # where the text of a document may go. Only the operator of a server
     # sets them, in the config file or on the command line.

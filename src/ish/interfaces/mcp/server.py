@@ -26,6 +26,7 @@ from ish.interfaces import heartbeat
 from ish.interfaces.format import (
     NOT_COVERED_TEXT,
     display_path,
+    format_answer,
     format_brief,
     layout_data,
     number_citations,
@@ -345,6 +346,11 @@ class IshTools:
         else:
             reply["answer"] = NOT_COVERED_TEXT
             reply["sources"] = [described(c) for c in answer.sources]
+        # The text `ish --ask` prints, so a client in a terminal shows
+        # the answer the way a local run does.
+        reply["markdown"] = format_answer(
+            answer, question, session.link, base=root, kind_of=session.kind_of
+        )
         return json.dumps(reply, ensure_ascii=False)
 
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
@@ -457,7 +463,8 @@ class IshTools:
                     "answer with [n] markers, its layout (a short answer, "
                     "sections of prose, steps, or tables, and what the "
                     "documents leave open), and per citation the path, the "
-                    "type, the location, and a link that opens the source. When the "
+                    "type, the location, and a link that opens the source, and "
+                    "the whole answer as Markdown. When the "
                     "documents do not answer the question, 'covered' is "
                     "false and 'sources' lists the closest chunks. Use it "
                     "for questions such as 'how is the watchdog configured'."

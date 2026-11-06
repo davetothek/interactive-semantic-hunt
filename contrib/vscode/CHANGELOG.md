@@ -5,6 +5,16 @@ in `package.json` here, and it says nothing about the version of the
 `interactive-semantic-hunt` package on PyPI, which the server comes
 from. The extension talks to whichever `ish-mcp` it finds on PATH.
 
+## Unreleased
+
+### Fixed
+
+- A search does not wait behind the index progress check. The server
+  answers one call at a time, and an `index_status` call on a large
+  index takes longer than the poll interval, so each search queued
+  behind one. The status bar stops asking while the picker is open, and
+  asks again when it closes.
+
 ## 0.1.0
 
 ### Added

@@ -970,6 +970,28 @@ class TestAsk:
         assert reply["sources"]
         assert all("n" not in s and s["url"] for s in reply["sources"])
 
+    def test_the_reply_carries_the_markdown_a_terminal_prints(
+        self, tools: IshTools, project: Path, stub_backend, model
+    ) -> None:
+        import json
+
+        reply = json.loads(tools.ask({"question": "config", "path": str(project)}))
+        markdown = reply["markdown"]
+        assert markdown.startswith("# config\n")
+        assert "It loads the config" in markdown
+        assert "## Sources" in markdown
+        assert reply["citations"][0]["url"] in markdown
+
+    def test_an_uncovered_reply_carries_markdown_with_the_closest_sources(
+        self, tools: IshTools, project: Path, stub_backend, model
+    ) -> None:
+        import json
+
+        model.covered = False
+        reply = json.loads(tools.ask({"question": "config", "path": str(project)}))
+        assert reply["markdown"].startswith("# config\n")
+        assert reply["sources"][0]["url"] in reply["markdown"]
+
     def test_a_filter_narrows_what_the_model_reads(
         self, tools: IshTools, project: Path, stub_backend, model
     ) -> None:
@@ -998,6 +1020,7 @@ class TestAsk:
         )
         assert reply["answer"] == "It loads the config."
         assert "citations" not in reply and "layout" not in reply
+        assert "markdown" not in reply
         assert asked == [True]
 
     def test_no_model_set_is_a_tool_error(
