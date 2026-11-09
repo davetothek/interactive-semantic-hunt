@@ -49,10 +49,31 @@ class TestSetup:
         assert resolve_color("always") is True
         assert resolve_color("never") is False
 
+        monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
         assert resolve_color("auto") is True
         monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
         assert resolve_color("auto") is False
+
+    def test_auto_reads_the_stream_it_colors(self, monkeypatch) -> None:
+        """stdout piped to a file is plain while stderr is a terminal."""
+
+        class Stream:
+            def __init__(self, tty: bool) -> None:
+                self.tty = tty
+
+            def isatty(self) -> bool:
+                return self.tty
+
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        assert resolve_color("auto", Stream(True)) is True
+        assert resolve_color("auto", Stream(False)) is False
+
+    def test_no_color_turns_auto_off_and_always_still_wins(self, monkeypatch) -> None:
+        monkeypatch.setenv("NO_COLOR", "1")
+        monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+        assert resolve_color("auto") is False
+        assert resolve_color("always") is True
 
 
 class TestFormatter:

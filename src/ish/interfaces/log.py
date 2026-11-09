@@ -6,7 +6,9 @@ use is nothing at all.
 """
 
 import logging
+import os
 import sys
+from typing import TextIO
 
 
 class _Ansi:
@@ -116,13 +118,17 @@ class _StderrHandler(logging.StreamHandler):
         """Ignore the stream the base class tries to pin."""
 
 
-def resolve_color(mode: str) -> bool:
-    """Decide whether to color log output.
+def resolve_color(mode: str, stream: TextIO | None = None) -> bool:
+    """Decide whether to color what goes to *stream*, stderr by default.
 
-    Treat ``auto`` as "color only when stderr is a terminal".
+    Treat ``auto`` as "color only when the stream is a terminal and
+    ``NO_COLOR`` is not set", the convention of no-color.org. ``always``
+    colors whatever the stream, because it is asked for by name.
     """
     if mode == "auto":
-        return sys.stderr.isatty()
+        if os.environ.get("NO_COLOR"):
+            return False
+        return (stream or sys.stderr).isatty()
     return mode == "always"
 
 

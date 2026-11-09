@@ -8,6 +8,19 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `ish --ask` colors the answer on a terminal: headings, markup, the gaps
+  the documents leave, and source links that open with a click. It adds
+  styles and changes no character, so a copy from the terminal is the
+  Markdown a pipe gets. The timing line below it is grey, after a blank
+  line.
+- `--color WHEN` covers the answer and the timing line as well as the
+  logs, and `auto` honors `NO_COLOR`.
+- `ish --help` starts with one line of usage and groups the options by
+  what they do: search, answers, output, the index, embedding,
+  maintenance, and the picker.
+
 ## 0.9.2 - 2026-11-09
 
 ### Added

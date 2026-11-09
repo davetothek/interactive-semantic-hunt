@@ -139,8 +139,14 @@ closest sources, and exits 2. It does not answer from anything else. The
 filter words work in a question as in a query: `--ask "type:doc how is X
 done"`.
 
-The last line on stderr says where the time and the tokens went, stage by
-stage:
+On a terminal the answer is in color: headings bold, the markup dim, the
+gaps the documents leave in yellow, and each source link clickable. Only
+styles are added, so text copied from the terminal is the same Markdown a
+pipe or a file gets. `--color never`, or `NO_COLOR=1`, turns color off, and
+`--color always` keeps it through a pipe, such as into `less -R`.
+
+After a blank line, the last line on stderr says where the time and the
+tokens went, stage by stage, in grey:
 
 ```text
 ish: 34.6 s: search 0.9 s, read 19.8 s, rerank 5.1 s (claude-haiku-5-5, 9,448 tokens), answer 8.8 s (claude-sonnet-5-5, 24,422 in, 1,642 out)
@@ -202,7 +208,7 @@ builds a language model and sends no text anywhere.
 | `-c`, `--config PATH` | Read the options from this file, not from the search upward |
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
-| `--color {auto,always,never}` | Control log color |
+| `--color WHEN` | Color the answer, the logs, and the timing line: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
 | `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
