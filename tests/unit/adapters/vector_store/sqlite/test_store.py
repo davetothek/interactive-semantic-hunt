@@ -397,7 +397,7 @@ class TestPacking:
     """Verify the float32 encoding preserves direction."""
 
     def test_round_trip_preserves_unit_direction(self) -> None:
-        from ish.adapters.vector_store.sqlite import _pack, _unpack
+        from ish.adapters.vector_store.sqlite.store import _pack, _unpack
 
         values = _unpack(_pack([3.0, 4.0]))
         assert math.isclose(values[0], 0.6, abs_tol=1e-6)
@@ -998,7 +998,7 @@ class TestBusyIndex:
     """
 
     def test_a_held_index_is_reported(self, db_path: Path, tmp_path, monkeypatch):
-        import ish.adapters.vector_store.sqlite as module
+        import ish.adapters.vector_store.sqlite.store as module
 
         SqliteVectorStore(db_path, model_id="m", root=tmp_path / "one").close()
         monkeypatch.setattr(module, "BUSY_SECONDS", 0.05)
@@ -1016,7 +1016,7 @@ class TestBusyIndex:
 
     def test_another_error_stays_what_it_was(self) -> None:
         """Only a lock means busy. Everything else is reported as it is."""
-        from ish.adapters.vector_store.sqlite import _busy
+        from ish.adapters.vector_store.sqlite.store import _busy
 
         original = sqlite3.OperationalError("no such table: chunks")
         assert _busy(Path("x.db"), original) is original

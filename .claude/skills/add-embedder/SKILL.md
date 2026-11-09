@@ -91,7 +91,7 @@ dependency: the hook prompts on `uv add`.
 When the model was trained with a task prefix for documents and another for
 queries, add a row to `_CONVENTIONS` in `_prefixes.py`, keyed by model name.
 A new prefix changes what a stored vector means, so bump `SCHEMA_VERSION` in
-`adapters/vector_store/sqlite.py` and say so in the changelog.
+`adapters/vector_store/sqlite/_schema.py` and say so in the changelog.
 
 ## 5. Test
 

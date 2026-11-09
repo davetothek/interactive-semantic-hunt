@@ -14,12 +14,13 @@ from pathlib import Path
 import numpy
 import pytest
 
-from ish.adapters.vector_store import sqlite as module
 from ish.adapters.vector_store.sqlite import (
     MATRIX_HEADER_BYTES,
     MATRIX_SUFFIX,
     SqliteVectorStore,
+    _matrix,
 )
+from ish.adapters.vector_store.sqlite import store as store_module
 from ish.application.ports.vector_store import FileStamp
 from ish.domain.chunk import Chunk
 
@@ -101,7 +102,7 @@ class TestWriting:
     def test_a_settled_writer_writes_on_a_miss(
         self, db_path: Path, matrix_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setattr(module, "SETTLE_SECONDS", -1.0)
+        monkeypatch.setattr(store_module, "SETTLE_SECONDS", -1.0)
         store = filled(db_path)
         try:
             store.search(TOWARD_F, limit=1)
@@ -139,7 +140,7 @@ class TestWriting:
 
         reader = SqliteVectorStore(db_path, model_id="model-a")
         try:
-            identifiers, _matrix = reader._map_matrix(2, reader._stamp())
+            identifiers, _matrix = reader._matrix_file.map(2, reader._stamp())
             assert len(identifiers) == 3
         finally:
             reader.close()
@@ -150,7 +151,7 @@ class TestWriting:
         def refuse(source, target):
             raise OSError("read-only")
 
-        monkeypatch.setattr(module.os, "replace", refuse)
+        monkeypatch.setattr(_matrix.os, "replace", refuse)
         store = filled(db_path)
         store.search(TOWARD_F, limit=1)
         store.close()
@@ -186,7 +187,7 @@ class TestAnIndexRunLeavesTheMatrixFile:
         filled(db_path).close()
         reader = SqliteVectorStore(db_path, model_id="model-a")
         try:
-            mapped = reader._map_matrix(2, reader._stamp())
+            mapped = reader._matrix_file.map(2, reader._stamp())
             assert mapped is not None
             assert best(reader, TOWARD_G) == "g"
         finally:
@@ -417,7 +418,7 @@ class TestNaming:
             seen.append(Path(source).name)
             original(source, target)
 
-        monkeypatch.setattr(module.os, "replace", watch)
+        monkeypatch.setattr(_matrix.os, "replace", watch)
         store = filled(db_path)
         store.search(TOWARD_F, limit=1)
         store.close()
