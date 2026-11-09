@@ -10,8 +10,8 @@ import os
 import time
 from collections.abc import Sequence
 
-from ish.adapters.embedder.prefixes import PrefixingEmbedder
-from ish.adapters.embedder.turn import Turn, default_turn
+from ish.adapters.embedder._prefixes import PrefixingEmbedder
+from ish.adapters.embedder._turn import Turn, default_turn
 
 log = logging.getLogger(__name__)
 

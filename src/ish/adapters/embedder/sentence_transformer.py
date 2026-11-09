@@ -10,8 +10,8 @@ import logging
 import os
 from collections.abc import Sequence
 
-from ish.adapters.embedder.hub import quiet_hub
-from ish.adapters.embedder.prefixes import PrefixingEmbedder
+from ish.adapters.embedder._hub import quiet_hub
+from ish.adapters.embedder._prefixes import PrefixingEmbedder
 
 log = logging.getLogger(__name__)
 

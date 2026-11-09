@@ -135,11 +135,11 @@ class TestIncludedTablesDoNotCount:
         self, tmp_path: Path
     ) -> None:
         from ish.adapters.parser._limits import INCLUDED_KIND
-        from ish.adapters.parser.markup import MarkupParser
+        from ish.adapters.parser.asciidoc import AsciiDocParser
 
         rows = "".join(f"|REG{n} |0x{n:04x} |a register\n" for n in range(40))
         (tmp_path / "rows.adoc").write_text(rows)
         doc = tmp_path / "d.adoc"
         doc.write_text("= Doc\n\nProse.\n\n|===\ninclude::rows.adoc[]\n|===\n")
-        kinds = {c.kind for c in MarkupParser.asciidoc().parse(doc, doc.read_text())}
+        kinds = {c.kind for c in AsciiDocParser().parse(doc, doc.read_text())}
         assert INCLUDED_KIND in kinds

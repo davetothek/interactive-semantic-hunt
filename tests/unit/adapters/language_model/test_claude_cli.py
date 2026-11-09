@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded, claude_cli
+from ish.adapters.language_model._prompts import load as load_prompts
 from ish.adapters.language_model.claude_cli import ClaudeCliLanguageModel, command
-from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import LanguageModelError, Source
 
 PROMPTS = load_prompts()

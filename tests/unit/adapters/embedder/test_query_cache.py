@@ -1,6 +1,6 @@
 """Test that a recent query is not embedded twice."""
 
-from ish.adapters.embedder.prefixes import QUERY_CACHE_SIZE, PrefixingEmbedder
+from ish.adapters.embedder._prefixes import QUERY_CACHE_SIZE, PrefixingEmbedder
 
 
 class Counting(PrefixingEmbedder):

@@ -50,7 +50,8 @@ only a backend that `allowed_language_models` names is ever built.
 
 Hexagonal, ports and adapters. `interfaces → application → domain`, with
 `adapters` implementing `application.ports` from below and `bootstrap.py` the
-one module that joins them.
+one module that joins them. In `adapters/`, a plain module name is a backend
+and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 
 | Layer | Path | Purpose |
 |---|---|---|
@@ -77,25 +78,29 @@ one module that joins them.
 | Application | `src/ish/application/answer.py` | Answer use case: search, read, fit the budget, ask the model |
 | Adapter | `src/ish/adapters/parser/__init__.py` | `PARSERS` — every language, and the recipe for adding one |
 | Adapter | `src/ish/adapters/parser/python.py` | Python AST parser |
-| Adapter | `src/ish/adapters/parser/markup.py` | Markdown and AsciiDoc sections |
-| Adapter | `src/ish/adapters/parser/tree_sitter.py` | Tree-sitter parser, C and C++ flavor |
-| Adapter | `src/ish/adapters/parser/structured.py` | YAML and JSON documents |
+| Adapter | `src/ish/adapters/parser/markdown.py` | Markdown sections |
+| Adapter | `src/ish/adapters/parser/asciidoc/` | AsciiDoc sections, with includes, tables, and figures |
+| Adapter | `src/ish/adapters/parser/cpp.py` | C and C++ through Tree-sitter |
+| Adapter | `src/ish/adapters/parser/yaml.py`, `json.py` | YAML and JSON documents |
+| Adapter | `src/ish/adapters/parser/_sections.py` | The section walk Markdown and AsciiDoc share |
+| Adapter | `src/ish/adapters/parser/_structured.py` | The entry splitter YAML and JSON share |
+| Adapter | `src/ish/adapters/parser/_tree_sitter.py` | The Tree-sitter walk, for any grammar |
 | Adapter | `src/ish/adapters/parser/_limits.py` | `SizeLimited` and `CountLimited`, the chunk size and count caps |
 | Adapter | `src/ish/adapters/parser/_plugins.py` | Parsers a user wrote |
 | Adapter | `src/ish/adapters/embedder/__init__.py` | `EMBEDDERS` — every backend, and the recipe for adding one |
-| Adapter | `src/ish/adapters/embedder/prefixes.py` | `PrefixingEmbedder`, task prefixes, query cache |
-| Adapter | `src/ish/adapters/embedder/turn.py` | The marker a query leaves, and the wait a document batch takes |
+| Adapter | `src/ish/adapters/embedder/_prefixes.py` | `PrefixingEmbedder`, task prefixes, query cache |
+| Adapter | `src/ish/adapters/embedder/_turn.py` | The marker a query leaves, and the wait a document batch takes |
 | Adapter | `src/ish/adapters/language_model/__init__.py` | `LANGUAGE_MODELS` — every backend, and the recipe for adding one |
 | Adapter | `src/ish/adapters/language_model/anthropic.py` | Messages API with native citations |
 | Adapter | `src/ish/adapters/language_model/ollama.py` | A generation model on the local daemon |
 | Adapter | `src/ish/adapters/language_model/claude_cli.py` | The Claude Code CLI in print mode |
 | Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
-| Adapter | `src/ish/adapters/language_model/prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
+| Adapter | `src/ish/adapters/language_model/_prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
 | Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
-| Adapter | `src/ish/adapters/vector_store/catalog.py` | Which index file describes which tree |
+| Adapter | `src/ish/adapters/vector_store/_catalog.py` | Which index file describes which tree |
 | Adapter | `src/ish/adapters/vcs/git.py` | Ask git what it ignores |
 | Interface | `src/ish/interfaces/python/api.py` | `Ish`, the session every interface shares |
 | Interface | `src/ish/interfaces/format.py` | Shared output formatting |
@@ -278,7 +283,7 @@ something broke. This is that record, so a rule is never argued from taste.
   The 25 questions scored 20 of 21 cited, 21 of 21 answered, 4 of 4
   refused, the miss a label that names one section of two valid ones.
   Answer input rose from 9,839 to 16,203 tokens, output from 2,747 to
-  4,257, 0.43 to 0.5 cents. Hence `_asciidoc.py`.
+  4,257, 0.43 to 0.5 cents. Hence `asciidoc/_includes.py`.
 - The miss was the cost of resolving includes into prose. A section of
   1,109 characters of prose and four includes grew to 15,417, its first
   chunk mostly register rows, and it fell from the top 50 to rank 141 for

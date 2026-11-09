@@ -1,4 +1,4 @@
-"""Parse YAML and JSON documents.
+"""Parse YAML and JSON documents. ``yaml.py`` and ``json.py`` build it.
 
 Split a document at the entries it is made of. One vector cannot stand
 for several unrelated things, however few bytes they occupy: measured on
@@ -40,16 +40,6 @@ class StructuredParser:
         # How much text the embedding model reads. The composition root
         # sets it from the window the settings name.
         self.limit = MAX_CHUNK_CHARS
-
-    @classmethod
-    def yaml(cls) -> "StructuredParser":
-        """Build the YAML flavor."""
-        return cls("yaml", frozenset({".yaml", ".yml"}))
-
-    @classmethod
-    def json(cls) -> "StructuredParser":
-        """Build the JSON flavor. YAML is a superset, so one reader serves."""
-        return cls("json", frozenset({".json"}))
 
     def parse(self, path: Path, source: str) -> Sequence[Chunk]:
         """Return a chunk for the document, or one for each entry it holds."""

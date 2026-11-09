@@ -29,10 +29,10 @@ nothing anywhere until an operator allows it.
 
 from typing import Protocol
 
+from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model.anthropic import AnthropicLanguageModel
 from ish.adapters.language_model.claude_cli import ClaudeCliLanguageModel
 from ish.adapters.language_model.ollama import OllamaLanguageModel
-from ish.adapters.language_model.prompts import Prompts
 from ish.application.ports.language_model import LanguageModel
 
 

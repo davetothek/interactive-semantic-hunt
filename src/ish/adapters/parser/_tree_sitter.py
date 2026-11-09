@@ -1,8 +1,9 @@
 """Parse source with a Tree-sitter grammar.
 
-One configurable parser serves every Tree-sitter language. A flavor names
-the grammar, the suffixes it claims, which node types become chunks, and
-which of those types nest their children.
+One configurable parser serves every Tree-sitter language. A language
+module, such as ``cpp.py``, names the grammar, the suffixes it claims,
+which node types become chunks, and which of those types nest their
+children.
 
 Tree-sitter is error tolerant: a file it cannot fully parse still yields
 a tree with ERROR nodes. Return whatever was recognized, and raise only
@@ -207,43 +208,3 @@ def _drop_redundant_declarations(chunks: list[Chunk]) -> list[Chunk]:
         for chunk in chunks
         if chunk.kind != "declaration" or chunk.symbol not in defined
     ]
-
-
-def cpp_parser() -> TreeSitterParser:
-    """Build the C and C++ parser.
-
-    One parser owns both languages. The C++ grammar reads nearly all C,
-    and the two share the ``.h`` suffix, so splitting them would leave
-    every header ambiguous.
-    """
-    import tree_sitter_cpp
-
-    return TreeSitterParser(
-        language="cpp",
-        suffixes=frozenset({".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"}),
-        grammar=tree_sitter_cpp.language(),
-        kinds={
-            "function_definition": "function",
-            "class_specifier": "class",
-            "struct_specifier": "struct",
-            "union_specifier": "union",
-            "enum_specifier": "enum",
-            "namespace_definition": "namespace",
-            # A header is mostly declarations, so they are its content.
-            "declaration": "declaration",
-            "field_declaration": "declaration",
-        },
-        member_kinds={"function_definition": "method"},
-        needs_function=frozenset({"declaration", "field_declaration"}),
-        containers=frozenset(
-            {"class_specifier", "struct_specifier", "namespace_definition"}
-        ),
-        needs_body=frozenset(
-            {
-                "class_specifier",
-                "struct_specifier",
-                "union_specifier",
-                "enum_specifier",
-            }
-        ),
-    )

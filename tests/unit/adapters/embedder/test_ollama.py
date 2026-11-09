@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from ish.adapters.embedder import ollama
+from ish.adapters.embedder._turn import Turn
 from ish.adapters.embedder.ollama import DEFAULT_MODEL, OllamaEmbedder
-from ish.adapters.embedder.turn import Turn
 
 
 @pytest.fixture(autouse=True)

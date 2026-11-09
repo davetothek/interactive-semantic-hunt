@@ -30,7 +30,7 @@ need a line:
 - ``pyproject.toml`` — an extra, when the backend needs a package the
   default install does not carry, and a ``[[tool.ty.overrides]]`` entry
   so the type checker accepts the import of a package that may be absent.
-- ``prefixes.py`` — the task prefixes, when the model was trained with
+- ``_prefixes.py`` — the task prefixes, when the model was trained with
   them. They are keyed by model name, because the convention belongs to
   the model and not to the backend serving it.
 
@@ -39,9 +39,9 @@ may not be installed, and the CLI turns the ``ModuleNotFoundError`` into
 a line that names the extra to install.
 """
 
+from ish.adapters.embedder._prefixes import PrefixingEmbedder
 from ish.adapters.embedder.llama_cpp import LlamaCppEmbedder
 from ish.adapters.embedder.ollama import OllamaEmbedder
-from ish.adapters.embedder.prefixes import PrefixingEmbedder
 from ish.adapters.embedder.sentence_transformer import SentenceTransformerEmbedder
 
 EMBEDDERS: dict[str, type[PrefixingEmbedder]] = {

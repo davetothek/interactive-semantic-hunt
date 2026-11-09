@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.parser.tree_sitter import cpp_parser
+from ish.adapters.parser.cpp import cpp_parser
 from ish.application.ports.parser import ParseError, Parser
 
 SRC = Path("probe.cpp")

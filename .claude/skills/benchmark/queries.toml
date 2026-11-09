@@ -22,7 +22,7 @@ symbol = "is_code_like"
 [[query]]
 text = "split a yaml document at the first list of things it holds"
 category = "conceptual"
-path = "adapters/parser/structured.py"
+path = "adapters/parser/_structured.py"
 
 [[query]]
 text = "cap the size of a chunk before it reaches the embedder"
@@ -32,7 +32,7 @@ path = "adapters/parser/_limits.py"
 [[query]]
 text = "find headings while skipping fenced code blocks"
 category = "conceptual"
-path = "adapters/parser/markup.py"
+path = "adapters/parser/_sections.py"
 
 [[query]]
 text = "load parsers a user wrote from the config directory"
@@ -42,12 +42,12 @@ path = "adapters/parser/_plugins.py"
 [[query]]
 text = "add a task prefix to a query before embedding it"
 category = "conceptual"
-path = "adapters/embedder/prefixes.py"
+path = "adapters/embedder/_prefixes.py"
 
 [[query]]
 text = "which stored index covers a given path"
 category = "conceptual"
-path = "adapters/vector_store/catalog.py"
+path = "adapters/vector_store/_catalog.py"
 
 [[query]]
 text = "ask git which files are ignored"
@@ -97,13 +97,13 @@ symbol = "load_settings"
 [[query]]
 text = "PrefixingEmbedder"
 category = "identifier"
-path = "adapters/embedder/prefixes.py"
+path = "adapters/embedder/_prefixes.py"
 symbol = "PrefixingEmbedder"
 
 [[query]]
 text = "IndexCatalog"
 category = "identifier"
-path = "adapters/vector_store/catalog.py"
+path = "adapters/vector_store/_catalog.py"
 symbol = "IndexCatalog"
 
 [[query]]

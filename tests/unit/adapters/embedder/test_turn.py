@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.embedder.turn import HOLD_SECONDS, POLL_SECONDS, Turn, default_turn
+from ish.adapters.embedder._turn import HOLD_SECONDS, POLL_SECONDS, Turn, default_turn
 from ish.runtime import runtime_dir
 
 
@@ -68,7 +68,7 @@ class TestMark:
         blocker = tmp_path / "file"
         blocker.write_text("")
         turn = _turn(blocker / "query", Clock())
-        with caplog.at_level(logging.DEBUG, logger="ish.adapters.embedder.turn"):
+        with caplog.at_level(logging.DEBUG, logger="ish.adapters.embedder._turn"):
             turn.mark()
         assert not turn.held()
         assert "Cannot leave the query marker" in caplog.text

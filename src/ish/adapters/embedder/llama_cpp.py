@@ -7,8 +7,8 @@ missing module into a line that names the extra to install.
 
 from collections.abc import Sequence
 
-from ish.adapters.embedder.hub import quiet_hub
-from ish.adapters.embedder.prefixes import PrefixingEmbedder
+from ish.adapters.embedder._hub import quiet_hub
+from ish.adapters.embedder._prefixes import PrefixingEmbedder
 
 DEFAULT_REPO = "nomic-ai/nomic-embed-text-v1.5-GGUF"
 DEFAULT_FILE = "nomic-embed-text-v1.5.Q4_K_M.gguf"

@@ -2,7 +2,7 @@
 
 import pytest
 
-from ish.adapters.embedder.prefixes import PrefixingEmbedder, prefixes_for
+from ish.adapters.embedder._prefixes import PrefixingEmbedder, prefixes_for
 
 
 class TestPrefixTable:

@@ -8,8 +8,8 @@ import urllib.request
 import pytest
 
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded
+from ish.adapters.language_model._prompts import load as load_prompts
 from ish.adapters.language_model.ollama import OllamaLanguageModel
-from ish.adapters.language_model.prompts import load as load_prompts
 from ish.application.ports.language_model import LanguageModelError, Source
 
 PROMPTS = load_prompts()
