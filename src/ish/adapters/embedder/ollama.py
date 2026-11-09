@@ -6,16 +6,16 @@ the adapter needs no third-party package.
 """
 
 import logging
-import os
 import time
 from collections.abc import Sequence
 
+from ish.adapters import _http
+from ish.adapters._ollama import is_loopback, resolve_host
 from ish.adapters.embedder._prefixes import PrefixingEmbedder
 from ish.adapters.embedder._turn import Turn, default_turn
 
 log = logging.getLogger(__name__)
 
-DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "nomic-embed-text"
 
 # Send this many texts per request. The daemon serves one embedding
@@ -56,29 +56,6 @@ class _Transient(RuntimeError):
     """
 
 
-def _normalize_host(host: str) -> str:
-    """Accept a bare ``host:port`` as well as a full URL."""
-    host = host.rstrip("/")
-    if not host.startswith(("http://", "https://")):
-        return f"http://{host}"
-    return host
-
-
-def _is_loopback(host: str) -> bool:
-    """Return True when the host names this machine."""
-    # Only the error path calls this, so pay the imports here.
-    import ipaddress
-    import urllib.parse
-
-    name = urllib.parse.urlsplit(host).hostname or ""
-    if name == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(name).is_loopback
-    except ValueError:
-        return False
-
-
 class OllamaEmbedder(PrefixingEmbedder):
     """Generate embeddings through a running Ollama daemon.
 
@@ -96,8 +73,7 @@ class OllamaEmbedder(PrefixingEmbedder):
         turn: Turn | None = None,
     ) -> None:
         super().__init__(model_name)
-        chosen = host or os.environ.get("OLLAMA_HOST") or DEFAULT_HOST
-        self.host = _normalize_host(chosen)
+        self.host = resolve_host(host)
         self._batch_size = max(1, batch_size)
         # The marker a query leaves, which holds a document request back.
         # Every process of the user shares one, because they share the
@@ -181,7 +157,7 @@ class OllamaEmbedder(PrefixingEmbedder):
 
     def _unreachable_hint(self) -> str:
         """Say how to reach the daemon, for a local host or a remote one."""
-        if not _is_loopback(self.host):
+        if not is_loopback(self.host):
             return (
                 "OLLAMA_HOST names that machine. Make sure the daemon runs "
                 "there and accepts a remote connection. To embed on this "
@@ -195,33 +171,18 @@ class OllamaEmbedder(PrefixingEmbedder):
 
     def _embed_batch(self, batch: list[str], timeout: float) -> list[Sequence[float]]:
         """Send one batch and return its vectors."""
-        # The HTTP client costs 20 ms to import, which a process that
-        # never embeds should not pay.
-        import json
-        import urllib.error
-        import urllib.request
-
-        body: dict[str, object] = {"model": self.model_name, "input": batch}
+        payload: dict[str, object] = {"model": self.model_name, "input": batch}
         if self.context_tokens is not None:
-            body["options"] = {"num_ctx": self.context_tokens}
-        payload = json.dumps(body).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.host}/api/embed",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-
+            payload["options"] = {"num_ctx": self.context_tokens}
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                body = json.loads(response.read())
-        except TimeoutError as exc:
+            body = _http.post_json(f"{self.host}/api/embed", payload, timeout=timeout)
+        except _http.Timeout as exc:
             raise _Transient(
                 f"Ollama at {self.host} did not answer within {timeout:g} s. "
                 f"It serves one embedding request at a time, so a query waits "
                 f"for the batch an index run has in flight."
             ) from exc
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace").strip()
+        except _http.Refused as exc:
             if exc.code == 404:
                 hint = f"Pull it with 'ollama pull {self.model_name}'."
             else:
@@ -230,14 +191,14 @@ class OllamaEmbedder(PrefixingEmbedder):
                     f"not a generation model."
                 )
             raise RuntimeError(
-                f"Ollama refused the request ({exc.code}): {detail}. {hint}"
+                f"Ollama refused the request ({exc.code}): {exc.detail}. {hint}"
             ) from exc
-        except urllib.error.URLError as exc:
+        except _http.Unreachable as exc:
             raise _Transient(
                 f"Cannot reach Ollama at {self.host}: {exc.reason}. "
                 f"{self._unreachable_hint()}"
             ) from exc
-        except json.JSONDecodeError as exc:
+        except _http.NotJson as exc:
             raise RuntimeError(
                 f"Ollama at {self.host} returned a reply that is not JSON."
             ) from exc
