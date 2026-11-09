@@ -48,6 +48,17 @@ into a buffer named after the link, at the first line of its `#L` range, and
 authentication needs one line there. The fetch runs in the background, and
 only a failure shows a message.
 
+A tree behind the bearer token of the server gets `ISH_MCP_TOKEN` in an
+Authorization header. The module sends the token only to the origin of
+`ISH_REMOTE`, so a link to another host never sees it. Name more origins in
+`token_origins`:
+
+```lua
+require('utils.ish_link').token_origins = { 'https://docs.example.com' }
+```
+
+curl reads the header from stdin, so the token is not on its command line.
+
 ## Use from VS Code
 
 `contrib/vscode/` is an extension that drives the same `ish-mcp` server

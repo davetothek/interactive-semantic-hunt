@@ -8,6 +8,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `contrib/nvim/ish_link.lua` sends `ISH_MCP_TOKEN` as a bearer token
+  when it fetches an https link, so the links of a server whose tree is
+  behind that token open in Neovim. It sends the token only to the
+  origin of `ISH_REMOTE` and to the origins in `token_origins`.
+
 ## 0.9.0 - 2026-11-06
 
 ### Added
