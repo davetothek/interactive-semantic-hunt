@@ -953,6 +953,9 @@ class TestAsk:
         assert "sources" not in reply
         assert (reply["rerank_input_tokens"], reply["rerank_output_tokens"]) == (0, 0)
         assert (reply["turns"], reply["searches"]) == (1, [])
+        assert reply["rerank_model"] == ""
+        assert "writing" in reply["timings"]
+        assert reply["seconds"] >= reply["timings"]["writing"]
         assert reply["layout"] == [
             {"kind": "prose", "heading": "", "text": "It loads the config[1]."}
         ]

@@ -503,3 +503,63 @@ class TestProgress:
             ("writing", 2, ""),
         ]
         assert steps[2].turns == 3
+
+
+class Ticks:
+    """A clock that moves one second each time it is read."""
+
+    def __init__(self) -> None:
+        self.now = -1.0
+
+    def __call__(self) -> float:
+        self.now += 1.0
+        return self.now
+
+
+class TestTimings:
+    """An answer says how many seconds each stage took, and the whole."""
+
+    def test_each_stage_is_timed_in_the_order_it_first_ran(self) -> None:
+        a, b = make_chunk("a", "Alpha."), make_chunk("b", "Beta.")
+        result = AnswerQuestion(
+            search=searching(a, b),
+            model=FakeModel(),
+            reranker=FakeReranker(("1",)),
+            clock=Ticks(),
+        ).answer("q")
+        # One second for each call. The rerank reads two previews, and the
+        # answer reads the one chunk chosen.
+        assert result.timings == (
+            ("searching", 1.0),
+            ("reading", 3.0),
+            ("choosing", 1.0),
+            ("writing", 1.0),
+        )
+        assert result.seconds > sum(seconds for _, seconds in result.timings)
+
+    def test_a_follow_up_search_is_timed_apart(self) -> None:
+        start, found = make_chunk("start", "Spec."), make_chunk("found", "Handler.")
+        result = AnswerQuestion(
+            search=routed(start, the_handler=[start, found]),
+            model=FakeAgent(("the handler",)),
+            turns=3,
+            clock=Ticks(),
+        ).answer("q")
+        timings = dict(result.timings)
+        assert timings["following"] == 1.0
+        assert timings["writing"] == 2.0
+
+    def test_the_rerank_model_is_named_when_it_chose(self) -> None:
+        a = make_chunk("a", "Alpha.")
+        chosen = AnswerQuestion(
+            search=searching(a), model=FakeModel(), reranker=FakeReranker(("1",))
+        ).answer("q")
+        plain = AnswerQuestion(search=searching(a), model=FakeModel()).answer("q")
+        assert (chosen.rerank_model, plain.rerank_model) == ("picker", "")
+
+    def test_an_answer_with_nothing_found_is_still_timed(self) -> None:
+        result = AnswerQuestion(
+            search=searching(), model=FakeModel(), clock=Ticks()
+        ).answer("q")
+        assert result.timings == (("searching", 1.0),)
+        assert result.seconds == 3.0

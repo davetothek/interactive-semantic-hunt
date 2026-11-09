@@ -81,6 +81,17 @@ class TestAsk:
         assert about == "    doc · Watchdog"
         assert where == "    docs/"
 
+    def test_the_last_line_on_stderr_says_where_the_time_went(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        _model(monkeypatch, FakeModel())
+        main(["--ask", "what does the watchdog do", str(project), *FLAGS])
+        captured = capsys.readouterr()
+        last = captured.err.strip().splitlines()[-1]
+        assert last.startswith("ish: ")
+        assert "search " in last and "answer " in last and "(fake-model," in last
+        assert "ish: " not in captured.out
+
     def test_not_covered_lists_the_closest_sources_and_exits_2(
         self, project: Path, monkeypatch, capsys
     ) -> None:

@@ -1,6 +1,6 @@
 """Shared presentation helpers for the CLI and TUI."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from ish.application.answer import Answer, AnswerBlock, AnswerPart
@@ -214,6 +214,92 @@ def format_brief(answer: Answer) -> str:
         Answer(parts=tuple(parts), covered=True, sources=()), mark=_unmarked
     )[0]
     return _fill(text)
+
+
+# The stages of an answer as a reader names them, in the order they run.
+_STAGES = (
+    ("searching", "search"),
+    ("reading", "read"),
+    ("choosing", "rerank"),
+    ("writing", "answer"),
+    ("following", "follow-up search"),
+)
+
+
+def answer_usage(answer: Answer) -> dict[str, object]:
+    """Return what an answer cost, as the data a server replies with.
+
+    The keys are the ones the ``ask`` tool sends, so a client renders a
+    local answer and a remote one through ``format_usage`` alike.
+    """
+    return {
+        "model": answer.model,
+        "input_tokens": answer.input_tokens,
+        "output_tokens": answer.output_tokens,
+        "rerank_model": answer.rerank_model,
+        "rerank_input_tokens": answer.rerank_input_tokens,
+        "rerank_output_tokens": answer.rerank_output_tokens,
+        "turns": answer.turns,
+        "searches": list(answer.searches),
+        "timings": {stage: round(seconds, 3) for stage, seconds in answer.timings},
+        "seconds": round(answer.seconds, 3),
+    }
+
+
+def format_usage(usage: Mapping[str, object], total: float | None = None) -> str:
+    """Return one line that says where the seconds and tokens of an answer went.
+
+    Give the time of each stage, and with the rerank and the answer the
+    model and its tokens. With *total*, the seconds a client waited, say
+    how much of it the server spent, so the rest is the network and the
+    queue. A server too old to send timings gets its tokens shown alone.
+    """
+    timings = usage.get("timings")
+    timings = timings if isinstance(timings, Mapping) else {}
+    pieces = []
+    for stage, label in _STAGES:
+        detail = _detail(stage, usage)
+        if stage in timings:
+            pieces.append(f"{label} {_seconds(timings[stage]):.1f} s{detail}")
+        elif detail:
+            pieces.append(f"{label}{detail}")
+    seconds = usage.get("seconds")
+    known = isinstance(seconds, (int, float))
+    if total is None:
+        head = f"{_seconds(seconds):.1f} s" if known else ""
+    elif known:
+        head = f"{total:.1f} s, {_seconds(seconds):.1f} s of it on the server"
+    else:
+        head = f"{total:.1f} s"
+    return ": ".join(part for part in (head, ", ".join(pieces)) if part)
+
+
+def _detail(stage: str, usage: Mapping[str, object]) -> str:
+    """Return the model and tokens of a stage, in parentheses, or nothing."""
+    if stage == "choosing" and usage.get("rerank_model"):
+        tokens = _count(usage.get("rerank_input_tokens"))
+        return f" ({usage['rerank_model']}, {tokens:,} tokens)"
+    if stage == "writing" and usage.get("model"):
+        read = _count(usage.get("input_tokens"))
+        wrote = _count(usage.get("output_tokens"))
+        turns = _count(usage.get("turns"))
+        many = f", {turns} turns" if turns > 1 else ""
+        return f" ({usage['model']}, {read:,} in, {wrote:,} out{many})"
+    if stage == "following":
+        searches = usage.get("searches")
+        count = len(searches) if isinstance(searches, list) else 0
+        return f" ({count} searches)" if count else ""
+    return ""
+
+
+def _count(value: object) -> int:
+    """Return *value* as a count, and 0 for anything that is not a number."""
+    return int(value) if isinstance(value, (int, float)) else 0
+
+
+def _seconds(value: object) -> float:
+    """Return *value* as seconds, and 0 for anything that is not a number."""
+    return float(value) if isinstance(value, (int, float)) else 0.0
 
 
 def _unmarked(number: int) -> str:

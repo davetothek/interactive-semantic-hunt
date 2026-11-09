@@ -74,6 +74,32 @@ class TestRemoteAsk:
         assert capsys.readouterr().out == MARKDOWN + "\n"
         assert made.calls == [{"question": QUESTION, "brief": False}]
 
+    def test_stderr_says_what_the_server_spent(
+        self, server: tuple[Server, str], capsys
+    ) -> None:
+        made, url = server
+        made.reply = {
+            **made.reply,
+            "model": "m",
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "timings": {"searching": 0.25, "writing": 1.5},
+            "seconds": 1.75,
+        }
+        main(["--remote", url, "--ask", QUESTION])
+        err = capsys.readouterr().err
+        assert (
+            "s of it on the server: search 0.2 s, answer 1.5 s (m, 10 in, 2 out)" in err
+        )
+
+    def test_a_server_that_sends_no_timings_shows_the_wait(
+        self, server: tuple[Server, str], capsys
+    ) -> None:
+        _made, url = server
+        main(["--remote", url, "--ask", QUESTION])
+        last = capsys.readouterr().err.strip().splitlines()[-1]
+        assert last.startswith("ish: ") and last.endswith(" s")
+
     def test_brief_prints_the_short_answer(
         self, server: tuple[Server, str], capsys
     ) -> None:

@@ -8,6 +8,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `ish --ask` and `ish --brief` end with one line on stderr that says
+  where the time and the tokens went: the seconds of the search, of
+  reading the chunks, of the rerank, and of the answer, with each model
+  and its tokens. A remote answer also says how much of the wait the
+  server spent. The `ask` tool of the MCP server sends the same as
+  `timings`, `seconds`, and `rerank_model`.
+
 ### Fixed
 
 - A K&R C function definition, which declares its parameters between the
