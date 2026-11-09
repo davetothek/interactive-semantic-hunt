@@ -7,6 +7,7 @@ and the closest chunks instead, never an answer from outside them.
 """
 
 import logging
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -142,6 +143,13 @@ class Answer:
         blocks: The layout of the answer, when the model gave one: a short
             answer, sections of prose, steps, or tables, and what the
             sources leave open. *parts* holds the same claims flat.
+        rerank_model: Name of the model that chose the chunks, or empty
+            when none ran.
+        timings: Seconds spent in each stage, by stage, in the order the
+            stages first ran: ``searching``, ``reading``, ``choosing``,
+            ``writing``, and ``following``. Reading counts every chunk read
+            from its file, for the rerank and for the answer.
+        seconds: Seconds the whole answer took.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -156,6 +164,9 @@ class Answer:
     searches: tuple[str, ...] = ()
     turns: int = 0
     blocks: tuple[AnswerBlock, ...] = ()
+    rerank_model: str = ""
+    timings: tuple[tuple[str, float], ...] = ()
+    seconds: float = 0.0
 
 
 class AnswerQuestion:
@@ -172,6 +183,7 @@ class AnswerQuestion:
         pick: int = DEFAULT_PICK,
         turns: int = 0,
         on_step: AnswerCallback = _quiet,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -189,6 +201,9 @@ class AnswerQuestion:
         to that many times before it answers. Each search runs through
         *search*, so it reads the same indexes and filters, and adds the
         best chunks the model has not read, within the same budget.
+
+        Time each stage on *clock*, so a reader of the answer sees where
+        its seconds went.
         """
         self._search = search
         self._model = model
@@ -198,23 +213,43 @@ class AnswerQuestion:
         self._pick = pick
         self._turns = turns
         self._on_step = on_step
+        self._clock = clock
+        self._spent: dict[str, float] = {}
+
+    def _timed(self, stage: str, call: Callable[..., object], *args: object):
+        """Run *call* with *args*, and add the seconds it took to *stage*."""
+        start = self._clock()
+        try:
+            return call(*args)
+        finally:
+            self._spent[stage] = self._spent.get(stage, 0.0) + self._clock() - start
 
     def answer(self, question: str) -> Answer:
-        """Answer *question* from the chunks a search returns.
+        """Answer *question* from the chunks a search returns, and time it.
 
         Raise ``ValueError`` for an empty question. Ask the model nothing
         when the search finds nothing.
         """
+        self._spent = {}
+        start = self._clock()
+        answer = self._answer(question)
+        return _with_time(answer, tuple(self._spent.items()), self._clock() - start)
+
+    def _answer(self, question: str) -> Answer:
+        """Search, choose, read, and ask the model, in that order."""
         question = question.strip()
         if not question:
             raise ValueError("The question is empty.")
         self._on_step(AnswerStep(SEARCHING))
-        found = [chunk for chunk, _ in self._search(question)]
+        found = [chunk for chunk, _ in self._timed(SEARCHING, self._search, question)]
         rerank = self._rerank(question, found) if self._reranker else None
         if rerank is not None:
             found, rerank_in, rerank_out = rerank
         else:
             rerank_in = rerank_out = 0
+        rerank_model = (
+            self._reranker.model_name if self._reranker and rerank is not None else ""
+        )
         self._on_step(AnswerStep(READING, count=len(found)))
         texts, dropped, left = self._fit(found, self._budget)
         if dropped:
@@ -227,6 +262,7 @@ class AnswerQuestion:
                 dropped=dropped,
                 rerank_input_tokens=rerank_in,
                 rerank_output_tokens=rerank_out,
+                rerank_model=rerank_model,
             )
 
         if self._turns > 0:
@@ -234,7 +270,7 @@ class AnswerQuestion:
         else:
             sources = [_source(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
             self._on_step(AnswerStep(WRITING, model=self._model.model_name))
-            reply = self._model.answer(question, sources)
+            reply = self._timed(WRITING, self._model.answer, question, sources)
             searched, turns = [], 1
         kept = [chunk for chunk, _ in texts]
         by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
@@ -262,6 +298,7 @@ class AnswerQuestion:
             output_tokens=reply.output_tokens,
             rerank_input_tokens=rerank_in,
             rerank_output_tokens=rerank_out,
+            rerank_model=rerank_model,
             searches=tuple(searched),
             turns=turns,
         )
@@ -288,7 +325,9 @@ class AnswerQuestion:
                     turns=self._turns + 1,
                 )
             )
-            reply = self._model.step(question, sources, searched, turns_left)
+            reply = self._timed(
+                WRITING, self._model.step, question, sources, searched, turns_left
+            )
             turns += 1
             read_in += reply.input_tokens
             wrote += reply.output_tokens
@@ -301,7 +340,11 @@ class AnswerQuestion:
             for query in fresh_queries[:SEARCHES_A_TURN]:
                 self._on_step(AnswerStep(FOLLOWING, query=query))
                 searched.append(query)
-                fresh = [c for c, _ in self._search(query) if c not in seen]
+                fresh = [
+                    c
+                    for c, _ in self._timed(FOLLOWING, self._search, query)
+                    if c not in seen
+                ]
                 added, _, left = self._fit(fresh[:CHUNKS_A_SEARCH], left)
                 texts = texts + added
                 seen.update(chunk for chunk, _ in added)
@@ -327,7 +370,7 @@ class AnswerQuestion:
         previews: list[Source] = []
         by_id: dict[str, Chunk] = {}
         for n, chunk in enumerate(found, 1):
-            text = self._read(chunk)
+            text = self._timed(READING, self._read, chunk)
             if not text or not text.strip():
                 continue
             start = " ".join(text.split())[:PREVIEW_CHARS]
@@ -338,7 +381,9 @@ class AnswerQuestion:
         self._on_step(
             AnswerStep(CHOOSING, count=len(previews), model=self._reranker.model_name)
         )
-        selection = self._reranker.select(question, previews, self._pick)
+        selection = self._timed(
+            CHOOSING, self._reranker.select, question, previews, self._pick
+        )
         chosen = [by_id[i] for i in selection.ids if i in by_id]
         log.info(
             "%s chose %d of %d chunks, reading %d tokens",
@@ -363,7 +408,7 @@ class AnswerQuestion:
         """
         kept: list[tuple[Chunk, str]] = []
         for chunk in chunks:
-            text = self._read(chunk)
+            text = self._timed(READING, self._read, chunk)
             if not text or not text.strip():
                 log.warning("Left out %s, which has no readable text", chunk.path)
                 continue
@@ -371,6 +416,15 @@ class AnswerQuestion:
                 kept.append((chunk, text))
                 left -= len(text)
         return kept, len(chunks) - len(kept), left
+
+
+def _with_time(
+    answer: Answer, timings: tuple[tuple[str, float], ...], seconds: float
+) -> Answer:
+    """Return *answer* with the seconds of each stage and of the whole."""
+    from dataclasses import replace
+
+    return replace(answer, timings=timings, seconds=seconds)
 
 
 def _source(source_id: str, chunk: Chunk, text: str) -> Source:

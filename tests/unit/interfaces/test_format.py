@@ -516,3 +516,87 @@ class TestFormatBrief:
 
         answer = Answer(parts=(), covered=False, sources=(self._chunk(),))
         assert format_brief(answer) == "The documents do not answer this."
+
+
+USAGE = {
+    "model": "claude-sonnet-5-5",
+    "input_tokens": 24422,
+    "output_tokens": 1642,
+    "rerank_model": "claude-haiku-5-5",
+    "rerank_input_tokens": 9448,
+    "rerank_output_tokens": 60,
+    "turns": 1,
+    "searches": [],
+    "timings": {"searching": 0.92, "reading": 19.81, "choosing": 5.1, "writing": 8.8},
+    "seconds": 34.6,
+}
+
+
+class TestFormatUsage:
+    """One line says where the seconds and tokens of an answer went."""
+
+    def test_a_local_answer(self) -> None:
+        from ish.interfaces.format import format_usage
+
+        assert format_usage(USAGE) == (
+            "34.6 s: search 0.9 s, read 19.8 s, "
+            "rerank 5.1 s (claude-haiku-5-5, 9,448 tokens), "
+            "answer 8.8 s (claude-sonnet-5-5, 24,422 in, 1,642 out)"
+        )
+
+    def test_a_remote_answer_says_what_the_server_spent(self) -> None:
+        from ish.interfaces.format import format_usage
+
+        line = format_usage(USAGE, 36.04)
+        assert line.startswith("36.0 s, 34.6 s of it on the server: search 0.9 s")
+
+    def test_a_server_too_old_for_timings_shows_its_tokens(self) -> None:
+        from ish.interfaces.format import format_usage
+
+        old = {k: v for k, v in USAGE.items() if k not in ("timings", "seconds")}
+        assert format_usage(old, 30.0) == (
+            "30.0 s: rerank (claude-haiku-5-5, 9,448 tokens), "
+            "answer (claude-sonnet-5-5, 24,422 in, 1,642 out)"
+        )
+
+    def test_follow_up_searches_and_turns_are_counted(self) -> None:
+        from ish.interfaces.format import format_usage
+
+        usage = {
+            **USAGE,
+            "rerank_model": "",
+            "turns": 3,
+            "searches": ["a", "b"],
+            "timings": {"writing": 12.0, "following": 1.5},
+        }
+        assert format_usage(usage) == (
+            "34.6 s: answer 12.0 s (claude-sonnet-5-5, 24,422 in, 1,642 out, "
+            "3 turns), follow-up search 1.5 s (2 searches)"
+        )
+
+    def test_a_value_that_is_not_a_number_reads_as_nothing(self) -> None:
+        from ish.interfaces.format import format_usage
+
+        usage = {"model": "m", "input_tokens": "many", "timings": {"writing": "x"}}
+        assert format_usage(usage) == "answer 0.0 s (m, 0 in, 0 out)"
+
+    def test_the_usage_of_an_answer_carries_every_key(self) -> None:
+        from ish.application.answer import Answer
+        from ish.interfaces.format import answer_usage, format_usage
+
+        answer = Answer(
+            parts=(),
+            covered=True,
+            sources=(),
+            model="m",
+            input_tokens=10,
+            output_tokens=2,
+            turns=1,
+            timings=(("searching", 0.5), ("writing", 2.0)),
+            seconds=2.75,
+        )
+        usage = answer_usage(answer)
+        assert usage["timings"] == {"searching": 0.5, "writing": 2.0}
+        assert (
+            format_usage(usage) == "2.8 s: search 0.5 s, answer 2.0 s (m, 10 in, 2 out)"
+        )

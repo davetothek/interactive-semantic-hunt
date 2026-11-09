@@ -7,15 +7,18 @@ import json
 import logging
 import os
 import sys
+import time
 
 from ish import bootstrap
 from ish.application.answer import FOLLOWING, AnswerStep
 from ish.interfaces.busy import ProgressLine, Ticker
 from ish.interfaces.cli.args import CliArgs
 from ish.interfaces.format import (
+    answer_usage,
     format_answer,
     format_brief,
     format_selection,
+    format_usage,
     render,
 )
 from ish.interfaces.log import resolve_color, setup_logging
@@ -51,7 +54,8 @@ def _run_ask(args: CliArgs) -> int:
     Return 0 when the documents answer it, and 2 when they do not, so a
     script can tell the two apart. Show each step on stderr while the
     models work, and keep stdout for the answer, so it pipes into an
-    editor. Return 130 on Ctrl-C, with no traceback.
+    editor. End with one line on stderr that says where the seconds and
+    tokens went. Return 130 on Ctrl-C, with no traceback.
     """
     if not args.query:
         log.error("--ask needs a question.")
@@ -84,6 +88,7 @@ def _run_ask(args: CliArgs) -> int:
             else format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
         )
         sys.stdout.write(f"{text}\n")
+        sys.stderr.write(f"ish: {format_usage(answer_usage(answer))}\n")
     return 0 if answer.covered else 2
 
 
@@ -91,7 +96,8 @@ def _run_remote_ask(args: CliArgs) -> int:
     """Ask the server that ``remote`` names, and print its answer.
 
     Keep the exit codes of a local answer. The server searches its own
-    tree, so the path given here does not travel. The filters do.
+    tree, so the path given here does not travel. The filters do. Say
+    how long the question took, and how much of it the server spent.
     """
     from ish.interfaces.mcp.client import RemoteClient, RemoteError
 
@@ -105,6 +111,7 @@ def _run_remote_ask(args: CliArgs) -> int:
         arguments["type"] = list(settings.type)
 
     ticker = Ticker()
+    start = time.monotonic()
     try:
         client = RemoteClient(settings.remote, os.environ.get(MCP_TOKEN_ENV_VAR, ""))
         ticker.show(f"Asking {client.host}")
@@ -133,6 +140,7 @@ def _run_remote_ask(args: CliArgs) -> int:
         )
         return 1
     sys.stdout.write(f"{shown}\n")
+    sys.stderr.write(f"ish: {format_usage(reply, time.monotonic() - start)}\n")
     return 0 if reply.get("covered") else 2
 
 

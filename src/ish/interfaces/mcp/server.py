@@ -25,6 +25,7 @@ from ish.domain.chunk import Chunk
 from ish.interfaces import heartbeat
 from ish.interfaces.format import (
     NOT_COVERED_TEXT,
+    answer_usage,
     display_path,
     format_answer,
     format_brief,
@@ -323,16 +324,12 @@ class IshTools:
             }
             return entry
 
+        # What the answer cost: the models, their tokens, and the seconds
+        # of each stage, so a client can show where the time went.
         reply: dict[str, Any] = {
             "covered": answer.covered,
-            "model": answer.model,
-            "input_tokens": answer.input_tokens,
-            "output_tokens": answer.output_tokens,
-            "rerank_input_tokens": answer.rerank_input_tokens,
-            "rerank_output_tokens": answer.rerank_output_tokens,
             "dropped": answer.dropped,
-            "turns": answer.turns,
-            "searches": list(answer.searches),
+            **answer_usage(answer),
         }
         if brief:
             reply["answer"] = format_brief(answer)
@@ -464,7 +461,9 @@ class IshTools:
                     "sections of prose, steps, or tables, and what the "
                     "documents leave open), and per citation the path, the "
                     "type, the location, and a link that opens the source, and "
-                    "the whole answer as Markdown. When the "
+                    "the whole answer as Markdown, and what it cost: the "
+                    "models, their tokens, and the seconds of each stage in "
+                    "'timings'. When the "
                     "documents do not answer the question, 'covered' is "
                     "false and 'sources' lists the closest chunks. Use it "
                     "for questions such as 'how is the watchdog configured'."
