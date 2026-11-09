@@ -81,16 +81,22 @@ class TestAsk:
         assert about == "    doc · Watchdog"
         assert where == "    docs/"
 
-    def test_the_last_line_on_stderr_says_where_the_time_went(
+    def test_stderr_ends_with_the_time_table_and_the_version(
         self, project: Path, monkeypatch, capsys
     ) -> None:
+        from ish.interfaces.cli.args import installed_version
+
         _model(monkeypatch, FakeModel())
         main(["--ask", "what does the watchdog do", str(project), *FLAGS])
         captured = capsys.readouterr()
-        last = captured.err.strip().splitlines()[-1]
-        assert last.startswith("ish: ")
-        assert "search " in last and "answer " in last and "(fake-model," in last
-        assert "ish: " not in captured.out
+        lines = captured.err.rstrip().splitlines()
+        assert lines[-1] == f"ish {installed_version()}"
+        assert lines[-2] == ""
+        assert any(
+            line.startswith("answer ") and "fake-model" in line for line in lines
+        )
+        assert any(line.startswith("total ") for line in lines)
+        assert "stage" not in captured.out
 
     def test_a_blank_line_sets_the_usage_apart(
         self, project: Path, monkeypatch, capsys
@@ -98,7 +104,7 @@ class TestAsk:
         _model(monkeypatch, FakeModel())
         main(["--ask", "what does the watchdog do", str(project), *FLAGS])
         err = capsys.readouterr().err
-        assert "\n\nish: " in "\n" + err
+        assert "\n\nstage " in "\n" + err
 
     def test_color_always_styles_the_answer_and_greys_the_usage(
         self, project: Path, monkeypatch, capsys
@@ -113,7 +119,7 @@ class TestAsk:
         main([*args, "--color", "always"])
         styled = capsys.readouterr()
         assert "\033[" in styled.out and strip(styled.out) == plain.out
-        assert GREY + "ish: " in styled.err
+        assert GREY + "stage " in styled.err and GREY + "ish " in styled.err
 
     def test_a_pipe_gets_plain_markdown(
         self, project: Path, monkeypatch, capsys

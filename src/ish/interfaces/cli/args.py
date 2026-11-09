@@ -165,11 +165,11 @@ class _VersionAction(argparse.Action):
         values: str | Sequence[Any] | None,
         option_string: str | None = None,
     ) -> None:
-        print(f"{parser.prog} {_version()}")
+        print(f"{parser.prog} {installed_version()}")
         parser.exit()
 
 
-def _version() -> str:
+def installed_version() -> str:
     """Return the installed version, or a word that says it is unknown."""
     import importlib.metadata
 

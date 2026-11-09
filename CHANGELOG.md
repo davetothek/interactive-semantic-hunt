@@ -13,9 +13,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - `ish --ask` colors the answer on a terminal: headings, markup, the gaps
   the documents leave, and source links that open with a click. It adds
   styles and changes no character, so a copy from the terminal is the
-  Markdown a pipe gets. The timing line below it is grey, after a blank
-  line.
-- `--color WHEN` covers the answer and the timing line as well as the
+  Markdown a pipe gets.
+- The time and tokens below an answer are a grey table after a blank
+  line: one row for each stage, with its time, model, and tokens, then
+  the total, and the version of ish and of the server that answered.
+- `--color WHEN` covers the answer and the timing table as well as the
   logs, and `auto` honors `NO_COLOR`.
 - `ish --help` starts with one line of usage and groups the options by
   what they do: search, answers, output, the index, embedding,

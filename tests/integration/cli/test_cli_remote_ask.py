@@ -87,18 +87,30 @@ class TestRemoteAsk:
             "seconds": 1.75,
         }
         main(["--remote", url, "--ask", QUESTION])
-        err = capsys.readouterr().err
-        assert (
-            "s of it on the server: search 0.2 s, answer 1.5 s (m, 10 in, 2 out)" in err
-        )
+        lines = capsys.readouterr().err.rstrip().splitlines()
+        assert any(line.startswith("search ") and "0.2 s" in line for line in lines)
+        answer = next(line for line in lines if line.startswith("answer "))
+        assert answer.split() == ["answer", "1.5", "s", "m", "10", "2"]
+        assert any(line.endswith("1.8 s on the server") for line in lines)
 
     def test_a_server_that_sends_no_timings_shows_the_wait(
         self, server: tuple[Server, str], capsys
     ) -> None:
         _made, url = server
         main(["--remote", url, "--ask", QUESTION])
-        last = capsys.readouterr().err.strip().splitlines()[-1]
-        assert last.startswith("ish: ") and last.endswith(" s")
+        lines = capsys.readouterr().err.rstrip().splitlines()
+        total = next(line for line in lines if line.startswith("total "))
+        assert total.endswith(" s") and "on the server" not in total
+
+    def test_the_last_line_names_both_versions(
+        self, server: tuple[Server, str], capsys
+    ) -> None:
+        from ish.interfaces.cli.args import installed_version
+
+        _made, url = server
+        main(["--remote", url, "--ask", QUESTION])
+        last = capsys.readouterr().err.rstrip().splitlines()[-1]
+        assert last.startswith(f"ish {installed_version()} · server ")
 
     def test_brief_prints_the_short_answer(
         self, server: tuple[Server, str], capsys
