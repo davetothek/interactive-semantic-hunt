@@ -13,8 +13,9 @@ snapshot of the code of another checkout runs from this one.
 
 A line holds one chunk: the tree, the path in it, the language, kind,
 symbol, lines, and a hash of the text. A file that raises is a line with
-the error. The parsers run as an index run builds them, with every cap,
-and without the parsers of the user, so two machines agree.
+the error, and a file that yields no chunk is a line that says so. The
+parsers run as an index run builds them, with every cap, and without the
+parsers of the user, so two machines agree.
 """
 
 import argparse
@@ -57,6 +58,8 @@ def snapshot(trees: list[Path]) -> Iterator[dict]:
                 except Exception as exc:
                     yield {**where, "error": type(exc).__name__}
                     continue
+                if not chunks:
+                    yield {**where, "empty": True}
                 for chunk in chunks:
                     yield {
                         **where,
@@ -84,7 +87,9 @@ def _read(path: Path) -> list[dict]:
 def _summary(records: list[dict]) -> str:
     files = {(r["tree"], r["path"]) for r in records}
     errors = sum("error" in r for r in records)
-    return f"{len(files)} files, {len(records) - errors} chunks, {errors} errors"
+    empty = sum("empty" in r for r in records)
+    chunks = len(records) - errors - empty
+    return f"{len(files)} files, {chunks} chunks, {errors} errors, {empty} empty"
 
 
 def main(argv: list[str] | None = None) -> int:

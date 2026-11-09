@@ -50,7 +50,8 @@ they are private.
    git worktree remove --force /tmp/chunk-base
    ```
 
-The comparison prints the files, chunks, and errors of each side, then
+The comparison prints the files, chunks, errors, and empty files of each
+side, then
 `identical`, or each record that is on one side only, and exits 1.
 
 ## Reading the result

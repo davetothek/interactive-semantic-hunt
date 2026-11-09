@@ -32,6 +32,7 @@ def tree(tmp_path: Path) -> Path:
     (root / "guide" / "a.md").write_text("# Top\n\nintro\n\n## Next\n\ntext\n")
     (root / "tool.py").write_text("def run():\n    return 1\n")
     (root / "broken.py").write_text("def (:\n")
+    (root / "code.md").write_text("```\nonly code\n```\n")
     (root / "notes.txt").write_text("not a language\n")
     (root / ".git").mkdir()
     (root / ".git" / "skipped.md").write_text("# Hidden\n")
@@ -45,6 +46,7 @@ class TestSnapshot:
         records = list(snap.snapshot([tree]))
         assert {(r["tree"], r["path"]) for r in records} == {
             ("docs", "broken.py"),
+            ("docs", "code.md"),
             ("docs", "guide/a.md"),
             ("docs", "tool.py"),
         }
@@ -59,6 +61,14 @@ class TestSnapshot:
     def test_a_file_that_raises_is_a_record_with_the_error(self, tree: Path) -> None:
         (record,) = [r for r in snap.snapshot([tree]) if r["path"] == "broken.py"]
         assert record["error"] == "ParseError"
+
+    def test_a_file_with_no_chunk_is_a_record_that_says_so(self, tree: Path) -> None:
+        (record,) = [r for r in snap.snapshot([tree]) if r["path"] == "code.md"]
+        assert record["empty"] is True
+
+    def test_the_summary_counts_every_file(self, tree: Path) -> None:
+        summary = snap._summary(list(snap.snapshot([tree])))
+        assert summary == "4 files, 3 chunks, 1 errors, 1 empty"
 
     def test_two_runs_agree(self, tree: Path) -> None:
         assert list(snap.snapshot([tree])) == list(snap.snapshot([tree]))
