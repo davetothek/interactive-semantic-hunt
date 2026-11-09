@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.9.1 - 2026-11-09
+
 ### Added
 
 - `contrib/nvim/ish_link.lua` sends `ISH_MCP_TOKEN` as a bearer token
