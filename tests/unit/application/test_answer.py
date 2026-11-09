@@ -682,3 +682,73 @@ class TestTerms:
             "q"
         )
         assert [t.meaning for t in result.terms] == ["Auto Exposure"]
+
+
+class TestTermsFromTheTree:
+    """An acronym the sources of an answer do not spell out takes its
+    meaning from where the tree does, cited to that chunk."""
+
+    def _reply(self, text: str, terms=()):
+        from ish.application.ports.language_model import Passage, Reply
+
+        return Reply(
+            passages=(Passage(text, ("1",)),), covered=True, terms=tuple(terms)
+        )
+
+    def test_a_definition_elsewhere_in_the_tree_names_the_acronym(self) -> None:
+        from ish.application.glossary import Glossary
+
+        glossary = Glossary()
+        defining = make_chunk("glossary", "x")
+        glossary.add(defining, "| AGC | Automatic Gain Control |")
+        doc = make_chunk("spec", "The AGC loop runs.")
+        result = AnswerQuestion(
+            search=searching(doc),
+            model=FakeModel(self._reply("The AGC loop runs.")),
+            glossary=glossary,
+        ).answer("q")
+        (term,) = result.terms
+        assert (term.term, term.meaning, term.cites) == (
+            "AGC",
+            "Automatic Gain Control",
+            (defining,),
+        )
+
+    def test_a_text_the_answer_read_fills_the_glossary(self) -> None:
+        doc = make_chunk("spec", "The Auto Exposure (AE) block runs first.")
+        result = AnswerQuestion(
+            search=searching(doc), model=FakeModel(self._reply("AE runs first."))
+        ).answer("q")
+        assert [(t.term, t.meaning) for t in result.terms] == [("AE", "Auto Exposure")]
+
+    def test_the_meaning_the_model_took_from_its_sources_wins(self) -> None:
+        from ish.application.glossary import Glossary
+        from ish.application.ports.language_model import Term
+
+        glossary = Glossary()
+        glossary.add(make_chunk("far"), "Application Engineer (AE)")
+        doc = make_chunk("spec", "AE means auto exposure here.")
+        result = AnswerQuestion(
+            search=searching(doc),
+            model=FakeModel(
+                self._reply("AE runs.", [Term("AE", "auto exposure", ("1",))])
+            ),
+            glossary=glossary,
+        ).answer("q")
+        assert [t.meaning for t in result.terms] == ["auto exposure"]
+
+    def test_an_answer_names_at_most_max_terms(self) -> None:
+        from ish.application.answer import MAX_TERMS
+        from ish.application.glossary import Glossary
+
+        glossary = Glossary()
+        names = [f"A{letter}" for letter in "BCDEFGHIJKLMNOPQRSTUVWXYZ"]
+        for name in names:
+            glossary.add(make_chunk(name), f"A {name[1]}word ({name})")
+        doc = make_chunk("spec", "x")
+        result = AnswerQuestion(
+            search=searching(doc),
+            model=FakeModel(self._reply(" ".join(names))),
+            glossary=glossary,
+        ).answer("q")
+        assert len(result.terms) == MAX_TERMS

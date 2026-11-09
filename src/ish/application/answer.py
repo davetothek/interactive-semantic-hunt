@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from ish.application.glossary import Glossary
 from ish.application.ports.language_model import (
     SEARCHES_A_TURN,
     Block,
@@ -35,6 +36,13 @@ PREVIEW_CHARS = 300
 
 # Chunks each follow-up search adds.
 CHUNKS_A_SEARCH = 5
+
+# Acronyms an answer names at most. A register table can hold dozens of
+# names, and a reader wants the terms, not a second table.
+MAX_TERMS = 20
+
+# An acronym as an answer writes it: a capital, then capitals or digits.
+_ACRONYM = re.compile(r"(?<![\w-])[A-Z][A-Z0-9&/-]{1,9}(?![\w-])")
 
 # Characters of chunk text one question may send. About 15,000 tokens at
 # the four characters a token that English text averages.
@@ -199,6 +207,7 @@ class AnswerQuestion:
         turns: int = 0,
         on_step: AnswerCallback = _quiet,
         clock: Callable[[], float] = time.monotonic,
+        glossary: Glossary | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -219,6 +228,11 @@ class AnswerQuestion:
 
         Time each stage on *clock*, so a reader of the answer sees where
         its seconds went.
+
+        Add every text read to *glossary*, and name each acronym of the
+        answer that the model did not spell out with the meaning the
+        glossary holds. A session shares one glossary between questions,
+        and a server fills it from its whole tree.
         """
         self._search = search
         self._model = model
@@ -230,6 +244,7 @@ class AnswerQuestion:
         self._on_step = on_step
         self._clock = clock
         self._spent: dict[str, float] = {}
+        self._glossary = Glossary() if glossary is None else glossary
 
     def _timed(self, stage: str, call: Callable[..., object], *args: object):
         """Run *call* with *args*, and add the seconds it took to *stage*."""
@@ -302,9 +317,7 @@ class AnswerQuestion:
             else ()
         )
         blocks = tuple(_block(b, by_id) for b in reply.blocks) if reply.covered else ()
-        terms = (
-            _terms(reply.terms, texts, " ".join(_words(reply))) if reply.covered else ()
-        )
+        terms = self._named(reply, texts, kept) if reply.covered else ()
         return Answer(
             parts=parts,
             blocks=blocks,
@@ -321,6 +334,31 @@ class AnswerQuestion:
             searches=tuple(searched),
             turns=turns,
         )
+
+    def _named(
+        self, reply: Reply, texts: list[tuple[Chunk, str]], kept: list[Chunk]
+    ) -> tuple[AnswerTerm, ...]:
+        """Return the acronyms of the answer, each with a meaning a source writes.
+
+        Keep the terms the model spelled out from the sources it read, then
+        look up the rest of the acronyms the answer uses in the glossary,
+        nearest to the sources the answer read. Sort them by term.
+        """
+        words = " ".join(_words(reply))
+        named = {t.term: t for t in _terms(reply.terms, texts, words)}
+        for short in dict.fromkeys(_ACRONYM.findall(words)):
+            if short in named or len(named) >= MAX_TERMS:
+                continue
+            found = self._glossary.lookup(short, kept)
+            if found is not None:
+                named[short] = AnswerTerm(short, found.meaning, (found.chunk,))
+        return tuple(named[t] for t in sorted(named, key=str.casefold))
+
+    def _read_kept(self, chunk: Chunk) -> str | None:
+        """Read *chunk*, and add what its text defines to the glossary."""
+        text = self._timed(READING, self._read, chunk)
+        self._glossary.add(chunk, text)
+        return text
 
     def _converse(
         self, question: str, texts: list[tuple[Chunk, str]], left: int
@@ -390,7 +428,7 @@ class AnswerQuestion:
         previews: list[Source] = []
         by_id: dict[str, Chunk] = {}
         for n, chunk in enumerate(found, 1):
-            text = self._timed(READING, self._read, chunk)
+            text = self._read_kept(chunk)
             if not text or not text.strip():
                 continue
             start = " ".join(text.split())[:PREVIEW_CHARS]
@@ -428,7 +466,7 @@ class AnswerQuestion:
         """
         kept: list[tuple[Chunk, str]] = []
         for chunk in chunks:
-            text = self._timed(READING, self._read, chunk)
+            text = self._read_kept(chunk)
             if not text or not text.strip():
                 log.warning("Left out %s, which has no readable text", chunk.path)
                 continue

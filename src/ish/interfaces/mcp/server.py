@@ -282,10 +282,11 @@ class IshTools:
                 log.warning("Could not parse %s for answers", tree, exc_info=True)
                 return
             log.info(
-                "Parsed %d files of %s for answers in %.1f s",
+                "Parsed %d files of %s for answers in %.1f s, %d acronyms defined",
                 count,
                 tree,
                 time.monotonic() - start,
+                session.glossary_size(),
             )
 
         thread = threading.Thread(target=run, name="ish-warm", daemon=True)

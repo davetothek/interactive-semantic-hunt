@@ -216,7 +216,9 @@ about the same files reads none again.
 
 A server that answers from one tree can keep the whole tree. With
 `ask_warm`, `ish-mcp` parses the files of its tree on a thread when it
-starts, up to `ask_files`, so the first questions read no file either:
+starts, up to `ask_files`, so the first questions read no file either. The
+same pass collects what the acronyms of the tree stand for, which the
+Terms section of an answer reads:
 
 ```toml
 ask_files = 100000

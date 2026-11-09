@@ -330,6 +330,17 @@ something broke. This is that record, so a rule is never argued from taste.
   peak of 645 MB, and the next answer read in 0.0 s: 21.9 s against
   37.5 s. Hence `ask_files` and `ask_warm`.
 
+- An answer used acronyms such as AE, AGC, and SHT, and the ten chunks it
+  read never spelled them out: asked to list the terms its sources
+  define, the model listed none. The tree held 61 files with an
+  abbreviations or glossary section, and spelled out AE in 10 files. A
+  glossary built from the tree, with the test of Schwartz and Hearst
+  (2003) for each definition, found 131 acronyms in two local
+  specification trees and 129 on the server, and named AE and AGC in the
+  same answer, each cited to the chunk that spells it out. It added
+  15 s to the 87.5 s that parsing the tree at start took. Hence
+  `application/glossary.py`, and a meaning only from the results.
+
 ### Embedding
 
 - Task prefixes: measured on this repo with nomic-embed-text over 16 queries,
