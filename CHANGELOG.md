@@ -15,6 +15,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   behind that token open in Neovim. It sends the token only to the
   origin of `ISH_REMOTE` and to the origins in `token_origins`.
 
+### Fixed
+
+- A Markdown file lost every heading after a line of four or more
+  hyphens or equal signs, such as a `----` thematic break or the `====`
+  underline of a heading. The parser read the line as the start of a
+  code block that never closed, so the file was one section. Markdown
+  now opens a code block on backticks and tildes only. AsciiDoc blocks
+  are read as before. The next refresh reads every file again and embeds
+  only the sections it has not seen.
+
 ## 0.9.0 - 2026-11-06
 
 ### Added

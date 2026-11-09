@@ -9,7 +9,9 @@ with includes, tables, and figures through three hooks: ``_expand``,
 
 Both formats also carry fenced code, where a run of ``#`` or ``=`` is
 source rather than a heading. Track the fences and ignore what is
-inside them.
+inside them. Each language names its own fence: a line that opens a
+block in AsciiDoc is a thematic break or a heading underline in
+Markdown.
 
 A file with no heading is one chunk when it holds prose, and nothing
 when it holds only machinery. Measured on one specification tree: 2,844
@@ -25,10 +27,6 @@ from pathlib import Path
 from ish.adapters.parser._limits import INCLUDED_KIND
 from ish.domain.chunk import Chunk
 
-# A fence is three or more backticks or tildes in Markdown, and four
-# hyphens or dots in AsciiDoc.
-_FENCE = re.compile(r"^\s*(`{3,}|~{3,}|-{4,}|\.{4,}|={4,}\s*$)")
-
 # A line that is machinery rather than prose: an attribute definition,
 # an include, a conditional, a comment, a table row or rule, a block
 # attribute list, or a heading marker with no title.
@@ -41,10 +39,23 @@ _MACHINERY = re.compile(
 class SectionParser:
     """Extract one chunk per heading from a prose document."""
 
-    def __init__(self, language: str, suffixes: frozenset[str], marker: str) -> None:
+    def __init__(
+        self,
+        language: str,
+        suffixes: frozenset[str],
+        marker: str,
+        fence: re.Pattern[str],
+    ) -> None:
+        """Read headings marked by *marker*, outside blocks that *fence* opens.
+
+        *fence* matches a line that opens or closes a block, and its first
+        group holds the delimiter. A block closes on a delimiter of the same
+        character.
+        """
         self.language = language
         self.suffixes = suffixes
         self._heading = re.compile(rf"^({re.escape(marker)}+)\s+(\S.*)$")
+        self._fence = fence
 
     def parse(self, path: Path, source: str) -> Sequence[Chunk]:
         """Return one chunk per heading, nested by heading level."""
@@ -183,12 +194,11 @@ class SectionParser:
             path, lines, expanded, 1, len(lines), kind="document", symbol=path.stem
         )
 
-    @staticmethod
-    def _outside_fences(lines: list[str]):
+    def _outside_fences(self, lines: list[str]):
         """Yield each numbered line that is not inside a fenced block."""
         fence: str | None = None
         for number, line in enumerate(lines, 1):
-            fence_match = _FENCE.match(line)
+            fence_match = self._fence.match(line)
             if fence_match:
                 token = fence_match.group(1).strip()
                 if fence is None:

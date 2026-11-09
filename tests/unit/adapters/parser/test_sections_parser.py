@@ -144,6 +144,44 @@ class TestFencedBlocks:
         source = "# Real\n\n```\n# hidden\n"
         assert [c.symbol for c in markdown.parse(MD, source)] == ["Real"]
 
+    def test_asciidoc_example_block(self, asciidoc: SectionParser) -> None:
+        source = "= Real\n\n====\n= hidden\n====\n\n== Also real\n"
+        symbols = [c.symbol for c in asciidoc.parse(ADOC, source)]
+        assert symbols == ["Real", "Real > Also real"]
+
+    def test_asciidoc_reads_a_markdown_fence(self, asciidoc: SectionParser) -> None:
+        source = "= Real\n\n```\n= hidden\n```\n\n== Also real\n"
+        symbols = [c.symbol for c in asciidoc.parse(ADOC, source)]
+        assert symbols == ["Real", "Real > Also real"]
+
+
+class TestMarkdownRulesHideNoHeading:
+    """A line of four hyphens or equal signs opened a fence in Markdown.
+
+    In Markdown that line is a thematic break or the underline of a
+    heading, and the fence it opened never closed. Every heading after it
+    was hidden, and the file collapsed into its first section.
+    """
+
+    @pytest.mark.parametrize("rule", ["----", "-----------", "====", "=========="])
+    def test_headings_after_the_line_are_read(
+        self, markdown: SectionParser, rule: str
+    ) -> None:
+        source = f"# Top\n\nintro\n\n{rule}\n\n## Second\n\ntext\n\n## Third\n"
+        symbols = [c.symbol for c in markdown.parse(MD, source)]
+        assert symbols == ["Top", "Top > Second", "Top > Third"]
+
+    def test_a_setext_underline_stays_in_its_section(
+        self, markdown: SectionParser
+    ) -> None:
+        source = "# Top\n\nTitle\n=====\n\ntext\n\n## Next\n"
+        (top, _next) = markdown.parse(MD, source)
+        assert "=====\n" in top.text and "text\n" in top.text
+
+    def test_a_line_of_dots_is_prose(self, markdown: SectionParser) -> None:
+        source = "# Top\n\n....\n\n## Next\n"
+        assert [c.symbol for c in markdown.parse(MD, source)] == ["Top", "Top > Next"]
+
 
 class TestEdgeCases:
     """Verify documents that carry no usable structure."""

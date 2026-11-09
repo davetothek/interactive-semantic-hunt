@@ -165,6 +165,12 @@ something broke. This is that record, so a rule is never argued from taste.
   One index run logged 12,795 warnings for values that could not be divided,
   which is why the parser now reports once per file.
 
+- One fence pattern served Markdown and AsciiDoc, so a `----` thematic
+  break or a `====` heading underline opened a code block in Markdown
+  that never closed, and every later heading was hidden. Over 14,370
+  files of six trees, 9 Markdown files read as 9 chunks and read as 61
+  with a fence for each language. No other chunk moved.
+
 ### Indexing
 
 - Pruning on absence from a walk was a real defect: a subdirectory that

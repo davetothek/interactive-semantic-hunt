@@ -23,6 +23,11 @@ from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
 
+# A delimited block opens and closes on four or more hyphens, dots, or
+# equal signs: a listing, a literal, an example. Asciidoctor also reads a
+# Markdown fence of backticks or tildes.
+FENCE = re.compile(r"^\s*(`{3,}|~{3,}|-{4,}|\.{4,}|={4,}\s*$)")
+
 # A figure, and a block title: one dot and a word.
 _IMAGE = re.compile(r"^image::([^\[]+)\[([^\]]*)\]\s*$")
 _TITLE = re.compile(r"^\.([^.\s].*)$")
@@ -32,7 +37,9 @@ class AsciiDocParser(SectionParser):
     """Extract one chunk per heading, with the includes of the file resolved."""
 
     def __init__(self) -> None:
-        super().__init__("asciidoc", frozenset({".adoc", ".asciidoc", ".asc"}), "=")
+        super().__init__(
+            "asciidoc", frozenset({".adoc", ".asciidoc", ".asc"}), "=", FENCE
+        )
         self._expander = Expander()
         # Expanded text no longer lines up with the file, so this
         # parser divides a long section itself, between lines of the
