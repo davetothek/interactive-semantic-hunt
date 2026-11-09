@@ -12,14 +12,18 @@ def cpp_parser() -> TreeSitterParser:
 
     One parser owns both languages. The C++ grammar reads nearly all C,
     and the two share the ``.h`` suffix, so splitting them would leave
-    every header ambiguous.
+    every header ambiguous. It cannot read a K&R definition, which
+    declares its parameters between the parameter list and the body. A
+    ``.c`` file it leaves an error in is read again with the C grammar.
     """
+    import tree_sitter_c
     import tree_sitter_cpp
 
     return TreeSitterParser(
         language="cpp",
         suffixes=frozenset({".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"}),
         grammar=tree_sitter_cpp.language(),
+        fallbacks={".c": tree_sitter_c.language()},
         kinds={
             "function_definition": "function",
             "class_specifier": "class",

@@ -72,7 +72,10 @@ The `add-language` skill walks through it.
 - `ask` reads a chunk through `build_reader()`, which parses the file again,
   so a model reads the text the index embedded, includes resolved.
 - `_tree_sitter.py` walks a Tree-sitter grammar. `cpp.py` configures it for C
-  and C++ as one parser, `cpp`, which owns `.h`. A
+  and C++ as one parser, `cpp`, which owns `.h`. A `.c` file the C++ grammar
+  leaves an error in is read again with the C grammar, which reads a K&R
+  definition. The second reading wins only with fewer errors and no chunk
+  lost, so a clean file is parsed once. A
   type is a definition only when it has a body. A declaration is a chunk only
   when it declares a function, and is dropped when the same file defines it.
 - `_plugins.py` loads a parser from `~/.config/ish/parsers/`. Only that

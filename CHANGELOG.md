@@ -8,6 +8,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Fixed
+
+- A K&R C function definition, which declares its parameters between the
+  parameter list and the body, is read as a function. The C and C++
+  parser dropped it with no message, and a file of such definitions
+  alone failed to parse. A `.c` file that the C++ grammar cannot read
+  cleanly is now read again with the C grammar, and that reading is kept
+  when it holds fewer errors and loses no definition. Headers and modern
+  C read as before.
+
 ## 0.9.1 - 2026-11-09
 
 ### Added

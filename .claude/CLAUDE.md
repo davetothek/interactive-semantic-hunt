@@ -173,6 +173,13 @@ something broke. This is that record, so a rule is never argued from taste.
   files of six trees, 9 Markdown files read as 9 chunks and read as 61
   with a fence for each language. No other chunk moved.
 
+- The C++ grammar drops a K&R definition, which the C grammar reads.
+  With the C grammar as a fallback for a `.c` file that holds an error,
+  16,358 files of eight trees kept every chunk. Six `.c` files that the two
+  grammars read differently held no K&R definition. They were dense with
+  macros, and the C grammar read each with more errors, so the C++ reading
+  stayed. Hence the rule that a fallback wins only with fewer errors.
+
 ### Indexing
 
 - Pruning on absence from a walk was a real defect: a subdirectory that

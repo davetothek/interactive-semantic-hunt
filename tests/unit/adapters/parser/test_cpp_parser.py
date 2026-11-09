@@ -255,3 +255,75 @@ class TestMethodKind:
     def test_free_function_stays_a_function(self, parser) -> None:
         chunks = parser.parse(SRC, "void loose(void) {}\n")
         assert chunks[0].kind == "function"
+
+
+C_FILE = Path("probe.c")
+
+KNR = "int add(a, b)\nint a;\nint b;\n{\n    return a + b;\n}\n"
+
+
+class TestKAndRDefinitions:
+    """The C++ grammar cannot read a K&R definition, and dropped it.
+
+    A K&R definition declares its parameters between the parameter list
+    and the body. A file of them alone raised ParseError, and one beside
+    a modern definition lost the K&R one with no signal. A .c file whose
+    tree holds an error is read again with the C grammar.
+    """
+
+    def test_a_file_of_k_and_r_definitions_is_read(self, parser) -> None:
+        (chunk,) = parser.parse(C_FILE, KNR)
+        assert (chunk.kind, chunk.symbol) == ("function", "add")
+        assert (chunk.start_line, chunk.end_line) == (1, 6)
+        assert chunk.text == KNR
+
+    def test_a_k_and_r_definition_beside_a_modern_one(self, parser) -> None:
+        source = KNR + "\nvoid next(void)\n{\n    n = 1;\n}\n"
+        assert symbols(parser, source, C_FILE) == ["add", "next"]
+
+    def test_the_chunks_keep_the_language_of_the_parser(self, parser) -> None:
+        assert {c.language for c in parser.parse(C_FILE, KNR)} == {"cpp"}
+
+    def test_a_header_is_read_by_the_cpp_grammar_alone(self, parser) -> None:
+        """A header may hold C++, so it gets no second reading."""
+        with pytest.raises(ParseError):
+            parser.parse(Path("probe.h"), KNR)
+
+    def test_a_clean_file_is_parsed_once(self, monkeypatch) -> None:
+        fresh = cpp_parser()
+        monkeypatch.setattr(
+            fresh, "_fallback_parser", lambda suffix: pytest.fail("parsed twice")
+        )
+        assert symbols(fresh, "void f(void)\n{\n}\n", C_FILE) == ["f"]
+
+    def test_the_cpp_reading_stays_when_the_c_grammar_reads_worse(self, parser) -> None:
+        """C++ in a .c file, with an error both grammars meet."""
+        source = (
+            "class Widget {\n  public:\n    void draw();\n};\n"
+            'SECTION(".text")\n'
+            "void Widget::draw() {\n}\n"
+        )
+        found = symbols(parser, source, C_FILE)
+        assert "Widget" in found and "Widget::draw" in found
+
+    def test_a_reading_that_loses_a_chunk_is_not_kept(self) -> None:
+        """Fewer errors alone do not win. The fallback must keep every chunk."""
+        from ish.adapters.parser import _tree_sitter
+
+        class Node:
+            def __init__(self, error: bool) -> None:
+                self.has_error = error
+                self.is_error = error
+                self.is_missing = False
+                self.children: list = []
+
+        class Tree:
+            def __init__(self, error: bool) -> None:
+                self.root_node = Node(error)
+
+        fresh = cpp_parser()
+        main_chunks = fresh.parse(C_FILE, "void f(void)\n{\n}\n")
+        readings = iter([(Tree(True), list(main_chunks)), (Tree(False), [])])
+        fresh._read = lambda *args: next(readings)
+        assert fresh.parse(C_FILE, "") == list(main_chunks)
+        assert _tree_sitter._errors(Node(False)) == 0

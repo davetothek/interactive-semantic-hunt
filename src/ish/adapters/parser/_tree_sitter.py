@@ -8,6 +8,11 @@ children.
 Tree-sitter is error tolerant: a file it cannot fully parse still yields
 a tree with ERROR nodes. Return whatever was recognized, and raise only
 when nothing was, so a partly broken file stays searchable.
+
+A language may name a fallback grammar for a suffix. A file with that
+suffix whose tree holds an error is parsed again with the fallback, and
+the second reading wins when it holds fewer errors and loses no chunk.
+A file the main grammar reads cleanly is never parsed twice.
 """
 
 import logging
@@ -57,6 +62,7 @@ class TreeSitterParser:
         needs_function: frozenset[str] = frozenset(),
         member_kinds: Mapping[str, str] | None = None,
         separator: str = "::",
+        fallbacks: Mapping[str, Any] | None = None,
     ) -> None:
         self.language = language
         self.suffixes = suffixes
@@ -68,28 +74,49 @@ class TreeSitterParser:
         self._separator = separator
         self._grammar = grammar
         self._parser: Any = None
+        # Suffix -> a grammar to read a file again with, when the main
+        # grammar leaves an error in its tree.
+        self._fallbacks = dict(fallbacks or {})
+        self._fallback_parsers: dict[str, Any] = {}
 
     def _ensure_parser(self) -> Any:
         """Build the underlying parser on first use."""
         if self._parser is None:
-            from tree_sitter import Language, Parser
-
-            self._parser = Parser(Language(self._grammar))
+            self._parser = _build_parser(self._grammar)
         return self._parser
+
+    def _fallback_parser(self, suffix: str) -> Any:
+        """Build the parser of the fallback grammar for *suffix* on first use."""
+        if suffix not in self._fallback_parsers:
+            self._fallback_parsers[suffix] = _build_parser(self._fallbacks[suffix])
+        return self._fallback_parsers[suffix]
 
     def parse(self, path: Path, source: str) -> Sequence[Chunk]:
         """Return a chunk for every recognized definition."""
         data = source.encode("utf-8")
-        tree = self._ensure_parser().parse(data)
         lines = source.splitlines(keepends=True)
+        tree, chunks = self._read(self._ensure_parser(), path, lines, data)
 
-        chunks: list[Chunk] = []
-        self._visit(tree.root_node, path, lines, data, [], chunks)
-        chunks = _drop_redundant_declarations(chunks)
+        suffix = path.suffix.lower()
+        if tree.root_node.has_error and suffix in self._fallbacks:
+            other = self._read(self._fallback_parser(suffix), path, lines, data)
+            if _errors(other[0].root_node) < _errors(tree.root_node) and len(
+                other[1]
+            ) >= len(chunks):
+                tree, chunks = other
 
         if not chunks and tree.root_node.has_error:
             raise ParseError(f"No definition could be read from {path}")
         return chunks
+
+    def _read(
+        self, parser: Any, path: Path, lines: list[str], data: bytes
+    ) -> tuple[Any, list[Chunk]]:
+        """Parse *data* with *parser* and return the tree and its chunks."""
+        tree = parser.parse(data)
+        chunks: list[Chunk] = []
+        self._visit(tree.root_node, path, lines, data, [], chunks)
+        return tree, _drop_redundant_declarations(chunks)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -185,6 +212,21 @@ class TreeSitterParser:
             if found is not None:
                 return found
         return None
+
+
+def _build_parser(grammar: Any) -> Any:
+    """Return a parser for *grammar*. The library loads on first use."""
+    from tree_sitter import Language, Parser
+
+    return Parser(Language(grammar))
+
+
+def _errors(node: Any) -> int:
+    """Count the nodes of a tree that a grammar could not read."""
+    if not node.has_error:
+        return 0
+    own = 1 if node.is_error or node.is_missing else 0
+    return own + sum(_errors(child) for child in node.children)
 
 
 def _declares_function(node: Any) -> bool:
