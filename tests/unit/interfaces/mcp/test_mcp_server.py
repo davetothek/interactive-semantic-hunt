@@ -1038,3 +1038,61 @@ class TestAsk:
         ask = next(t for t in tools.tools() if t.name == "ask")
         assert ask.schema["required"] == ["question"]
         assert "limit" not in ask.schema["properties"]
+
+
+class TestWarmReader:
+    """ish-mcp parses its tree for answers on a thread, with ask_warm."""
+
+    def test_off_by_default(self, tools: IshTools) -> None:
+        assert tools.warm_reader() is None
+
+    def test_on_it_parses_the_stored_files_and_says_so(
+        self, project: Path, stub_backend, tmp_path_factory, caplog
+    ) -> None:
+        import logging
+        from dataclasses import replace
+
+        settings = replace(
+            Settings(),
+            no_cache=True,
+            cache_dir=str(tmp_path_factory.mktemp("idx")),
+            ask_warm=True,
+        )
+        made = IshTools(settings, project)
+        try:
+            made._session_for(project).index()
+            with caplog.at_level(logging.INFO, logger="ish.mcp"):
+                thread = made.warm_reader()
+                assert thread is not None
+                thread.join(timeout=10)
+            assert "Parsed 1 files of" in caplog.text
+        finally:
+            made.close()
+
+    def test_a_failure_is_reported_and_stops_nothing(
+        self, project: Path, stub_backend, tmp_path_factory, caplog, monkeypatch
+    ) -> None:
+        import logging
+        from dataclasses import replace
+
+        settings = replace(
+            Settings(),
+            no_cache=True,
+            cache_dir=str(tmp_path_factory.mktemp("idx")),
+            ask_warm=True,
+        )
+        made = IshTools(settings, project)
+        try:
+            session = made._session_for(project)
+
+            def broken(plan=None):
+                raise OSError("disk gone")
+
+            monkeypatch.setattr(session, "warm_reader", broken)
+            with caplog.at_level(logging.WARNING, logger="ish.mcp"):
+                thread = made.warm_reader()
+                assert thread is not None
+                thread.join(timeout=10)
+            assert "Could not parse" in caplog.text
+        finally:
+            made.close()

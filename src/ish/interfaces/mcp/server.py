@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -257,6 +258,38 @@ class IshTools:
             return f"Asked ish-serve to refresh {kept.tree} in the background."
         self.watch(root)
         return f"Refreshing {root} in the background."
+
+    def warm_reader(self, root: Path | None = None) -> threading.Thread | None:
+        """Parse the files of *root* for answers on a thread, with ``ask_warm``.
+
+        Open the session and plan the files here, so a question that
+        arrives at once meets one session. The thread only reads, through
+        the reader every answer shares. Return the thread, or None when
+        ``ask_warm`` is off.
+        """
+        if not self._settings.ask_warm:
+            return None
+        tree = root or self._root
+        session = self._session_for(tree)
+        plan = session.warm_reader_plan()
+
+        def run() -> None:
+            start = time.monotonic()
+            try:
+                count = session.warm_reader(plan)
+            except Exception:
+                log.warning("Could not parse %s for answers", tree, exc_info=True)
+                return
+            log.info(
+                "Parsed %d files of %s for answers in %.1f s",
+                count,
+                tree,
+                time.monotonic() - start,
+            )
+
+        thread = threading.Thread(target=run, name="ish-warm", daemon=True)
+        thread.start()
+        return thread
 
     def _session_for(self, root: Path) -> Ish:
         """Return the session for *root*, opening it on first use."""
@@ -624,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
     tools = IshTools(settings, root)
     server = Server(SERVER_NAME, installed_version(), tools.tools())
     try:
+        tools.warm_reader()
         if args.http:
             server.serve_on(transport)
         else:

@@ -30,7 +30,6 @@ from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
 from ish.application.filters import Filters, parse_query
 from ish.application.ports.language_model import LanguageModel
 from ish.application.ports.link import LinkResolver
-from ish.application.preview import read_lines
 from ish.application.progress import ProgressCallback
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
@@ -83,7 +82,7 @@ class Ish:
         self._models: dict[bool, LanguageModel] = {}
         self._built = False
         self._reranker: LanguageModel | None = None
-        self._reader: Callable[[Chunk], str | None] = read_lines
+        self._reader: Callable[[Chunk], str | None] | None = None
         self._links: LinkResolver | None = None
 
     # ------------------------------------------------------------------
@@ -292,8 +291,8 @@ class Ish:
             )
         if self._reranker is None and not self._built:
             self._reranker = bootstrap.build_reranker(self.settings)
-            self._reader = bootstrap.build_reader(self.settings)
             self._built = True
+        read = self._reader_for_answers()
         # A rerank model sorts a wide search cheaply from the start of each
         # chunk. Without one, the best chunks as ranked are read in full.
         wide = self._reranker is not None
@@ -306,10 +305,46 @@ class Ish:
             reranker=self._reranker,
             pick=ASK_LIMIT,
             turns=self.settings.ask_turns,
-            read=self._reader,
+            read=read,
             **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)
+
+    def _reader_for_answers(self) -> Callable[[Chunk], str | None]:
+        """Return the reader answers share, and build it on the first call.
+
+        The reader parses each file again, so the text a model reads is
+        the text the index embedded. One reader serves every question, so
+        a file parsed for one is parsed for the next.
+        """
+        if self._reader is None:
+            self._reader = bootstrap.build_reader(self.settings)
+        return self._reader
+
+    def warm_reader_plan(self) -> list[Chunk]:
+        """Return one chunk of each file the index holds, up to ``ask_files``.
+
+        Build the reader answers share as well, so a thread can call
+        ``warm_reader`` with the plan while questions arrive on another.
+        """
+        self._reader_for_answers()
+        first: dict[Path, Chunk] = {}
+        for chunk in self.chunks(stored=True):
+            first.setdefault(chunk.path, chunk)
+        return list(first.values())[: max(0, self.settings.ask_files)]
+
+    def warm_reader(self, plan: Sequence[Chunk] | None = None) -> int:
+        """Parse the files of this tree for answers, and return how many.
+
+        Read each chunk of *plan*, or of ``warm_reader_plan()``, through the
+        reader every answer shares, so the first questions find their
+        files parsed. Read what is stored, and refresh nothing.
+        """
+        chunks = self.warm_reader_plan() if plan is None else plan
+        read = self._reader_for_answers()
+        for chunk in chunks:
+            read(chunk)
+        return len(chunks)
 
     def kind_of(self, chunk: Chunk) -> str:
         """Return what *chunk* holds: code, doc, test, or config.

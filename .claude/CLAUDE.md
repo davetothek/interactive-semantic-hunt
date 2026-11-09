@@ -322,6 +322,14 @@ something broke. This is that record, so a rule is never argued from taste.
   backend turns off settings, tools, and MCP servers one by one instead,
   and runs in an empty directory.
 
+- An answer read each chunk from its file, parsed again with its
+  includes resolved, and kept 32 files. On a 4-vCPU server with
+  claude-cli, one answer spent 20.0 s reading cold and 8.0 s on the next
+  question, against 5 s for the rerank and 9 to 12 s for the answer.
+  Parsing the 1,882 files of the tree once at start took 87.5 s and a
+  peak of 645 MB, and the next answer read in 0.0 s: 21.9 s against
+  37.5 s. Hence `ask_files` and `ask_warm`.
+
 ### Embedding
 
 - Task prefixes: measured on this repo with nomic-embed-text over 16 queries,

@@ -134,11 +134,6 @@ def build_parsers(settings: Settings) -> list[Parser]:
     return parsers
 
 
-# Files a reader keeps parsed. An answer reads ten chunks, most of them
-# from a few files, and a follow-up search adds five more.
-READER_FILES = 32
-
-
 def build_reader(settings: Settings) -> Callable[[Chunk], str | None]:
     """Return a function that reads the text of a chunk as it was indexed.
 
@@ -148,15 +143,28 @@ def build_reader(settings: Settings) -> Callable[[Chunk], str | None]:
     same lines, so a model reads what the index embedded. Read the lines
     of the file when the parse fails or no chunk has those lines, as when
     the file changed after it was indexed.
+
+    Keep the chunks of the last ``ask_files`` files parsed. An answer reads
+    ten chunks, most of them from a few files, and a follow-up search adds
+    five more. A server keeps more, because an AsciiDoc file with large
+    includes takes seconds to parse. One lock serializes the reads, so a
+    warm-up on one thread and a question on another share the cache.
     """
+    import threading
     from collections import OrderedDict
 
     from ish.application.preview import read_lines
 
     parsers = {parser.language: parser for parser in build_parsers(settings)}
     parsed: OrderedDict[tuple[Path, float], dict[tuple[int, int], str]] = OrderedDict()
+    keep = max(1, settings.ask_files)
+    lock = threading.Lock()
 
     def read(chunk: Chunk) -> str | None:
+        with lock:
+            return _read(chunk)
+
+    def _read(chunk: Chunk) -> str | None:
         parser = parsers.get(chunk.language)
         try:
             stamp = chunk.path.stat().st_mtime
@@ -175,7 +183,7 @@ def build_reader(settings: Settings) -> Callable[[Chunk], str | None]:
                 log.debug("Could not parse %s again", chunk.path, exc_info=True)
                 texts = {}
             parsed[key] = texts
-            if len(parsed) > READER_FILES:
+            if len(parsed) > keep:
                 parsed.popitem(last=False)
         text = (texts or {}).get((chunk.start_line, chunk.end_line))
         return text if text is not None else read_lines(chunk)

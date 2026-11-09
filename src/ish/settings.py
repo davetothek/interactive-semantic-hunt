@@ -318,6 +318,23 @@ class Settings:
             metavar="N",
         ),
     )
+    ask_files: int = field(
+        default=32,
+        metadata=_opt(
+            "Files an answer keeps parsed between questions. A server that "
+            "answers from one tree can keep every file of it.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    ask_warm: bool = field(
+        default=False,
+        metadata=_opt(
+            "Parse the files of the tree when ish-mcp starts, up to "
+            "ask_files, so the first answers read no file.",
+            action="boolean_optional",
+        ),
+    )
     ask_turns: int = field(
         default=0,
         metadata=_opt(
