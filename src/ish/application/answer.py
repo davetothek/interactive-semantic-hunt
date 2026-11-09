@@ -7,6 +7,7 @@ and the closest chunks instead, never an answer from outside them.
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from ish.application.ports.language_model import (
     LanguageModel,
     Reply,
     Source,
+    Term,
 )
 from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
@@ -106,6 +108,15 @@ class AnswerRow:
 
 
 @dataclass(frozen=True, slots=True)
+class AnswerTerm:
+    """Hold an acronym the answer uses, what it stands for, and where it says so."""
+
+    term: str
+    meaning: str
+    cites: tuple[Chunk, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerBlock:
     """Hold one part of the layout of an answer, with its citations as chunks.
 
@@ -150,6 +161,9 @@ class Answer:
             ``writing``, and ``following``. Reading counts every chunk read
             from its file, for the rerank and for the answer.
         seconds: Seconds the whole answer took.
+        terms: The acronyms the answer uses, each with what it stands for
+            and the sources that write it, sorted by term. A meaning that
+            no source writes is not kept, so none is invented.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -167,6 +181,7 @@ class Answer:
     rerank_model: str = ""
     timings: tuple[tuple[str, float], ...] = ()
     seconds: float = 0.0
+    terms: tuple[AnswerTerm, ...] = ()
 
 
 class AnswerQuestion:
@@ -287,9 +302,13 @@ class AnswerQuestion:
             else ()
         )
         blocks = tuple(_block(b, by_id) for b in reply.blocks) if reply.covered else ()
+        terms = (
+            _terms(reply.terms, texts, " ".join(_words(reply))) if reply.covered else ()
+        )
         return Answer(
             parts=parts,
             blocks=blocks,
+            terms=terms,
             covered=reply.covered,
             sources=tuple(kept),
             dropped=dropped,
@@ -355,6 +374,7 @@ class AnswerQuestion:
             input_tokens=read_in,
             output_tokens=wrote,
             blocks=reply.blocks,
+            terms=reply.terms,
         )
         return final, texts, searched, turns, left
 
@@ -425,6 +445,60 @@ def _with_time(
     from dataclasses import replace
 
     return replace(answer, timings=timings, seconds=seconds)
+
+
+def _words(reply: Reply) -> list[str]:
+    """Return every text of a reply a reader sees: passages and table cells."""
+    words = [p.text for p in reply.passages]
+    for block in reply.blocks:
+        words += [cell for row in block.rows for cell in row.cells]
+        words += list(block.columns)
+    return words
+
+
+def _plain(text: str) -> str:
+    """Return *text* with its spacing and case evened, to compare by words."""
+    return " ".join(text.split()).casefold()
+
+
+def _terms(
+    found: Sequence[Term], texts: list[tuple[Chunk, str]], answer: str
+) -> tuple[AnswerTerm, ...]:
+    """Keep each term the answer uses whose meaning a source writes.
+
+    Cite the sources the model named that write the meaning. When none of
+    them does, cite the first source sent that writes it, because the
+    meaning came from the results either way. Drop a term the answer
+    does not use, a meaning that only repeats the term, and a meaning no
+    source writes, so a model that expands a term from its own knowledge
+    adds nothing. Keep one entry for each term, sorted by term.
+    """
+    by_id = {str(n): pair for n, pair in enumerate(texts, 1)}
+    kept: dict[str, AnswerTerm] = {}
+    dropped = 0
+    for term in found:
+        name, meaning = term.term.strip(), term.meaning.strip()
+        used = re.search(rf"(?<!\w){re.escape(name)}(?!\w)", answer) if name else None
+        if not used or not meaning or _plain(meaning) == _plain(name):
+            dropped += 1
+            continue
+        writes = [
+            chunk
+            for i in term.source_ids
+            if i in by_id and _plain(meaning) in _plain(by_id[i][1])
+            for chunk in (by_id[i][0],)
+        ]
+        if not writes:
+            writes = next(
+                ([c] for c, text in texts if _plain(meaning) in _plain(text)), []
+            )
+        if not writes:
+            dropped += 1
+            continue
+        kept.setdefault(name, AnswerTerm(name, meaning, tuple(writes)))
+    if dropped:
+        log.info("Left out %d terms that no source spells out", dropped)
+    return tuple(kept[name] for name in sorted(kept, key=str.casefold))
 
 
 def _source(source_id: str, chunk: Chunk, text: str) -> Source:

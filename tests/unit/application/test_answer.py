@@ -563,3 +563,122 @@ class TestTimings:
         ).answer("q")
         assert result.timings == (("searching", 1.0),)
         assert result.seconds == 3.0
+
+
+class TestTerms:
+    """An acronym is named only with a meaning a source writes.
+
+    A model asked to expand the acronyms of an answer may expand one from
+    what it knows. The answer keeps a meaning only when a source it read
+    writes it, so nothing invented reaches the reader.
+    """
+
+    def _answer(self, terms, *chunks, blocks=()):
+        from ish.application.ports.language_model import Passage, Reply
+
+        reply = Reply(
+            passages=(Passage("AE and the AGC loop set the EV.", ("1",)),),
+            covered=True,
+            blocks=blocks,
+            terms=tuple(terms),
+        )
+        return AnswerQuestion(search=searching(*chunks), model=FakeModel(reply)).answer(
+            "q"
+        )
+
+    def test_a_meaning_a_source_writes_is_kept_and_cited(self) -> None:
+        from ish.application.ports.language_model import Term
+
+        doc = make_chunk("ae", "The AE (Automatic  Exposure) block runs first.")
+        result = self._answer([Term("AE", "automatic exposure", ("1",))], doc)
+        (term,) = result.terms
+        assert (term.term, term.meaning, term.cites) == (
+            "AE",
+            "automatic exposure",
+            (doc,),
+        )
+
+    def test_a_meaning_no_source_writes_is_dropped(self) -> None:
+        from ish.application.ports.language_model import Term
+
+        doc = make_chunk("ae", "The AE block runs first.")
+        result = self._answer([Term("AE", "Auto Exposure", ("1",))], doc)
+        assert result.terms == ()
+
+    def test_a_wrong_citation_moves_to_the_source_that_writes_it(self) -> None:
+        from ish.application.ports.language_model import Term
+
+        first = make_chunk("a", "The AE block runs first.")
+        second = make_chunk("b", "AGC stands for Automatic Gain Control.")
+        result = self._answer(
+            [Term("AGC", "Automatic Gain Control", ("1",))], first, second
+        )
+        assert result.terms[0].cites == (second,)
+
+    def test_a_term_the_answer_does_not_use_is_dropped(self) -> None:
+        from ish.application.ports.language_model import Term
+
+        doc = make_chunk("a", "ISP means Image Signal Processor.")
+        result = self._answer([Term("ISP", "Image Signal Processor", ("1",))], doc)
+        assert result.terms == ()
+
+    def test_a_meaning_that_repeats_the_term_is_dropped(self) -> None:
+        from ish.application.ports.language_model import Term
+
+        doc = make_chunk("a", "The EV is set.")
+        result = self._answer([Term("EV", "ev", ("1",))], doc)
+        assert result.terms == ()
+
+    def test_one_entry_for_each_term_sorted_by_term(self) -> None:
+        from ish.application.ports.language_model import Term
+
+        doc = make_chunk("a", "AE is Auto Exposure, and EV is Exposure Value.")
+        result = self._answer(
+            [
+                Term("EV", "Exposure Value", ("1",)),
+                Term("AE", "Auto Exposure", ("1",)),
+                Term("AE", "Auto Exposure", ("1",)),
+            ],
+            doc,
+        )
+        assert [t.term for t in result.terms] == ["AE", "EV"]
+
+    def test_a_term_in_a_table_cell_counts_as_used(self) -> None:
+        from ish.application.ports.language_model import Block, Row, Term
+
+        doc = make_chunk("a", "SNR is the Signal to Noise Ratio.")
+        table = Block("table", columns=("Name",), rows=(Row(("SNR",), ("1",)),))
+        result = self._answer(
+            [Term("SNR", "Signal to Noise Ratio", ("1",))], doc, blocks=(table,)
+        )
+        assert [t.term for t in result.terms] == ["SNR"]
+
+    def test_an_uncovered_answer_has_no_terms(self) -> None:
+        from ish.application.ports.language_model import Reply, Term
+
+        doc = make_chunk("a", "AE is Auto Exposure.")
+        reply = Reply(passages=(), covered=False, terms=(Term("AE", "Auto Exposure"),))
+        result = AnswerQuestion(search=searching(doc), model=FakeModel(reply)).answer(
+            "q"
+        )
+        assert result.terms == ()
+
+    def test_follow_up_turns_keep_the_terms_of_the_last_reply(self) -> None:
+        from ish.application.ports.language_model import Passage, Reply, Term
+
+        doc = make_chunk("a", "AE is Auto Exposure.")
+
+        class Agent:
+            model_name = "agent"
+
+            def step(self, question, sources, searched, turns_left):
+                return Reply(
+                    passages=(Passage("AE runs.", ("1",)),),
+                    covered=True,
+                    terms=(Term("AE", "Auto Exposure", ("1",)),),
+                )
+
+        result = AnswerQuestion(search=searching(doc), model=Agent(), turns=2).answer(
+            "q"
+        )
+        assert [t.meaning for t in result.terms] == ["Auto Exposure"]

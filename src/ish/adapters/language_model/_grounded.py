@@ -5,7 +5,8 @@ a schema fixes: whether the sources cover the question, a short answer,
 sections of prose, steps, or tables, and what the sources leave open.
 Every passage and every table row names the ids it rests on. The use
 case drops an id it did not send, so a model that invents a citation
-cites nothing.
+cites nothing. The acronyms the answer uses come with what they stand
+for and the ids of the sources that write it.
 """
 
 import json
@@ -20,6 +21,7 @@ from ish.application.ports.language_model import (
     Row,
     Selection,
     Source,
+    Term,
 )
 
 # Points of what the sources leave open that an answer keeps. The answer
@@ -62,17 +64,29 @@ SECTION: dict[str, object] = {
     "additionalProperties": False,
 }
 
+TERM: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "term": {"type": "string"},
+        "meaning": {"type": "string"},
+        "source_ids": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["term", "meaning", "source_ids"],
+    "additionalProperties": False,
+}
+
 ANSWER_PROPERTIES: dict[str, object] = {
     "covered": {"type": "boolean"},
     "summary": PASSAGE,
     "sections": {"type": "array", "items": SECTION},
     "gaps": PASSAGES,
+    "terms": {"type": "array", "items": TERM},
 }
 
 SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": ANSWER_PROPERTIES,
-    "required": ["covered", "summary", "sections", "gaps"],
+    "required": ["covered", "summary", "sections", "gaps", "terms"],
     "additionalProperties": False,
 }
 
@@ -97,6 +111,7 @@ def parse(
         data = json.loads(text)
         covered = data["covered"]
         blocks = _blocks(data)
+        terms = tuple(_term(t) for t in data.get("terms") or ())
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
         raise LanguageModelError(
             f"{backend} did not reply in the JSON the answer needs: {exc}"
@@ -110,6 +125,16 @@ def parse(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         blocks=blocks,
+        terms=terms,
+    )
+
+
+def _term(data: dict) -> Term:
+    """Read one term as the model wrote it. The use case checks its meaning."""
+    return Term(
+        term=str(data["term"]).strip(),
+        meaning=str(data["meaning"]).strip(),
+        source_ids=tuple(str(i) for i in data.get("source_ids") or ()),
     )
 
 
@@ -218,7 +243,7 @@ STEP_SCHEMA: dict[str, object] = {
         **ANSWER_PROPERTIES,
         "search": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["covered", "summary", "sections", "gaps", "search"],
+    "required": ["covered", "summary", "sections", "gaps", "terms", "search"],
     "additionalProperties": False,
 }
 
@@ -251,4 +276,5 @@ def parse_step(
         output_tokens=output_tokens,
         searches=tuple(q for q in searches if q),
         blocks=reply.blocks,
+        terms=reply.terms,
     )

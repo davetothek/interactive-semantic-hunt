@@ -34,6 +34,7 @@ from ish.interfaces.format import (
     number_citations,
     render,
     symbol_of,
+    terms_data,
 )
 from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
@@ -370,8 +371,10 @@ class IshTools:
         if answer.covered:
             text, cited = number_citations(answer)
             layout, _ = layout_data(answer)
+            terms, cited = terms_data(answer, cited)
             reply["answer"] = text
             reply["layout"] = layout
+            reply["terms"] = terms
             reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
         else:
             reply["answer"] = NOT_COVERED_TEXT

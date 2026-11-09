@@ -210,6 +210,7 @@ class TestStep:
             "summary",
             "sections",
             "gaps",
+            "terms",
             "search",
         ]
 
@@ -261,3 +262,45 @@ def test_markers_a_model_writes_into_its_text_are_dropped() -> None:
     assert block.passages[0].text == "Fields and more."
     assert block.rows[0].cells == ("A",)
     assert block.passages[0].source_ids == ("2",)
+
+
+class TestTerms:
+    """The acronyms an answer uses arrive with what they stand for."""
+
+    def _reply(self, terms: list) -> str:
+        return json.dumps(
+            {
+                "covered": True,
+                "summary": {"text": "AE runs.", "source_ids": ["1"]},
+                "sections": [],
+                "gaps": [],
+                "terms": terms,
+            }
+        )
+
+    def test_the_schema_asks_for_terms(self) -> None:
+        assert "terms" in _grounded.SCHEMA["required"]
+
+    def test_each_term_is_read_with_its_sources(self) -> None:
+        reply = _grounded.parse(
+            self._reply(
+                [{"term": " AE ", "meaning": "Auto Exposure ", "source_ids": [1]}]
+            ),
+            "m",
+        )
+        (term,) = reply.terms
+        assert (term.term, term.meaning, term.source_ids) == (
+            "AE",
+            "Auto Exposure",
+            ("1",),
+        )
+
+    def test_a_step_carries_its_terms(self) -> None:
+        data = json.loads(
+            self._reply([{"term": "AE", "meaning": "x", "source_ids": []}])
+        )
+        reply = _grounded.parse_step(json.dumps({**data, "search": []}), "m")
+        assert [t.term for t in reply.terms] == ["AE"]
+
+    def test_the_prompt_never_lets_a_term_be_invented(self) -> None:
+        assert "never expand a term from your own knowledge" in PROMPTS.answer
