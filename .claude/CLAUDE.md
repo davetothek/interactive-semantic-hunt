@@ -98,7 +98,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
 | Adapter | `src/ish/adapters/language_model/_prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
-| Adapter | `src/ish/adapters/vector_store/sqlite.py` | Persistent vector store (default) |
+| Adapter | `src/ish/adapters/vector_store/sqlite/` | Persistent vector store (default): `store.py`, its tables in `_schema.py`, its matrix file in `_matrix.py` |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
 | Adapter | `src/ish/adapters/vector_store/_catalog.py` | Which index file describes which tree |

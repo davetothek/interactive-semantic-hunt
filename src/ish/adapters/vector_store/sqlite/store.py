@@ -13,11 +13,8 @@ Store every vector at unit length. Cosine similarity is then a dot
 product, which halves the work in the search loop.
 
 Keep the matrix a search scores in a file beside the index as well, and
-map it into memory. Reading every blob out of SQLite and joining them
-cost a process 310 to 460 ms for 224 MB of vectors. Mapping the same
-bytes cost 18 ms. SQLite stays the source of truth: the file carries a
-stamp of the index state it was built from, and a file that does not
-match is read past and written again.
+map it into memory. ``_matrix.py`` holds the file, and ``_schema.py`` the
+tables. SQLite stays the source of truth.
 
 Keep the vectors of one repository in one shared store, which every
 index of that repository attaches. A vector is keyed by the hash of the
@@ -33,11 +30,8 @@ single connection safe to share.
 """
 
 import array
-import contextlib
-import json
 import logging
 import math
-import os
 import re
 import sqlite3
 import threading
@@ -46,6 +40,18 @@ from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from ish.adapters.vector_store.sqlite._matrix import (
+    MATRIX_SUFFIX,
+    MatrixFile,
+    joined,
+)
+from ish.adapters.vector_store.sqlite._schema import (
+    MIGRATES_FROM,
+    SCHEMA,
+    SCHEMA_VERSION,
+    SHARED_META_SCHEMA,
+    VECTORS_SCHEMA,
+)
 from ish.application.ports.vector_store import FileStamp, StoreBusy
 from ish.application.ranking import ResultFilter, rank, split_identifier
 from ish.domain.chunk import Chunk
@@ -53,30 +59,10 @@ from ish.domain.match import Match
 
 log = logging.getLogger(__name__)
 
-# Bump when the schema changes, and also when anything changes the meaning
-# of a stored vector, such as the task prefixes the embedder applies. An
-# index built by an older version is discarded rather than mixed, except
-# one at MIGRATES_FROM, which keeps its vectors and moves them into the
-# shared store of its repository.
-SCHEMA_VERSION = "5"
-MIGRATES_FROM = "4"
-
-# The shared store of a repository, named in the index directory after a
-# digest of the repository's common directory.
-SHARED_PREFIX = "vectors-"
-
 # Read chunk details this many at a time while a filter is trimming the
 # vector order. Reading a detail costs far more than scoring a vector,
 # so the slice grows only as far as the filter makes it.
 DETAIL_BATCH = 64
-
-# The matrix file beside an index: a header of this many bytes, then
-# the chunk ids as int64, then the vectors as float32, one row each.
-# The header is JSON, padded with spaces, and names the format, the
-# model, the width, the row count, and the stamp of the index state.
-MATRIX_SUFFIX = "-matrix"
-MATRIX_FORMAT = 1
-MATRIX_HEADER_BYTES = 4096
 
 # How long after its last write a store waits before it writes the
 # matrix file on a cache miss. An index run commits every few seconds,
@@ -85,82 +71,6 @@ MATRIX_HEADER_BYTES = 4096
 SETTLE_SECONDS = 10.0
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
-
-_SCHEMA = """
-CREATE TABLE meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE files (
-    path     TEXT PRIMARY KEY,
-    mtime_ns INTEGER NOT NULL,
-    size     INTEGER NOT NULL
-);
-
-CREATE TABLE chunks (
-    id           INTEGER PRIMARY KEY,
-    path         TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
-    content_hash TEXT NOT NULL,
-    kind         TEXT NOT NULL,
-    language     TEXT NOT NULL,
-    symbol       TEXT,
-    terms        TEXT NOT NULL,
-    start_line   INTEGER NOT NULL,
-    end_line     INTEGER NOT NULL
-);
-
-CREATE INDEX chunks_by_path ON chunks(path);
-CREATE INDEX chunks_by_hash ON chunks(content_hash);
-
--- Lexical half of the search. Keep the content in chunks and mirror it
--- here, so an exact identifier is findable when a vector misses it.
--- porter stems prose; unicode61 splits on the underscore, so a snake
--- case name matches both whole and in parts.
--- Lexical matching over the names only. The body is not stored, and
--- the lexical half runs only for a query that names something, which
--- matches on these columns anyway.
-CREATE VIRTUAL TABLE chunks_fts USING fts5(
-    symbol, terms,
-    content='chunks',
-    content_rowid='id',
-    tokenize='porter unicode61'
-);
-
-CREATE TRIGGER chunks_fts_insert AFTER INSERT ON chunks BEGIN
-    INSERT INTO chunks_fts(rowid, symbol, terms)
-    VALUES (new.id, new.symbol, new.terms);
-END;
-
-CREATE TRIGGER chunks_fts_delete AFTER DELETE ON chunks BEGIN
-    INSERT INTO chunks_fts(chunks_fts, rowid, symbol, terms)
-    VALUES ('delete', old.id, old.symbol, old.terms);
-END;
-
-"""
-
-# The vectors, keyed by the text they stand for and the model that made
-# them. The table lives in the shared store of the repository, or in the
-# index itself for a tree outside any repository.
-_VECTORS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS {schema}.vectors (
-    content_hash TEXT NOT NULL,
-    model_id     TEXT NOT NULL,
-    dim          INTEGER NOT NULL,
-    data         BLOB NOT NULL,
-    PRIMARY KEY (content_hash, model_id)
-);
-"""
-
-# What a shared store says about itself, so a reader of the directory
-# can tell it from an index.
-_SHARED_META_SCHEMA = """
-CREATE TABLE IF NOT EXISTS shared.meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-INSERT OR IGNORE INTO shared.meta (key, value) VALUES ('kind', 'vectors');
-"""
 
 
 def _pack(vector: Sequence[float]) -> bytes:
@@ -280,10 +190,11 @@ class SqliteVectorStore:
         # When this store last wrote, and the index state the matrix
         # file beside it was last read or written under.
         self._last_write = 0.0
-        self._saved: tuple[int, int] | None = None
         # A second close finds the connection gone, so it does nothing.
         self._closed = False
-        self._matrix_path = db_path.with_name(db_path.name + MATRIX_SUFFIX)
+        self._matrix_file = MatrixFile(
+            db_path.with_name(db_path.name + MATRIX_SUFFIX), model_id
+        )
         self._db = sqlite3.connect(
             db_path, timeout=BUSY_SECONDS, check_same_thread=False
         )
@@ -336,9 +247,9 @@ class SqliteVectorStore:
             # keep that source readable on disk for ever.
             self._db.execute("VACUUM main")
 
-        self._db.executescript(_SCHEMA)
+        self._db.executescript(SCHEMA)
         if self._shared is None:
-            self._db.executescript(_VECTORS_SCHEMA.format(schema="main"))
+            self._db.executescript(VECTORS_SCHEMA.format(schema="main"))
         self._db.execute(
             "INSERT INTO main.meta (key, value) VALUES ('schema_version', ?)",
             (SCHEMA_VERSION,),
@@ -363,7 +274,7 @@ class SqliteVectorStore:
             # A new store. Say what it is and whose it is, this once.
             # Opening writes nothing after that, as for an index.
             self._db.executescript(
-                _VECTORS_SCHEMA.format(schema="shared") + _SHARED_META_SCHEMA
+                VECTORS_SCHEMA.format(schema="shared") + SHARED_META_SCHEMA
             )
             repository = self._identity.get("repository")
             if repository is not None:
@@ -830,7 +741,7 @@ class SqliteVectorStore:
                 return self._matrix_cache[1], self._matrix_cache[2]
 
             stamp = self._stamp()
-            mapped = self._map_matrix(width, stamp)
+            mapped = self._matrix_file.map(width, stamp)
             if mapped is not None:
                 self._matrix_cache = (token, *mapped)
                 return mapped
@@ -847,10 +758,10 @@ class SqliteVectorStore:
                     f"has {width}. Re-index with the current model."
                 )
 
-            identifiers, matrix = self._joined(rows, width)
+            identifiers, matrix = joined(rows, width)
             settled = time.monotonic() - self._last_write > SETTLE_SECONDS
             if self._writes == 0 or settled:
-                self._save_matrix(stamp, identifiers, matrix)
+                self._matrix_file.save(stamp, identifiers, matrix)
             self._matrix_cache = (token, identifiers, matrix)
             return identifiers, matrix
 
@@ -863,16 +774,6 @@ class SqliteVectorStore:
             "WHERE v.model_id = ?",
             (self._model_id,),
         ).fetchall()
-
-    @staticmethod
-    def _joined(rows: Sequence[tuple[int, int, bytes]], width: int):
-        """Return the ids of *rows* and their vectors as one matrix."""
-        import numpy
-
-        matrix = numpy.frombuffer(
-            b"".join(row[2] for row in rows), dtype=numpy.float32
-        ).reshape(len(rows), width)
-        return [int(row[0]) for row in rows], matrix
 
     def _data_version(self) -> int:
         """Return SQLite's counter of commits made by other connections."""
@@ -892,100 +793,6 @@ class SqliteVectorStore:
         held = int(self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
         return generation, held
 
-    def _map_matrix(self, width: int, stamp: tuple[int, int]):
-        """Map the matrix file beside the index, or return None.
-
-        Return None for a file that is absent, that describes another
-        model, another width, or another state of the index, or that is
-        not the size its header claims. The blobs are read then, and
-        the file is written again.
-        """
-        import numpy
-
-        path = self._matrix_path
-        try:
-            with path.open("rb") as handle:
-                header = json.loads(handle.read(MATRIX_HEADER_BYTES))
-            size = path.stat().st_size
-        except (OSError, ValueError):
-            return None
-        if not isinstance(header, dict):
-            return None
-        expected = {
-            "format": MATRIX_FORMAT,
-            "model_id": self._model_id,
-            "dim": width,
-            "stamp": list(stamp),
-        }
-        if {key: header.get(key) for key in expected} != expected:
-            return None
-        rows = header.get("rows")
-        if not isinstance(rows, int) or rows < 1:
-            return None
-        if size != MATRIX_HEADER_BYTES + rows * (8 + 4 * width):
-            return None
-        try:
-            identifiers = numpy.memmap(
-                path,
-                dtype=numpy.int64,
-                mode="r",
-                offset=MATRIX_HEADER_BYTES,
-                shape=(rows,),
-            )
-            matrix = numpy.memmap(
-                path,
-                dtype=numpy.float32,
-                mode="r",
-                offset=MATRIX_HEADER_BYTES + rows * 8,
-                shape=(rows, width),
-            )
-        except (OSError, ValueError) as exc:
-            log.debug("Cannot map the matrix beside %s: %s", path, exc)
-            return None
-        self._saved = stamp
-        return identifiers, matrix
-
-    def _save_matrix(
-        self, stamp: tuple[int, int], identifiers: Sequence[int], matrix: Any
-    ) -> None:
-        """Write the matrix file beside the index, for the next process.
-
-        Write a temporary file and rename it into place, so a reader
-        never maps a file that is half written. A file that cannot be
-        written costs nothing but the blobs it would have saved.
-        """
-        import numpy
-
-        header = json.dumps(
-            {
-                "format": MATRIX_FORMAT,
-                "model_id": self._model_id,
-                "dim": int(matrix.shape[1]),
-                "rows": int(matrix.shape[0]),
-                "stamp": list(stamp),
-            }
-        ).encode("utf-8")
-        if len(header) > MATRIX_HEADER_BYTES:
-            return
-        path = self._matrix_path
-        partial = path.with_name(f"{path.name}.{os.getpid()}.partial")
-        try:
-            with partial.open("wb") as handle:
-                handle.write(header.ljust(MATRIX_HEADER_BYTES))
-                # Write the memory of each array. A copy of the matrix as
-                # bytes costs as much again as the write itself.
-                handle.write(
-                    numpy.ascontiguousarray(identifiers, dtype=numpy.int64).data
-                )
-                handle.write(numpy.ascontiguousarray(matrix, dtype=numpy.float32).data)
-            os.replace(partial, path)
-        except OSError as exc:
-            log.debug("Cannot write the matrix beside %s: %s", path, exc)
-            with contextlib.suppress(OSError):
-                partial.unlink()
-            return
-        self._saved = stamp
-
     def _save_matrix_if_current(self) -> None:
         """Leave the matrix file current when this store wrote.
 
@@ -998,11 +805,11 @@ class SqliteVectorStore:
         if not self._writes:
             return
         stamp = self._stamp()
-        if stamp == self._saved:
+        if stamp == self._matrix_file.saved:
             return
         cache = self._matrix_cache
         if cache is not None and cache[0] == (self._writes, self._data_version()):
-            self._save_matrix(stamp, cache[1], cache[2])
+            self._matrix_file.save(stamp, cache[1], cache[2])
             return
         rows = self._vector_rows()
         if not rows:
@@ -1012,7 +819,7 @@ class SqliteVectorStore:
         # nothing names one, so vectors of two widths leave no file.
         if any(dim != width for _i, dim, _d in rows):
             return
-        self._save_matrix(stamp, *self._joined(rows, width))
+        self._matrix_file.save(stamp, *joined(rows, width))
 
     def _details(
         self, identifiers: Sequence[int], scores: Any, best: Any
