@@ -54,9 +54,9 @@ def _run_ask(args: CliArgs) -> int:
     Return 0 when the documents answer it, and 2 when they do not, so a
     script can tell the two apart. Show each step on stderr while the
     models work, and keep stdout for the answer, so it pipes into an
-    editor. End with a blank line and one line on stderr that says where
-    the seconds and tokens went. Color what goes to a terminal. Return 130
-    on Ctrl-C, with no traceback.
+    editor. End with a blank line and a table on stderr that says where
+    the seconds and tokens went, and the version. Color what goes to a
+    terminal. Return 130 on Ctrl-C, with no traceback.
     """
     if not args.query:
         log.error("--ask needs a question.")
@@ -88,7 +88,7 @@ def _run_ask(args: CliArgs) -> int:
             if args.brief
             else format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
         )
-        _show(args, text, format_usage(answer_usage(answer)))
+        _show(args, text, format_usage(answer_usage(answer), versions=_versions()))
     return 0 if answer.covered else 2
 
 
@@ -139,16 +139,27 @@ def _run_remote_ask(args: CliArgs) -> int:
             settings.remote,
         )
         return 1
-    _show(args, shown, format_usage(reply, time.monotonic() - start))
+    usage = format_usage(
+        reply, time.monotonic() - start, _versions(client.server_version)
+    )
+    _show(args, shown, usage)
     return 0 if reply.get("covered") else 2
 
 
+def _versions(server: str = "") -> str:
+    """Name the version of this ish, and of the server that answered."""
+    from ish.interfaces.cli.args import installed_version
+
+    mine = f"ish {installed_version()}"
+    return f"{mine} · server {server}" if server else mine
+
+
 def _show(args: CliArgs, answer: str, usage: str) -> None:
-    """Print *answer* on stdout, and below it the *usage* line on stderr.
+    """Print *answer* on stdout, and below it the *usage* table on stderr.
 
     Color each stream on its own, so an answer piped to a file is plain
-    Markdown while the line beside it stays grey in the terminal. Leave a
-    blank line above the usage, so it reads apart from the answer.
+    Markdown while the table beside it stays grey in the terminal. Leave a
+    blank line above the table, so it reads apart from the answer.
     """
     from ish.interfaces.cli.highlight import grey, highlight
 
@@ -156,8 +167,9 @@ def _show(args: CliArgs, answer: str, usage: str) -> None:
     shown = highlight(answer) if resolve_color(mode, sys.stdout) else answer
     sys.stdout.write(f"{shown}\n")
     sys.stdout.flush()
-    line = f"ish: {usage}"
-    sys.stderr.write(f"\n{grey(line) if resolve_color(mode, sys.stderr) else line}\n")
+    if resolve_color(mode, sys.stderr):
+        usage = "\n".join(grey(line) for line in usage.split("\n"))
+    sys.stderr.write(f"\n{usage}\n")
 
 
 def _report(ticker: Ticker, step: AnswerStep) -> None:

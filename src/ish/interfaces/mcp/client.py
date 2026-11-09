@@ -48,6 +48,8 @@ class RemoteClient:
         self._timeout = timeout
         self._last_id = 0
         self._open = False
+        # What the server called its version when the session opened.
+        self.server_version = ""
 
     def call(self, tool: str, arguments: dict[str, Any]) -> str:
         """Return the text that *tool* answers with.
@@ -56,7 +58,7 @@ class RemoteClient:
         the token, or reports that the tool failed.
         """
         if not self._open:
-            self._request(
+            opened = self._request(
                 "initialize",
                 {
                     "protocolVersion": PROTOCOL_VERSION,
@@ -67,6 +69,9 @@ class RemoteClient:
                     },
                 },
             )
+            info = opened.get("serverInfo")
+            if isinstance(info, dict):
+                self.server_version = str(info.get("version") or "")
             self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
             self._open = True
         result = self._request("tools/call", {"name": tool, "arguments": arguments})

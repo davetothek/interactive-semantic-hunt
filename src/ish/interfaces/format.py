@@ -222,7 +222,7 @@ _STAGES = (
     ("reading", "read"),
     ("choosing", "rerank"),
     ("writing", "answer"),
-    ("following", "follow-up search"),
+    ("following", "follow-up"),
 )
 
 
@@ -246,50 +246,81 @@ def answer_usage(answer: Answer) -> dict[str, object]:
     }
 
 
-def format_usage(usage: Mapping[str, object], total: float | None = None) -> str:
-    """Return one line that says where the seconds and tokens of an answer went.
+def format_usage(
+    usage: Mapping[str, object], total: float | None = None, versions: str = ""
+) -> str:
+    """Return a table of where the seconds and tokens of an answer went.
 
-    Give the time of each stage, and with the rerank and the answer the
-    model and its tokens. With *total*, the seconds a client waited, say
-    how much of it the server spent, so the rest is the network and the
-    queue. A server too old to send timings gets its tokens shown alone.
+    Give one row to each stage that ran: its time, and for the rerank and
+    the answer the model and its tokens. End with the total. With *total*,
+    the seconds a client waited, say how much of it the server spent, so
+    the rest is the network and the queue. A server too old to send
+    timings gets its rows with the tokens alone. Close with *versions*,
+    after a blank line, when it is given.
     """
     timings = usage.get("timings")
     timings = timings if isinstance(timings, Mapping) else {}
-    pieces = []
+    rows = []
     for stage, label in _STAGES:
-        detail = _detail(stage, usage)
-        if stage in timings:
-            pieces.append(f"{label} {_seconds(timings[stage]):.1f} s{detail}")
-        elif detail:
-            pieces.append(f"{label}{detail}")
+        model, read, wrote = _row(stage, usage)
+        if stage in timings or model:
+            spent = f"{_seconds(timings[stage]):.1f} s" if stage in timings else ""
+            rows.append([label, spent, model, read, wrote])
     seconds = usage.get("seconds")
     known = isinstance(seconds, (int, float))
-    if total is None:
-        head = f"{_seconds(seconds):.1f} s" if known else ""
+    if total is not None:
+        server = f"{_seconds(seconds):.1f} s on the server" if known else ""
+        rows.append(["total", f"{total:.1f} s", server, "", ""])
     elif known:
-        head = f"{total:.1f} s, {_seconds(seconds):.1f} s of it on the server"
-    else:
-        head = f"{total:.1f} s"
-    return ": ".join(part for part in (head, ", ".join(pieces)) if part)
+        rows.append(["total", f"{_seconds(seconds):.1f} s", "", "", ""])
+    tokens = any(row[3] or row[4] for row in rows)
+    header = ["stage", "time", "model" if any(r[2] for r in rows) else "", "", ""]
+    if tokens:
+        header[3:] = ["in", "out"]
+    table = [header, *rows]
+    # The note in the total row overhangs the model column. It is the
+    # last row, so nothing to its right needs the room.
+    sized = table[:-1] if total is not None else table
+    widths = [max(len(row[n]) for row in table) for n in range(5)]
+    widths[2] = max(len(row[2]) for row in sized)
+    lines = [_aligned(row, widths) for row in table]
+    if versions:
+        lines += ["", versions]
+    return "\n".join(lines)
 
 
-def _detail(stage: str, usage: Mapping[str, object]) -> str:
-    """Return the model and tokens of a stage, in parentheses, or nothing."""
+def _aligned(row: list[str], widths: list[int]) -> str:
+    """Return *row* in columns: names to the left, numbers to the right."""
+    right = (False, True, False, True, True)
+    cells = [
+        cell.rjust(width) if numeric else cell.ljust(width)
+        for cell, width, numeric in zip(row, widths, right, strict=True)
+        if width
+    ]
+    return "  ".join(cells).rstrip()
+
+
+def _row(stage: str, usage: Mapping[str, object]) -> tuple[str, str, str]:
+    """Return the model, tokens read, and tokens written of a stage."""
     if stage == "choosing" and usage.get("rerank_model"):
-        tokens = _count(usage.get("rerank_input_tokens"))
-        return f" ({usage['rerank_model']}, {tokens:,} tokens)"
+        return (
+            str(usage["rerank_model"]),
+            f"{_count(usage.get('rerank_input_tokens')):,}",
+            f"{_count(usage.get('rerank_output_tokens')):,}",
+        )
     if stage == "writing" and usage.get("model"):
-        read = _count(usage.get("input_tokens"))
-        wrote = _count(usage.get("output_tokens"))
         turns = _count(usage.get("turns"))
         many = f", {turns} turns" if turns > 1 else ""
-        return f" ({usage['model']}, {read:,} in, {wrote:,} out{many})"
+        return (
+            f"{usage['model']}{many}",
+            f"{_count(usage.get('input_tokens')):,}",
+            f"{_count(usage.get('output_tokens')):,}",
+        )
     if stage == "following":
         searches = usage.get("searches")
         count = len(searches) if isinstance(searches, list) else 0
-        return f" ({count} searches)" if count else ""
-    return ""
+        return (f"{count} searches" if count else "", "", "")
+    return ("", "", "")
 
 
 def _count(value: object) -> int:

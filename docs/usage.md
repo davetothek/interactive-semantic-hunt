@@ -145,17 +145,24 @@ styles are added, so text copied from the terminal is the same Markdown a
 pipe or a file gets. `--color never`, or `NO_COLOR=1`, turns color off, and
 `--color always` keeps it through a pipe, such as into `less -R`.
 
-After a blank line, the last line on stderr says where the time and the
-tokens went, stage by stage, in grey:
+After a blank line, stderr shows where the time and the tokens went, stage
+by stage, in grey, and the version of ish:
 
 ```text
-ish: 34.6 s: search 0.9 s, read 19.8 s, rerank 5.1 s (claude-haiku-5-5, 9,448 tokens), answer 8.8 s (claude-sonnet-5-5, 24,422 in, 1,642 out)
+stage    time  model                  in    out
+search  0.9 s
+read   19.8 s
+rerank  5.1 s  claude-haiku-5-5    9,448     60
+answer  8.8 s  claude-sonnet-5-5  24,422  1,642
+total  34.6 s
+
+ish 0.9.3
 ```
 
 `read` is the time spent reading the chunks from their files, for the
 rerank and for the answer. An AsciiDoc file is read with its includes
 resolved, so a tree of large attribute files reads slowly the first time.
-stdout holds the answer alone, so the line never reaches a pipe.
+stdout holds the answer alone, so the table never reaches a pipe.
 
 For the fact alone, ask with `--brief`. The model writes a sentence or two
 and nothing else, and ish prints it as plain text with no citations, which
@@ -186,9 +193,10 @@ question. The path argument does not, because a path on this machine
 means nothing to the server. The exit codes are the same as for a local
 answer. A plain search and `-i` still read the local tree.
 
-The line on stderr starts with the seconds you waited and the seconds the
-server spent. The rest is the network and the queue. A server that sends
-no timings is too old to time its stages, and the line gives its tokens.
+The total is the seconds you waited, and beside it the seconds the server
+spent. The rest is the network and the queue. The last line names the
+version of the server as well. A server that sends no timings is too old
+to time its stages, and the table gives its tokens alone.
 
 The links in the answer are the ones the server makes. Set `link_base` on
 the server, so they point at a published tree rather than at its disk. When
@@ -208,7 +216,7 @@ builds a language model and sends no text anywhere.
 | `-c`, `--config PATH` | Read the options from this file, not from the search upward |
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
-| `--color WHEN` | Color the answer, the logs, and the timing line: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
+| `--color WHEN` | Color the answer, the logs, and the timing table: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
 | `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
