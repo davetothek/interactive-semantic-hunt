@@ -408,7 +408,7 @@ def terms_data(
     text, the data, and the Markdown.
     """
     numbers = {chunk: n for n, chunk in enumerate(cited, 1)}
-    data = [
+    data: list[dict[str, object]] = [
         {
             "term": term.term,
             "meaning": term.meaning,
