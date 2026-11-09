@@ -105,6 +105,10 @@ git fetch origin main
 git push origin v$ARGUMENTS
 ```
 
+Run the two as separate commands. `guard_git` judges a whole command line
+before any of it runs, so a push chained after the fetch is judged against
+the `origin/main` from before the fetch.
+
 `guard_git` allows this one push. It checks that the tag commit is on
 `origin/main` and that `pyproject.toml` there declares the version. A deny
 names what is wrong: stop and report it. Never move, delete, or push again
