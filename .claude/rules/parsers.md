@@ -21,6 +21,10 @@ The `add-language` skill walks through it.
 
 ## Rules
 
+- A change to a parser carries a `/chunk-diff` in its commit body: `identical`
+  for a move, or the chunks the change names. A changed chunk raises
+  `CHUNKING_VERSION`.
+
 - Stamp `language` onto every chunk the parser emits.
 - Two parsers claiming one suffix is a hard error. Resolve it with the
   `languages` option, not by editing the other parser.
