@@ -16,7 +16,7 @@ finishes a filter word. Nothing else is added.
 - Call `parse_query()` on the text you were given, so `lang:cpp type:doc`
   works the same everywhere.
 - Accept only query-scope options per call: `lang`, `under`, `type`, `limit`,
-  `no_hybrid`. `TestOnlyQueryScopeIsOverridable` derives the forbidden set
+  `no_hybrid`, `ask_turns`. `TestOnlyQueryScopeIsOverridable` derives the forbidden set
   from the settings metadata. The CLI is the exception, because a CLI call is
   the configuration for that run.
 - Apply `build_result_filter()` to every listing as well as every search.

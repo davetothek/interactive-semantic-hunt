@@ -519,6 +519,33 @@ class TestAskTurns:
             assert ish.ask("configure").turns == 1
         assert agent.turns_seen == [2]
 
+    def test_a_question_overrides_the_turns_of_the_settings(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply
+
+        class Agent:
+            model_name = "agent"
+            turns_seen: list[int] = []
+
+            def step(self, question, sources, searched, turns_left):
+                self.turns_seen.append(turns_left)
+                return Reply(passages=(Passage("ok", ("1",)),), covered=True)
+
+            def answer(self, question, sources):
+                self.turns_seen.append(-1)
+                return Reply(passages=(Passage("ok", ("1",)),), covered=True)
+
+        agent = Agent()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: agent)
+        settings = Settings(no_cache=True, git=False, ask_turns=2)
+        with Ish(project, settings=settings) as ish:
+            ish.ask("configure", turns=4)
+            ish.ask("configure", turns=0)
+        # Four turns left on the first question, and none asked for on the
+        # second, which answers from the first search.
+        assert agent.turns_seen == [4, -1]
+
 
 class TestKindOf:
     def test_a_chunk_is_sorted_the_way_the_type_filter_sorts_it(

@@ -277,6 +277,7 @@ class Ish:
         type: Sequence[str] = (),
         on_step: AnswerCallback | None = None,
         brief: bool = False,
+        turns: int | None = None,
     ) -> Answer:
         """Answer *question* from the chunks a search of this tree returns.
 
@@ -286,7 +287,8 @@ class Ish:
         never builds one. Raise ``LanguageModelError`` when no model is
         set or allowed. Report each step to *on_step*, because a model
         call takes seconds. With *brief*, the model writes the short answer
-        alone, which costs a fraction of the output.
+        alone, which costs a fraction of the output. *turns* overrides
+        ``ask_turns`` for this question alone.
         """
         if brief not in self._models:
             self._models[brief] = bootstrap.build_language_model(
@@ -307,7 +309,7 @@ class Ish:
             model=self._models[brief],
             reranker=self._reranker,
             pick=ASK_LIMIT,
-            turns=self.settings.ask_turns,
+            turns=self.settings.ask_turns if turns is None else turns,
             read=read,
             glossary=self._glossary,
             **({"on_step": on_step} if on_step else {}),

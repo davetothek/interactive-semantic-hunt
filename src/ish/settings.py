@@ -402,6 +402,7 @@ class Settings:
             ANSWERS,
             "Follow-up searches the model may ask for before it answers. "
             "0 answers from the first search alone.",
+            scope="query",
             type=int,
             metavar="N",
         ),

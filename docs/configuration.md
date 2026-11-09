@@ -201,6 +201,9 @@ searches below the sources.
 ask_turns = 3
 ```
 
+`--ask-turns N` sets it for one question, and travels with a question to a
+server. A server takes from 0 to 5 per question.
+
 Measured on 25 questions with the rerank and Haiku 5.5: 19 were answered in
 one turn, so they cost the same. The model searched again for two hard
 questions and for all four that the documents do not answer, and it still

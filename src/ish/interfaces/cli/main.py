@@ -96,7 +96,8 @@ def _run_remote_ask(args: CliArgs) -> int:
     """Ask the server that ``remote`` names, and print its answer.
 
     Keep the exit codes of a local answer. The server searches its own
-    tree, so the path given here does not travel. The filters do. Say
+    tree, so the path given here does not travel. The filters do, and
+    ``--ask-turns`` when it is given. Say
     how long the question took, and how much of it the server spent.
     """
     from ish.interfaces.mcp.client import RemoteClient, RemoteError
@@ -109,6 +110,10 @@ def _run_remote_ask(args: CliArgs) -> int:
         arguments["under"] = settings.under
     if settings.type:
         arguments["type"] = list(settings.type)
+    # The turns travel only when given on this command line. A value from
+    # the config file here is for answers here, and the server has its own.
+    if args.overrides.get("ask_turns") is not None:
+        arguments["ask_turns"] = settings.ask_turns
 
     ticker = Ticker()
     start = time.monotonic()

@@ -345,7 +345,12 @@ class IshTools:
         session = self._session_for(root)
         self._keep_current(root, session)
         brief = bool(arguments.get("brief"))
-        answer = session.ask(question, brief=brief, **self._narrowing(arguments))
+        answer = session.ask(
+            question,
+            brief=brief,
+            turns=_turns(arguments.get("ask_turns")),
+            **self._narrowing(arguments),
+        )
 
         def described(chunk: Chunk, number: int | None = None) -> dict[str, Any]:
             entry: dict[str, Any] = {} if number is None else {"n": number}
@@ -520,6 +525,16 @@ class IshTools:
                                 "Ask again without it for the sources."
                             ),
                         },
+                        "ask_turns": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": MAX_ASK_TURNS,
+                            "description": (
+                                "Follow-up searches the model may ask for "
+                                "before it answers. Leave it out for the "
+                                "server's own setting."
+                            ),
+                        },
                         "lang": _QUERY_PROPERTIES["lang"],
                         "under": _QUERY_PROPERTIES["under"],
                         "type": _QUERY_PROPERTIES["type"],
@@ -599,6 +614,27 @@ class IshTools:
                 handler=self.complete_filter,
             ),
         ]
+
+
+# The most follow-up turns one call may ask for. Each turn is one more
+# call to the model, which a client pays for in seconds and the server in
+# tokens.
+MAX_ASK_TURNS = 5
+
+
+def _turns(value: Any) -> int | None:
+    """Return the turns a call asked for, or None for the server's setting.
+
+    Raise ``ValueError`` for a value that is not a count from 0 to
+    ``MAX_ASK_TURNS``, so the call fails rather than a bound being lifted.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("'ask_turns' must be a whole number.")
+    if not 0 <= value <= MAX_ASK_TURNS:
+        raise ValueError(f"'ask_turns' must be from 0 to {MAX_ASK_TURNS}.")
+    return value
 
 
 def installed_version() -> str:
