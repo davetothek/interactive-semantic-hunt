@@ -17,6 +17,12 @@ from outside the sources, and do not guess. If the sources do not answer
 the question, set covered to false and leave summary, sections, and gaps
 empty.
 
+List in terms each acronym and abbreviation the answer uses, with what it
+stands for as a source writes it, and the id of that source. Take a
+meaning from the sources alone. Leave out a term that no source spells
+out, and never expand a term from your own knowledge. Leave terms empty
+when the answer uses none.
+
 Keep a table narrow enough to read in a terminal. Give a cell a few words
 or a value, never a sentence: put an explanation in the prose of the
 section instead. Leave out a column that holds no value for any row, and

@@ -625,3 +625,59 @@ class TestFormatUsage:
         usage = answer_usage(answer)
         assert usage["timings"] == {"searching": 0.5, "writing": 2.0}
         assert format_usage(usage).splitlines()[-1] == "total   2.8 s"
+
+
+class TestTermsSection:
+    """The acronyms of an answer come before its sources, each with a citation."""
+
+    def _answer(self):
+        from ish.application.answer import Answer, AnswerPart, AnswerTerm
+
+        a, b = (
+            chunk("a"),
+            Chunk(Path("/r/b.adoc"), "t", "section", "asciidoc", "B", 1, 2),
+        )
+        return (
+            Answer(
+                parts=(AnswerPart("AE runs.", (a,)),),
+                covered=True,
+                sources=(a, b),
+                terms=(
+                    AnswerTerm("AE", "Auto Exposure", (a,)),
+                    AnswerTerm("EV", "Exposure Value", (b,)),
+                ),
+            ),
+            a,
+            b,
+        )
+
+    def test_terms_sit_between_the_answer_and_the_sources(self) -> None:
+        from ish.interfaces.format import format_answer
+
+        answer, _a, _b = self._answer()
+        text = format_answer(answer, "q", lambda c: "file:///x")
+        assert text.index("## Terms") < text.index("## Sources")
+        assert "- **AE**: Auto Exposure [^1]" in text
+        # A source only a term cites is numbered after the answer's own.
+        assert "- **EV**: Exposure Value [^2]" in text
+        assert "[^2]: [b.adoc" in text
+
+    def test_the_data_numbers_a_new_source_after_the_cited(self) -> None:
+        from ish.interfaces.format import terms_data
+
+        answer, a, b = self._answer()
+        data, cited = terms_data(answer, [a])
+        assert data == [
+            {"term": "AE", "meaning": "Auto Exposure", "cites": [1]},
+            {"term": "EV", "meaning": "Exposure Value", "cites": [2]},
+        ]
+        assert cited == [a, b]
+
+    def test_an_answer_without_terms_has_no_section(self) -> None:
+        from dataclasses import replace
+
+        from ish.interfaces.format import format_answer
+
+        answer, _a, _b = self._answer()
+        text = format_answer(replace(answer, terms=()), "q", lambda c: "file:///x")
+        assert "## Terms" not in text

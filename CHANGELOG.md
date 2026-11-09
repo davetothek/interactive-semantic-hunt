@@ -10,11 +10,18 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- An answer names the acronyms it uses in a Terms section before the
+  sources, each with what it stands for and a citation of the text that
+  spells it out. A meaning comes from the results alone: the model lists
+  the terms its sources spell out, ish keeps only those a source writes,
+  and ish looks the rest up in what the tree defines, in text such as
+  `Auto Exposure (AE)`, glossary tables, and description lists. A server
+  collects the definitions of its whole tree when it starts. The `ask`
+  tool sends them as `terms`.
 - `--ask-turns N` travels with a question to a server, and the `ask` tool
   takes `ask_turns` from 0 to 5 for one question. Without it the server
   keeps its own setting. `ask_turns` is now an option of one question,
   like the filters.
-
 - `ish --ask` colors the answer on a terminal: headings, markup, the gaps
   the documents leave, and source links that open with a click. It adds
   styles and changes no character, so a copy from the terminal is the

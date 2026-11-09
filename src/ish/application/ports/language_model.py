@@ -80,6 +80,21 @@ class Block:
 
 
 @dataclass(frozen=True, slots=True)
+class Term:
+    """Hold one acronym or abbreviation an answer uses, and what it stands for.
+
+    Attributes:
+        term: The acronym as the answer writes it, such as ``AE``.
+        meaning: What it stands for, as a source writes it.
+        source_ids: Keys of the sources that write the meaning.
+    """
+
+    term: str
+    meaning: str
+    source_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Reply:
     """Hold the answer a model wrote, and what it cost.
 
@@ -93,6 +108,8 @@ class Reply:
         blocks: The layout of the answer, when the model gave one. Every
             passage of the blocks is also in *passages*, in order, so a
             reader of the flat text misses no claim and no citation.
+        terms: The acronyms the answer uses, as the model expanded them.
+            The use case keeps only a meaning that a source writes.
     """
 
     passages: tuple[Passage, ...]
@@ -101,6 +118,7 @@ class Reply:
     output_tokens: int = 0
     searches: tuple[str, ...] = ()
     blocks: tuple[Block, ...] = ()
+    terms: tuple[Term, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

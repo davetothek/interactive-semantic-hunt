@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from ish.application.answer import Answer, AnswerBlock, AnswerPart
+from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerTerm
 from ish.domain.chunk import Chunk
 
 
@@ -156,21 +156,23 @@ def format_answer(
     sees what is not settled. Wrap text to ``WIDTH`` columns; a table, a
     link, and a directory stay whole. List each source as a link with its
     file name and lines, and below it what kind of file it is, its
-    heading, and its directory. For a question the documents do not
-    cover, list the closest sources.
+    heading, and its directory. Name the acronyms the answer uses, and
+    what each stands for, before the sources. For a question the
+    documents do not cover, list the closest sources.
     """
     lines = [f"# {_one_line(question)}", ""]
     numbers: dict[Chunk, int] = {}
     if answer.covered and answer.blocks:
         for block in answer.blocks:
             lines += _render(block, numbers, footnote) + [""]
-        cited = list(numbers)
-        lines += ["## Sources", ""]
     elif answer.covered:
-        text, cited = number_citations(answer, mark=footnote)
+        text, _ = number_citations(answer, numbers, mark=footnote)
         for paragraph in text.split("\n\n"):
             if paragraph.strip():
                 lines += [_fill(paragraph), ""]
+    if answer.covered:
+        lines += _render_terms(answer.terms, numbers)
+        cited = list(numbers)
         lines += ["## Sources", ""]
     else:
         cited = list(answer.sources)
@@ -383,6 +385,38 @@ def _joined(
     return number_citations(
         Answer(parts=tuple(parts), covered=True, sources=()), numbers, mark
     )[0]
+
+
+def _render_terms(terms: Sequence[AnswerTerm], numbers: dict[Chunk, int]) -> list[str]:
+    """Render the acronyms of an answer as a list, each citing its source."""
+    if not terms:
+        return []
+    lines = ["## Terms", ""]
+    for term in terms:
+        marks = _marks(term.cites, numbers, footnote)
+        lines.append(_fill(f"**{term.term}**: {term.meaning}{marks}", "- ", "  "))
+    return [*lines, ""]
+
+
+def terms_data(
+    answer: Answer, cited: list[Chunk]
+) -> tuple[list[dict[str, object]], list[Chunk]]:
+    """Return the acronyms of an answer as plain data, and the cited chunks.
+
+    Number a source that only a term cites after the ones *cited* already
+    holds, as ``format_answer`` does, so ``[n]`` means one source in the
+    text, the data, and the Markdown.
+    """
+    numbers = {chunk: n for n, chunk in enumerate(cited, 1)}
+    data: list[dict[str, object]] = [
+        {
+            "term": term.term,
+            "meaning": term.meaning,
+            "cites": [numbers.setdefault(c, len(numbers) + 1) for c in term.cites],
+        }
+        for term in answer.terms
+    ]
+    return data, list(numbers)
 
 
 def _render(

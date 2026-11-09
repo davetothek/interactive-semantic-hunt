@@ -34,6 +34,7 @@ from ish.interfaces.format import (
     number_citations,
     render,
     symbol_of,
+    terms_data,
 )
 from ish.interfaces.log import setup_logging
 from ish.interfaces.mcp.protocol import Server, Tool
@@ -281,10 +282,11 @@ class IshTools:
                 log.warning("Could not parse %s for answers", tree, exc_info=True)
                 return
             log.info(
-                "Parsed %d files of %s for answers in %.1f s",
+                "Parsed %d files of %s for answers in %.1f s, %d acronyms defined",
                 count,
                 tree,
                 time.monotonic() - start,
+                session.glossary_size(),
             )
 
         thread = threading.Thread(target=run, name="ish-warm", daemon=True)
@@ -375,8 +377,10 @@ class IshTools:
         if answer.covered:
             text, cited = number_citations(answer)
             layout, _ = layout_data(answer)
+            terms, cited = terms_data(answer, cited)
             reply["answer"] = text
             reply["layout"] = layout
+            reply["terms"] = terms
             reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
         else:
             reply["answer"] = NOT_COVERED_TEXT

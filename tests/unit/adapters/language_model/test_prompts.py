@@ -132,7 +132,7 @@ class TestInjection:
 def test_the_shipped_answer_keeps_tables_narrow() -> None:
     answer = load().answer
     assert "narrow enough to read in a terminal" in answer
-    assert answer.count("\n\n") == 1
+    assert answer.count("\n\n") == 2
     assert load().step.startswith(answer + " ")
 
 

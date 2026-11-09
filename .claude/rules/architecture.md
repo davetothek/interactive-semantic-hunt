@@ -29,6 +29,13 @@ interfaces → application → domain
 - Do not swallow an error. Report a parse failure to stderr, or return a
   structured error.
 
+## Answers
+
+- A meaning of an acronym comes from a text of the tree, never from a
+  model. The answer use case checks a meaning the model gives against
+  its sources, and `application/glossary.py` finds the rest. A term no
+  text spells out is left out.
+
 ## Adapter layout
 
 - One package per port under `src/ish/adapters/`.

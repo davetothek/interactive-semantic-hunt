@@ -28,6 +28,7 @@ from types import TracebackType
 from ish import bootstrap
 from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
 from ish.application.filters import Filters, parse_query
+from ish.application.glossary import Glossary
 from ish.application.ports.language_model import LanguageModel
 from ish.application.ports.link import LinkResolver
 from ish.application.progress import ProgressCallback
@@ -83,6 +84,8 @@ class Ish:
         self._built = False
         self._reranker: LanguageModel | None = None
         self._reader: Callable[[Chunk], str | None] | None = None
+        # What the acronyms of the tree stand for, from every text read.
+        self._glossary = Glossary()
         self._links: LinkResolver | None = None
 
     # ------------------------------------------------------------------
@@ -308,6 +311,7 @@ class Ish:
             pick=ASK_LIMIT,
             turns=self.settings.ask_turns if turns is None else turns,
             read=read,
+            glossary=self._glossary,
             **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)
@@ -324,29 +328,36 @@ class Ish:
         return self._reader
 
     def warm_reader_plan(self) -> list[Chunk]:
-        """Return one chunk of each file the index holds, up to ``ask_files``.
+        """Return every chunk of each file the index holds, up to ``ask_files``.
 
         Build the reader answers share as well, so a thread can call
         ``warm_reader`` with the plan while questions arrive on another.
         """
         self._reader_for_answers()
-        first: dict[Path, Chunk] = {}
+        by_file: dict[Path, list[Chunk]] = {}
         for chunk in self.chunks(stored=True):
-            first.setdefault(chunk.path, chunk)
-        return list(first.values())[: max(0, self.settings.ask_files)]
+            by_file.setdefault(chunk.path, []).append(chunk)
+        files = list(by_file.values())[: max(0, self.settings.ask_files)]
+        return [chunk for chunks in files for chunk in chunks]
 
     def warm_reader(self, plan: Sequence[Chunk] | None = None) -> int:
         """Parse the files of this tree for answers, and return how many.
 
         Read each chunk of *plan*, or of ``warm_reader_plan()``, through the
         reader every answer shares, so the first questions find their
-        files parsed. Read what is stored, and refresh nothing.
+        files parsed, and add what each defines to the glossary of the
+        session. A file parses once, and its other chunks come from the
+        cache. Read what is stored, and refresh nothing.
         """
         chunks = self.warm_reader_plan() if plan is None else plan
         read = self._reader_for_answers()
         for chunk in chunks:
-            read(chunk)
-        return len(chunks)
+            self._glossary.add(chunk, read(chunk))
+        return len({chunk.path for chunk in chunks})
+
+    def glossary_size(self) -> int:
+        """Return how many acronyms the glossary of this session defines."""
+        return len(self._glossary)
 
     def kind_of(self, chunk: Chunk) -> str:
         """Return what *chunk* holds: code, doc, test, or config.

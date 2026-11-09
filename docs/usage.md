@@ -139,6 +139,15 @@ closest sources, and exits 2. It does not answer from anything else. The
 filter words work in a question as in a query: `--ask "type:doc how is X
 done"`.
 
+An answer that uses acronyms names them in a Terms section before the
+sources, each with what it stands for and a citation of the text that
+spells it out. ish never takes a meaning from the model's own knowledge.
+A meaning comes from a source the answer read, or from another chunk of
+the tree that defines it, such as a glossary, and a term no text spells
+out is left out. A server parses its whole tree when it starts, so its
+glossary covers the tree. A local answer knows the acronyms that the
+chunks it read define.
+
 On a terminal the answer is in color: headings bold, the markup dim, the
 gaps the documents leave in yellow, and each source link clickable. Only
 styles are added, so text copied from the terminal is the same Markdown a

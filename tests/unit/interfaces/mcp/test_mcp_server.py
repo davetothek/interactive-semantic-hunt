@@ -954,6 +954,7 @@ class TestAsk:
         assert (reply["rerank_input_tokens"], reply["rerank_output_tokens"]) == (0, 0)
         assert (reply["turns"], reply["searches"]) == (1, [])
         assert reply["rerank_model"] == ""
+        assert reply["terms"] == []
         assert "writing" in reply["timings"]
         assert reply["seconds"] >= reply["timings"]["writing"]
         assert reply["layout"] == [

@@ -7,16 +7,19 @@ and the closest chunks instead, never an answer from outside them.
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from ish.application.glossary import Glossary
 from ish.application.ports.language_model import (
     SEARCHES_A_TURN,
     Block,
     LanguageModel,
     Reply,
     Source,
+    Term,
 )
 from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
@@ -33,6 +36,13 @@ PREVIEW_CHARS = 300
 
 # Chunks each follow-up search adds.
 CHUNKS_A_SEARCH = 5
+
+# Acronyms an answer names at most. A register table can hold dozens of
+# names, and a reader wants the terms, not a second table.
+MAX_TERMS = 20
+
+# An acronym as an answer writes it: a capital, then capitals or digits.
+_ACRONYM = re.compile(r"(?<![\w-])[A-Z][A-Z0-9&/-]{1,9}(?![\w-])")
 
 # Characters of chunk text one question may send. About 15,000 tokens at
 # the four characters a token that English text averages.
@@ -106,6 +116,15 @@ class AnswerRow:
 
 
 @dataclass(frozen=True, slots=True)
+class AnswerTerm:
+    """Hold an acronym the answer uses, what it stands for, and where it says so."""
+
+    term: str
+    meaning: str
+    cites: tuple[Chunk, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AnswerBlock:
     """Hold one part of the layout of an answer, with its citations as chunks.
 
@@ -150,6 +169,9 @@ class Answer:
             ``writing``, and ``following``. Reading counts every chunk read
             from its file, for the rerank and for the answer.
         seconds: Seconds the whole answer took.
+        terms: The acronyms the answer uses, each with what it stands for
+            and the sources that write it, sorted by term. A meaning that
+            no source writes is not kept, so none is invented.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -167,6 +189,7 @@ class Answer:
     rerank_model: str = ""
     timings: tuple[tuple[str, float], ...] = ()
     seconds: float = 0.0
+    terms: tuple[AnswerTerm, ...] = ()
 
 
 class AnswerQuestion:
@@ -184,6 +207,7 @@ class AnswerQuestion:
         turns: int = 0,
         on_step: AnswerCallback = _quiet,
         clock: Callable[[], float] = time.monotonic,
+        glossary: Glossary | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -204,6 +228,11 @@ class AnswerQuestion:
 
         Time each stage on *clock*, so a reader of the answer sees where
         its seconds went.
+
+        Add every text read to *glossary*, and name each acronym of the
+        answer that the model did not spell out with the meaning the
+        glossary holds. A session shares one glossary between questions,
+        and a server fills it from its whole tree.
         """
         self._search = search
         self._model = model
@@ -215,6 +244,7 @@ class AnswerQuestion:
         self._on_step = on_step
         self._clock = clock
         self._spent: dict[str, float] = {}
+        self._glossary = Glossary() if glossary is None else glossary
 
     def _timed(self, stage: str, call: Callable[..., object], *args: object):
         """Run *call* with *args*, and add the seconds it took to *stage*."""
@@ -287,9 +317,11 @@ class AnswerQuestion:
             else ()
         )
         blocks = tuple(_block(b, by_id) for b in reply.blocks) if reply.covered else ()
+        terms = self._named(reply, texts, kept) if reply.covered else ()
         return Answer(
             parts=parts,
             blocks=blocks,
+            terms=terms,
             covered=reply.covered,
             sources=tuple(kept),
             dropped=dropped,
@@ -302,6 +334,31 @@ class AnswerQuestion:
             searches=tuple(searched),
             turns=turns,
         )
+
+    def _named(
+        self, reply: Reply, texts: list[tuple[Chunk, str]], kept: list[Chunk]
+    ) -> tuple[AnswerTerm, ...]:
+        """Return the acronyms of the answer, each with a meaning a source writes.
+
+        Keep the terms the model spelled out from the sources it read, then
+        look up the rest of the acronyms the answer uses in the glossary,
+        nearest to the sources the answer read. Sort them by term.
+        """
+        words = " ".join(_words(reply))
+        named = {t.term: t for t in _terms(reply.terms, texts, words)}
+        for short in dict.fromkeys(_ACRONYM.findall(words)):
+            if short in named or len(named) >= MAX_TERMS:
+                continue
+            found = self._glossary.lookup(short, kept)
+            if found is not None:
+                named[short] = AnswerTerm(short, found.meaning, (found.chunk,))
+        return tuple(named[t] for t in sorted(named, key=str.casefold))
+
+    def _read_kept(self, chunk: Chunk) -> str | None:
+        """Read *chunk*, and add what its text defines to the glossary."""
+        text = self._timed(READING, self._read, chunk)
+        self._glossary.add(chunk, text)
+        return text
 
     def _converse(
         self, question: str, texts: list[tuple[Chunk, str]], left: int
@@ -355,6 +412,7 @@ class AnswerQuestion:
             input_tokens=read_in,
             output_tokens=wrote,
             blocks=reply.blocks,
+            terms=reply.terms,
         )
         return final, texts, searched, turns, left
 
@@ -370,7 +428,7 @@ class AnswerQuestion:
         previews: list[Source] = []
         by_id: dict[str, Chunk] = {}
         for n, chunk in enumerate(found, 1):
-            text = self._timed(READING, self._read, chunk)
+            text = self._read_kept(chunk)
             if not text or not text.strip():
                 continue
             start = " ".join(text.split())[:PREVIEW_CHARS]
@@ -408,7 +466,7 @@ class AnswerQuestion:
         """
         kept: list[tuple[Chunk, str]] = []
         for chunk in chunks:
-            text = self._timed(READING, self._read, chunk)
+            text = self._read_kept(chunk)
             if not text or not text.strip():
                 log.warning("Left out %s, which has no readable text", chunk.path)
                 continue
@@ -425,6 +483,60 @@ def _with_time(
     from dataclasses import replace
 
     return replace(answer, timings=timings, seconds=seconds)
+
+
+def _words(reply: Reply) -> list[str]:
+    """Return every text of a reply a reader sees: passages and table cells."""
+    words = [p.text for p in reply.passages]
+    for block in reply.blocks:
+        words += [cell for row in block.rows for cell in row.cells]
+        words += list(block.columns)
+    return words
+
+
+def _plain(text: str) -> str:
+    """Return *text* with its spacing and case evened, to compare by words."""
+    return " ".join(text.split()).casefold()
+
+
+def _terms(
+    found: Sequence[Term], texts: list[tuple[Chunk, str]], answer: str
+) -> tuple[AnswerTerm, ...]:
+    """Keep each term the answer uses whose meaning a source writes.
+
+    Cite the sources the model named that write the meaning. When none of
+    them does, cite the first source sent that writes it, because the
+    meaning came from the results either way. Drop a term the answer
+    does not use, a meaning that only repeats the term, and a meaning no
+    source writes, so a model that expands a term from its own knowledge
+    adds nothing. Keep one entry for each term, sorted by term.
+    """
+    by_id = {str(n): pair for n, pair in enumerate(texts, 1)}
+    kept: dict[str, AnswerTerm] = {}
+    dropped = 0
+    for term in found:
+        name, meaning = term.term.strip(), term.meaning.strip()
+        used = re.search(rf"(?<!\w){re.escape(name)}(?!\w)", answer) if name else None
+        if not used or not meaning or _plain(meaning) == _plain(name):
+            dropped += 1
+            continue
+        writes = [
+            chunk
+            for i in term.source_ids
+            if i in by_id and _plain(meaning) in _plain(by_id[i][1])
+            for chunk in (by_id[i][0],)
+        ]
+        if not writes:
+            writes = next(
+                ([c] for c, text in texts if _plain(meaning) in _plain(text)), []
+            )
+        if not writes:
+            dropped += 1
+            continue
+        kept.setdefault(name, AnswerTerm(name, meaning, tuple(writes)))
+    if dropped:
+        log.info("Left out %d terms that no source spells out", dropped)
+    return tuple(kept[name] for name in sorted(kept, key=str.casefold))
 
 
 def _source(source_id: str, chunk: Chunk, text: str) -> Source:
