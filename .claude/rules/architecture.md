@@ -42,6 +42,9 @@ interfaces → application → domain
   import stay the same. Inside it, the same naming holds.
 - Machinery that several backends of one package share stays at the package
   level, with an underscore: `parser/_sections.py`.
+- Machinery that adapters of several packages share is a module of
+  `adapters/` itself, with an underscore: `_http.py`, `_ollama.py`. An
+  adapter may import it. It imports no port and no other adapter.
 - A language that only configures a shared engine is a factory,
   `<language>_parser()`. A language with behavior of its own is a class.
 - `tests/unit/adapters/test_layout.py` checks the packages with a registry.

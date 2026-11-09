@@ -13,6 +13,7 @@ file, which may be shared or committed.
 import os
 from collections.abc import Sequence
 
+from ish.adapters import _http
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import NOT_COVERED, Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
@@ -144,42 +145,31 @@ class AnthropicLanguageModel:
 
     def _post(self, payload: dict[str, object]) -> dict:
         """Send one request and return the decoded reply."""
-        # The HTTP client costs 20 ms to import, which a search never pays.
-        import json
-        import urllib.error
-        import urllib.request
-
         key = os.environ.get(KEY_VARIABLE, "")
         if not key:
             raise LanguageModelError(
                 f"Set {KEY_VARIABLE} to use the anthropic backend."
             )
-        request = urllib.request.Request(
-            ENDPOINT,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "content-type": "application/json",
-                "x-api-key": key,
-                "anthropic-version": API_VERSION,
-            },
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                return json.loads(response.read())
-        except TimeoutError as exc:
+            return _http.post_json(
+                ENDPOINT,
+                payload,
+                timeout=self._timeout,
+                headers={"x-api-key": key, "anthropic-version": API_VERSION},
+            )
+        except _http.Timeout as exc:
             raise LanguageModelError(
                 f"The Anthropic API did not answer within {self._timeout:g} s."
             ) from exc
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace").strip()
+        except _http.Refused as exc:
             raise LanguageModelError(
-                f"The Anthropic API refused the request ({exc.code}): {detail}"
+                f"The Anthropic API refused the request ({exc.code}): {exc.detail}"
             ) from exc
-        except urllib.error.URLError as exc:
+        except _http.Unreachable as exc:
             raise LanguageModelError(
                 f"Cannot reach the Anthropic API: {exc.reason}"
             ) from exc
-        except json.JSONDecodeError as exc:
+        except _http.NotJson as exc:
             raise LanguageModelError(
                 "The Anthropic API returned a reply that is not JSON."
             ) from exc
