@@ -54,8 +54,9 @@ def _run_ask(args: CliArgs) -> int:
     Return 0 when the documents answer it, and 2 when they do not, so a
     script can tell the two apart. Show each step on stderr while the
     models work, and keep stdout for the answer, so it pipes into an
-    editor. End with one line on stderr that says where the seconds and
-    tokens went. Return 130 on Ctrl-C, with no traceback.
+    editor. End with a blank line and one line on stderr that says where
+    the seconds and tokens went. Color what goes to a terminal. Return 130
+    on Ctrl-C, with no traceback.
     """
     if not args.query:
         log.error("--ask needs a question.")
@@ -87,8 +88,7 @@ def _run_ask(args: CliArgs) -> int:
             if args.brief
             else format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
         )
-        sys.stdout.write(f"{text}\n")
-        sys.stderr.write(f"ish: {format_usage(answer_usage(answer))}\n")
+        _show(args, text, format_usage(answer_usage(answer)))
     return 0 if answer.covered else 2
 
 
@@ -139,9 +139,25 @@ def _run_remote_ask(args: CliArgs) -> int:
             settings.remote,
         )
         return 1
-    sys.stdout.write(f"{shown}\n")
-    sys.stderr.write(f"ish: {format_usage(reply, time.monotonic() - start)}\n")
+    _show(args, shown, format_usage(reply, time.monotonic() - start))
     return 0 if reply.get("covered") else 2
+
+
+def _show(args: CliArgs, answer: str, usage: str) -> None:
+    """Print *answer* on stdout, and below it the *usage* line on stderr.
+
+    Color each stream on its own, so an answer piped to a file is plain
+    Markdown while the line beside it stays grey in the terminal. Leave a
+    blank line above the usage, so it reads apart from the answer.
+    """
+    from ish.interfaces.cli.highlight import grey, highlight
+
+    mode = args.settings.color
+    shown = highlight(answer) if resolve_color(mode, sys.stdout) else answer
+    sys.stdout.write(f"{shown}\n")
+    sys.stdout.flush()
+    line = f"ish: {usage}"
+    sys.stderr.write(f"\n{grey(line) if resolve_color(mode, sys.stderr) else line}\n")
 
 
 def _report(ticker: Ticker, step: AnswerStep) -> None:

@@ -135,3 +135,38 @@ def test_the_config_flag_travels_with_the_overrides(tmp_path, monkeypatch):
 
     args = CliArgs.from_args(["q", ".", "-c", str(named)])
     assert args.overrides["config"] == str(named)
+
+
+class TestHelpSections:
+    """The help groups the options by what a reader wants to do."""
+
+    def test_every_setting_names_a_section_of_the_help(self) -> None:
+        from dataclasses import fields
+
+        from ish.settings import SECTIONS
+
+        for f in fields(Settings):
+            assert f.metadata["section"] in SECTIONS, f.name
+
+    def test_every_section_holds_an_option(self) -> None:
+        from dataclasses import fields
+
+        from ish.settings import SECTIONS
+
+        used = {f.metadata["section"] for f in fields(Settings)}
+        assert used == set(SECTIONS)
+
+    def test_the_usage_is_one_short_line(self) -> None:
+        from ish.interfaces.cli.args import build_parser
+
+        usage = build_parser().format_usage()
+        assert usage.strip() == "usage: ish [options] [query] [path]"
+
+    def test_the_sections_show_in_order(self) -> None:
+        from ish.interfaces.cli.args import build_parser
+        from ish.settings import SECTIONS
+
+        text = build_parser().format_help()
+        places = [text.index(f"\n{title}:\n") for title in SECTIONS]
+        assert places == sorted(places)
+        assert "--color WHEN" in text

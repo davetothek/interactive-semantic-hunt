@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
-from ish.settings import CONFIG_OPTION, Settings, load_settings
+from ish.settings import CONFIG_OPTION, SECTIONS, Settings, load_settings
 
 # Options whose accepted values come from a registry rather than a literal.
 _DYNAMIC_CHOICES = {
@@ -47,10 +47,15 @@ def _describe_default(value: object) -> str:
 
 
 def add_settings_options(parser: argparse.ArgumentParser) -> None:
-    """Add one command-line flag for every configurable setting."""
-    group = parser.add_argument_group("options (also settable in ish.toml)")
+    """Add one command-line flag for every configurable setting, by section.
+
+    Show the sections in the order ``SECTIONS`` gives, and the options of
+    each in the order they are declared.
+    """
+    groups = {title: parser.add_argument_group(title) for title in SECTIONS}
     for f in fields(Settings):
         meta = f.metadata
+        group = groups[meta["section"]]
         flags = [meta.get("flag") or f"--{f.name.replace('_', '-')}"]
         if meta.get("flag"):
             # Keep the derived long flag alongside an explicit short one.
@@ -82,7 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="ish",
-        description="Discover and list semantic code chunks in source files.",
+        usage="%(prog)s [options] [query] [path]",
+        description=(
+            "Search code and documents by meaning, ask them a question, or "
+            "list what they hold."
+        ),
+        epilog=(
+            "Every option in the sections above can also be set in a config "
+            "file: ~/.config/ish/config.toml, or .ish/config.toml in a tree, "
+            "with the name written in snake_case."
+        ),
     )
     parser.add_argument(
         "query",

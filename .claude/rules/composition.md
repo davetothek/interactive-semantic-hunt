@@ -30,7 +30,8 @@ paths:
 
 - Every option is a field on the frozen `Settings` dataclass. The CLI flags
   and the TOML keys derive from the fields. Add an option by adding a field.
-  Never edit `args.py` for it.
+  Never edit `args.py` for it. The field names its section of the help as
+  the first argument of `_opt`, one of `SECTIONS`.
 - There is no config-only or CLI-only option. `tests/unit/test_settings.py`
   checks the parity in both directions.
 - `CONFIG_OPTION` is the one exemption. A file cannot name where to find

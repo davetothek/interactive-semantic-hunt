@@ -56,10 +56,32 @@ class ConfigError(Exception):
     """Raise when a configuration file cannot be read or understood."""
 
 
-def _opt(help: str, *, scope: str = "index", flag: str | None = None, **cli: Any):
+# The sections of the help, in the order a reader looks for them. Each
+# option names its section where it is declared, so a new option takes
+# one line and no edit to the command line interface.
+SEARCH = "search"
+ANSWERS = "answers (--ask, --brief)"
+OUTPUT = "output"
+INDEXED = "what enters the index"
+EMBEDDING = "embedding"
+STORAGE = "where the index lives"
+MAINTENANCE = "maintenance"
+PICKER = "interactive picker (-i)"
+SECTIONS = (SEARCH, ANSWERS, OUTPUT, INDEXED, EMBEDDING, STORAGE, MAINTENANCE, PICKER)
+
+
+def _opt(
+    section: str,
+    help: str,
+    *,
+    scope: str = "index",
+    flag: str | None = None,
+    **cli: Any,
+):
     """Describe one option for both the CLI and the TOML file.
 
-    *scope* says whether an option decides what enters the index or only
+    *section* is the part of the help the option belongs to, one of
+    ``SECTIONS``. *scope* says whether an option decides what enters the index or only
     what a search returns. An index-scope option must never be settable
     per call, because the next refresh would prune whatever it excluded.
 
@@ -70,7 +92,7 @@ def _opt(help: str, *, scope: str = "index", flag: str | None = None, **cli: Any
     Extra keywords describe how the command line accepts the option. The
     CLI interface interprets them; this module never imports a parser.
     """
-    return {"help": help, "scope": scope, "flag": flag, "cli": cli}
+    return {"section": section, "help": help, "scope": scope, "flag": flag, "cli": cli}
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,27 +101,32 @@ class Settings:
 
     embedder: str = field(
         default=DEFAULT_EMBEDDER,
-        metadata=_opt("Embedding backend to use."),
+        metadata=_opt(EMBEDDING, "Embedding backend to use."),
     )
     model: str = field(
         default="",
-        metadata=_opt("Override the backend model. Empty uses the backend default."),
+        metadata=_opt(
+            EMBEDDING, "Override the backend model. Empty uses the backend default."
+        ),
     )
     limit: int = field(
         default=5,
-        metadata=_opt("Maximum number of search results.", scope="query", type=int),
+        metadata=_opt(
+            SEARCH, "Maximum number of search results.", scope="query", type=int
+        ),
     )
     tui_limit: int = field(
         default=50,
-        metadata=_opt("Maximum number of results in the TUI.", type=int),
+        metadata=_opt(PICKER, "Maximum number of results in the TUI.", type=int),
     )
     ignore: tuple[str, ...] = field(
         default=DEFAULT_IGNORE,
-        metadata=_opt("Directory names to skip.", nargs="+", metavar="DIR"),
+        metadata=_opt(INDEXED, "Directory names to skip.", nargs="+", metavar="DIR"),
     )
     include: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            INDEXED,
             "Index only paths matching these regular expressions.",
             nargs="+",
             metavar="REGEX",
@@ -108,6 +135,7 @@ class Settings:
     exclude: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            INDEXED,
             "Never index a path matching these regular expressions.",
             nargs="+",
             metavar="REGEX",
@@ -116,6 +144,7 @@ class Settings:
     lang: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            SEARCH,
             "Return results only from these languages.",
             scope="query",
             nargs="+",
@@ -125,6 +154,7 @@ class Settings:
     under: str = field(
         default="",
         metadata=_opt(
+            SEARCH,
             "Return results only from paths matching this expression.",
             scope="query",
             metavar="REGEX",
@@ -133,6 +163,7 @@ class Settings:
     type_patterns: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            INDEXED,
             "Sort a path into a type, as 'type:regex'. First match wins.",
             nargs="+",
             metavar="TYPE:REGEX",
@@ -141,6 +172,7 @@ class Settings:
     type: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            SEARCH,
             "Return results only of these kinds: code, doc, test, config.",
             scope="query",
             nargs="+",
@@ -150,6 +182,7 @@ class Settings:
     federate: bool = field(
         default=True,
         metadata=_opt(
+            SEARCH,
             "Also search stored indexes of directories below the path.",
             action="boolean_optional",
         ),
@@ -157,6 +190,7 @@ class Settings:
     plugins: bool = field(
         default=True,
         metadata=_opt(
+            INDEXED,
             "Load parsers from the user configuration directory.",
             action="boolean_optional",
         ),
@@ -164,6 +198,7 @@ class Settings:
     git: bool = field(
         default=True,
         metadata=_opt(
+            INDEXED,
             "Skip files that git ignores.",
             action="boolean_optional",
         ),
@@ -171,6 +206,7 @@ class Settings:
     unignore: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            INDEXED,
             "Index paths matching these expressions although git ignores them. "
             "Anchored at the tree root, like include.",
             nargs="+",
@@ -180,6 +216,7 @@ class Settings:
     context_tokens: int = field(
         default=2048,
         metadata=_opt(
+            INDEXED,
             "How many tokens the embedding model reads of each chunk. The chunk "
             "cap follows from it. Changing it embeds every chunk again.",
             type=int,
@@ -189,6 +226,7 @@ class Settings:
     max_chunks: int = field(
         default=1000,
         metadata=_opt(
+            INDEXED,
             "Index a file that yields more chunks than this as one chunk. "
             "A file that yields thousands is generated.",
             type=int,
@@ -198,6 +236,7 @@ class Settings:
     languages: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            INDEXED,
             "Languages to parse. Empty enables every registered parser.",
             nargs="+",
             metavar="LANG",
@@ -206,6 +245,7 @@ class Settings:
     format: str = field(
         default="plain",
         metadata=_opt(
+            OUTPUT,
             "Output shape. Use grep for an editor picker.",
             scope="query",
             choices=["plain", "grep"],
@@ -213,11 +253,18 @@ class Settings:
     )
     color: str = field(
         default="auto",
-        metadata=_opt("Control log color.", choices=["auto", "always", "never"]),
+        metadata=_opt(
+            OUTPUT,
+            "Color the answer, the logs, and the timing line: auto colors "
+            "what goes to a terminal unless NO_COLOR is set.",
+            choices=["auto", "always", "never"],
+            metavar="WHEN",
+        ),
     )
     verbosity: int = field(
         default=0,
         metadata=_opt(
+            OUTPUT,
             "Increase log detail. Repeat for more.",
             flag="-v",
             action="count",
@@ -226,6 +273,7 @@ class Settings:
     cache_dir: str = field(
         default="",
         metadata=_opt(
+            STORAGE,
             "Index directory. Empty uses the platform cache.",
             metavar="DIR",
         ),
@@ -233,6 +281,7 @@ class Settings:
     no_hybrid: bool = field(
         default=False,
         metadata=_opt(
+            SEARCH,
             "Rank by vector similarity alone, with no lexical matching.",
             scope="query",
             action="store_true",
@@ -241,6 +290,7 @@ class Settings:
     no_cache: bool = field(
         default=False,
         metadata=_opt(
+            STORAGE,
             "Index in memory only, leaving nothing on disk.",
             action="store_true",
         ),
@@ -248,6 +298,7 @@ class Settings:
     refresh_seconds: int = field(
         default=30,
         metadata=_opt(
+            STORAGE,
             "How often a resident server re-checks a tree for changes.",
             metavar="SECONDS",
         ),
@@ -260,6 +311,7 @@ class Settings:
     tui_theme: str = field(
         default="",
         metadata=_opt(
+            PICKER,
             "Theme for the TUI. Empty uses the Textual default.",
             metavar="NAME",
         ),
@@ -267,6 +319,7 @@ class Settings:
     tui_debounce_ms: int = field(
         default=120,
         metadata=_opt(
+            PICKER,
             "Wait this long after a keystroke before searching, in the TUI.",
             metavar="MS",
         ),
@@ -274,6 +327,7 @@ class Settings:
     link_base: str = field(
         default="",
         metadata=_opt(
+            ANSWERS,
             "Base URL where the tree is published. Empty links to files on disk.",
             metavar="URL",
         ),
@@ -281,6 +335,7 @@ class Settings:
     remote: str = field(
         default="",
         metadata=_opt(
+            ANSWERS,
             "MCP server URL that answers --ask and --brief. Empty answers here.",
             metavar="URL",
         ),
@@ -291,6 +346,7 @@ class Settings:
     language_model: str = field(
         default="",
         metadata=_opt(
+            ANSWERS,
             "Language model backend that writes answers. Empty turns answers off.",
             metavar="NAME",
         ),
@@ -298,6 +354,7 @@ class Settings:
     answer_model: str = field(
         default="",
         metadata=_opt(
+            ANSWERS,
             "Model the language model backend runs. Empty uses its default.",
             metavar="MODEL",
         ),
@@ -305,6 +362,7 @@ class Settings:
     rerank_model: str = field(
         default="",
         metadata=_opt(
+            ANSWERS,
             "Model of the same backend that picks which chunks an answer reads, "
             "from a wider search. Empty reads the best chunks as ranked.",
             metavar="MODEL",
@@ -313,6 +371,7 @@ class Settings:
     rerank_candidates: int = field(
         default=50,
         metadata=_opt(
+            ANSWERS,
             "Chunks a search returns for the rerank model to choose from.",
             type=int,
             metavar="N",
@@ -321,6 +380,7 @@ class Settings:
     ask_files: int = field(
         default=32,
         metadata=_opt(
+            ANSWERS,
             "Files an answer keeps parsed between questions. A server that "
             "answers from one tree can keep every file of it.",
             type=int,
@@ -330,6 +390,7 @@ class Settings:
     ask_warm: bool = field(
         default=False,
         metadata=_opt(
+            ANSWERS,
             "Parse the files of the tree when ish-mcp starts, up to "
             "ask_files, so the first answers read no file.",
             action="boolean_optional",
@@ -338,6 +399,7 @@ class Settings:
     ask_turns: int = field(
         default=0,
         metadata=_opt(
+            ANSWERS,
             "Follow-up searches the model may ask for before it answers. "
             "0 answers from the first search alone.",
             type=int,
@@ -347,6 +409,7 @@ class Settings:
     prompt_dir: str = field(
         default="",
         metadata=_opt(
+            ANSWERS,
             "Directory of instruction files that replace the ones a language "
             "model receives, file by file. Empty uses the shipped ones.",
             metavar="DIR",
@@ -355,6 +418,7 @@ class Settings:
     allowed_language_models: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
+            ANSWERS,
             "Language model backends that may receive text. Empty allows none.",
             nargs="+",
             metavar="NAME",
@@ -363,6 +427,7 @@ class Settings:
     refresh: bool = field(
         default=False,
         metadata=_opt(
+            MAINTENANCE,
             "Bring every stored index at or below the path up to date first.",
             action="store_true",
         ),
@@ -370,6 +435,7 @@ class Settings:
     reindex: bool = field(
         default=False,
         metadata=_opt(
+            MAINTENANCE,
             "Discard the stored index and build it again.",
             action="store_true",
         ),
@@ -377,6 +443,7 @@ class Settings:
     forget: bool = field(
         default=False,
         metadata=_opt(
+            MAINTENANCE,
             "Remove the stored index of the path and stop. The vectors stay.",
             action="store_true",
         ),
@@ -384,6 +451,7 @@ class Settings:
     sweep: bool = field(
         default=False,
         metadata=_opt(
+            MAINTENANCE,
             "Delete the vectors no index of the path's repository references, "
             "and stop.",
             action="store_true",
