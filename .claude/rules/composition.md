@@ -48,7 +48,7 @@ paths:
 - An unknown key warns and is skipped. A malformed or unreadable file raises
   `ConfigError` and exits 1. A directory of the config file's name is absent.
 - Every field carries a `scope`. Query scope (`lang`, `under`, `type`,
-  `limit`, `no_hybrid`) may be set per call. Index scope may not. A per-call
+  `limit`, `no_hybrid`, `ask_turns`) may be set per call. Index scope may not. A per-call
   index option would make the next refresh prune what that call excluded.
 
 ## Use cases
