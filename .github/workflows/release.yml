@@ -37,25 +37,26 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    # Trusted publishing: PyPI verifies this workflow rather than a
-    # stored token, so there is no secret to leak or rotate.
+    # Upload with an API token that is scoped to this one project. The
+    # secret lives in the pypi environment, so only this job can read it.
     environment: pypi
-    permissions:
-      id-token: write
+    permissions: {}
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
 
   release:
     needs: publish
     runs-on: ubuntu-latest
     permissions:
-      # Only this job writes to the repository. The publish job keeps
-      # id-token alone, so a token that can write is never in scope
-      # where a package is signed.
+      # Only this job writes to the repository. The publish job holds
+      # no permission, so a token that can write is never in scope
+      # where the package uploads.
       contents: write
     steps:
       - uses: actions/checkout@v7
