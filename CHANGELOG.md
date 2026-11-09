@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.9.3 - 2026-11-09
+
 ### Added
 
 - An answer names the acronyms it uses in a Terms section before the
