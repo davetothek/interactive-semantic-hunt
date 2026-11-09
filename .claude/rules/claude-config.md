@@ -30,6 +30,15 @@ paths:
 - Do not write a sentence in a rule that also appears in `CLAUDE.md`. Two
   copies drift.
 
+## Names in docs
+
+- A change that moves or renames a file updates every name of it in
+  `.claude/`, `docs/`, `README.md`, and the benchmark queries, in the same
+  commit.
+- `tests/unit/test_doc_paths.py` fails on a name in backticks that no file
+  answers. A doc that names a file outside the repository adds it to
+  `OUTSIDE` with the reason.
+
 ## Skills
 
 - A skill is a procedure the model would otherwise improvise. It names the
