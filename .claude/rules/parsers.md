@@ -49,7 +49,9 @@ The `add-language` skill walks through it.
   fields.
 - `_sections.py` holds the section walk that `markdown.py` and `asciidoc/`
   share. A section runs to the next heading. The symbol is the heading path. Skip
-  fenced blocks. A file with no heading is one chunk named after the file
+  fenced blocks. Each language passes its own fence: in Markdown only
+  backticks and tildes, because a line of hyphens or equal signs is a
+  thematic break or a heading underline there. A file with no heading is one chunk named after the file
   when it holds a line of prose, and nothing when it holds only machinery.
 - `asciidoc/` overrides three hooks of the walk: `_expand`, `_blocks`, and
   `_pieces`. It resolves includes through `asciidoc/_includes.py`: attributes,
