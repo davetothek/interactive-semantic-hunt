@@ -142,6 +142,18 @@ class TestRemoteAsk:
             ["doc"],
         )
 
+    def test_ask_turns_travel_when_given_on_the_command_line(
+        self, server: tuple[Server, str], monkeypatch
+    ) -> None:
+        made, url = server
+        assert main(["--ask", QUESTION, "--remote", url, "--ask-turns", "2"]) == 0
+        # A value from the environment or a config file stays here.
+        monkeypatch.setenv("ISH_ASK_TURNS", "3")
+        assert main(["--ask", QUESTION, "--remote", url]) == 0
+        given, configured = made.calls
+        assert given["ask_turns"] == 2
+        assert "ask_turns" not in configured
+
     def test_the_busy_line_names_the_host(
         self, server: tuple[Server, str], monkeypatch
     ) -> None:

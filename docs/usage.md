@@ -189,7 +189,9 @@ ish --remote https://docs.example.com/mcp --ask "how is the watchdog configured"
 The server searches its own tree and writes the answer with its own
 language model, so this machine needs no index and no model. The filter
 words and the `--lang`, `--under`, and `--type` flags travel with the
-question. The path argument does not, because a path on this machine
+question, and so does `--ask-turns N` when you give it: `0` answers from the
+first search, and up to `5` lets the model search again before it answers.
+Without the flag the server uses its own `ask_turns`. The path argument does not, because a path on this machine
 means nothing to the server. The exit codes are the same as for a local
 answer. A plain search and `-i` still read the local tree.
 

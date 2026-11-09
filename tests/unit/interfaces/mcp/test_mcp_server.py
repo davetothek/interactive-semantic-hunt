@@ -1096,3 +1096,36 @@ class TestWarmReader:
             assert "Could not parse" in caplog.text
         finally:
             made.close()
+
+
+class TestAskTurnsPerCall:
+    """A call may set the follow-up turns of its answer, within a bound."""
+
+    def _recording(self, tools: IshTools, project: Path, monkeypatch) -> list:
+        seen: list = []
+        session = tools._session_for(project.resolve())
+
+        def ask(question, **kwargs):
+            from ish.application.answer import Answer
+
+            seen.append(kwargs.get("turns"))
+            return Answer(parts=(), covered=False, sources=())
+
+        monkeypatch.setattr(session, "ask", ask)
+        return seen
+
+    def test_a_call_sets_the_turns_and_none_keeps_the_setting(
+        self, tools: IshTools, project: Path, monkeypatch
+    ) -> None:
+        seen = self._recording(tools, project, monkeypatch)
+        tools.ask({"question": "q", "path": str(project), "ask_turns": 2})
+        tools.ask({"question": "q", "path": str(project)})
+        assert seen == [2, None]
+
+    @pytest.mark.parametrize("value", [-1, 6, "3", True, 1.5])
+    def test_a_value_out_of_bounds_fails_the_call(
+        self, tools: IshTools, project: Path, monkeypatch, value
+    ) -> None:
+        self._recording(tools, project, monkeypatch)
+        with pytest.raises(ValueError, match="ask_turns"):
+            tools.ask({"question": "q", "path": str(project), "ask_turns": value})
