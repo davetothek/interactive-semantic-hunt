@@ -9,6 +9,12 @@
 -- tree behind basic authentication needs one line there. Any other
 -- scheme goes to the system opener.
 --
+-- A tree behind the bearer token of the server gets `ISH_MCP_TOKEN` in an
+-- Authorization header. The token goes only to the origin of `ISH_REMOTE`
+-- and to the origins in `token_origins`, so a link to any other host
+-- never sees it. curl reads the header from stdin, so the token is not
+-- on its command line.
+--
 -- The fetch runs in the background. Neovim keeps drawing while it waits,
 -- and the buffer opens when the text arrives. Only a failure is reported
 -- through vim.notify: with `cmdheight = 0` a message draws over the
@@ -18,6 +24,10 @@
 --     { desc = 'Open the ish link under the cursor' })
 
 local M = {}
+
+-- Origins besides the one of `ISH_REMOTE` that get the token, such as
+-- { "https://docs.example.com" }.
+M.token_origins = {}
 
 local URL = "%a[%w+.-]*://[^%s%)%]>\"'`]+"
 
@@ -53,6 +63,26 @@ end
 local function split(link)
   local base, fragment = link:match("^([^#]*)#?(.*)$")
   return base, tonumber(fragment:match("^L(%d+)"))
+end
+
+local function origin(link)
+  return link:lower():match("^(https?://[^/?#]+)")
+end
+
+-- Return the token when *base* is on an origin that may receive it.
+local function token_for(base)
+  local token = vim.env.ISH_MCP_TOKEN
+  if not token or token == "" then
+    return nil
+  end
+  local wanted = origin(base)
+  local allowed = vim.list_extend({ vim.env.ISH_REMOTE or "" }, M.token_origins)
+  for _, candidate in ipairs(allowed) do
+    if wanted and origin(candidate) == wanted then
+      return token
+    end
+  end
+  return nil
 end
 
 local function jump(line)
@@ -101,9 +131,17 @@ function M.open(link)
     vim.ui.open(link)
     return
   end
+  local command = { "curl", "--fail", "--silent", "--show-error", "--location", "--netrc-optional" }
+  local token = token_for(base)
+  local stdin
+  if token then
+    vim.list_extend(command, { "--header", "@-" })
+    stdin = "Authorization: Bearer " .. token .. "\n"
+  end
+  table.insert(command, base)
   vim.system(
-    { "curl", "--fail", "--silent", "--show-error", "--location", "--netrc-optional", base },
-    { text = true },
+    command,
+    { text = true, stdin = stdin },
     function(result)
       vim.schedule(function()
         if result.code ~= 0 then
@@ -117,6 +155,11 @@ function M.open(link)
   )
 end
 
-M._internal = { link_at_cursor = link_at_cursor, split = split, decode = decode }
+M._internal = {
+  link_at_cursor = link_at_cursor,
+  split = split,
+  decode = decode,
+  token_for = token_for,
+}
 
 return M

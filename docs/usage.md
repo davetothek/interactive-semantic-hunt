@@ -169,7 +169,10 @@ means nothing to the server. The exit codes are the same as for a local
 answer. A plain search and `-i` still read the local tree.
 
 The links in the answer are the ones the server makes. Set `link_base` on
-the server, so they point at a published tree rather than at its disk.
+the server, so they point at a published tree rather than at its disk. When
+that tree is behind the same token, the [Neovim link
+opener](clients.md#use-from-neovim) sends `ISH_MCP_TOKEN` with each fetch.
+Set `ISH_REMOTE` rather than `--remote` so the opener knows the server.
 
 Answers are off until you choose a model. See
 [Answer questions](configuration.md#answer-questions). A plain search never
