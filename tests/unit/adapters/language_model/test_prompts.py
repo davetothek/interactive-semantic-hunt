@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.language_model import prompts
-from ish.adapters.language_model.prompts import NAMES, Prompts, load
+from ish.adapters.language_model import _prompts as prompts
+from ish.adapters.language_model._prompts import NAMES, Prompts, load
 from ish.application.ports.language_model import SEARCHES_A_TURN, LanguageModelError
 
 

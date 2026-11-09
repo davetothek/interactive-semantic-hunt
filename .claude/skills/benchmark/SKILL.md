@@ -10,7 +10,7 @@ allowed-tools: Bash(uv run *), Bash(ls *), Bash(cat *)
 
 # Benchmark
 
-Accuracy beats speed. A change to `ranking.py`, `prefixes.py`, `_limits.py`,
+Accuracy beats speed. A change to `ranking.py`, `_prefixes.py`, `_limits.py`,
 or a parser's chunking is not done until this table says what it cost.
 
 ## Requirements

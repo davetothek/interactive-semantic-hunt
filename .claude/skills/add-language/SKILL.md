@@ -19,7 +19,7 @@ change, with the suffixes and aliases you would claim, and stop.
 ## 1. Claim the suffixes
 
 ```
-grep -rn "suffixes" src/ish/adapters/parser/*.py
+grep -rn "suffixes" src/ish/adapters/parser/
 ```
 
 Two parsers claiming one suffix is a hard error. Pick suffixes nobody holds,
@@ -27,7 +27,10 @@ each with the leading dot.
 
 ## 2. Write the module
 
-`src/ish/adapters/parser/$ARGUMENTS.py`:
+`src/ish/adapters/parser/$ARGUMENTS.py`. When the format is a dialect of one
+that a shared engine reads, write a factory instead of a class:
+`markdown.py`, `yaml.py`, and `cpp.py` are each one function. When the parser
+needs a second file, make `$ARGUMENTS/` a subpackage, as `asciidoc/` is.
 
 ```python
 """Parse <format> into chunks. <One sentence on what a chunk is here.>"""
@@ -62,8 +65,9 @@ Rules the module must keep:
   path joined with ` > `. `kind` names the unit: `function`, `class`,
   `section`, `document`.
 
-Read `.claude/rules/parsers.md` when it loads. `markup.py` is the smallest
-existing parser to copy from. `structured.py` shows splitting a document.
+Read `.claude/rules/parsers.md` when it loads. `python.py` is the smallest
+class to copy from. `_structured.py` shows splitting a document, and
+`asciidoc/parser.py` shows extending the section walk of `_sections.py`.
 
 ## 3. Register
 
@@ -78,10 +82,12 @@ says what the language holds and decides how `type:` sorts it.
 
 ## 4. Test
 
-`tests/unit/adapters/parser/test_$ARGUMENTS_parser.py`, against known source
+`tests/unit/adapters/parser/test_$ARGUMENTS_parser.py`, or a test subpackage
+`tests/unit/adapters/parser/$ARGUMENTS/` for a subpackage, against known source
 strings: the smallest valid file, several units, nesting if the format has
 it, the line numbers of each chunk, the exact `text`, a file with no unit, a
-broken file. `test_registry.py` checks the registry entry on its own.
+broken file. `test_registry.py` checks the registry entry on its own, and
+`tests/unit/adapters/test_layout.py` checks the module name.
 
 ## 5. Prove it end to end
 

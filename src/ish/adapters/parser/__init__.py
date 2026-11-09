@@ -13,7 +13,9 @@ That is the whole contract, ``ish.application.ports.parser.Parser``.
 
 To add a language to ish:
 
-1. Write the class in a new module in this package, beside the others.
+1. Write the parser in a module named after the language, beside the
+   others. A language that needs a second file is a subpackage of that
+   name, whose ``__init__.py`` exports the parser, as ``asciidoc/`` does.
 2. Add one line to ``PARSERS`` below, keyed by the language name.
 
 That line carries everything else ish needs to know about the language:
@@ -32,7 +34,7 @@ built-in entry of the same language. Such a parser may declare
 
 Only a language carries a plain name in this package. The machinery
 beside them is prefixed with an underscore, so a listing says which is
-which.
+which. ``tests/unit/adapters/test_layout.py`` holds the package to it.
 
 Keep heavy imports out of module scope. Import a grammar or a library
 inside the method that needs it, so listing the languages costs nothing.
@@ -41,10 +43,12 @@ inside the method that needs it, so listing the languages costs nothing.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-from ish.adapters.parser.markup import MarkupParser
+from ish.adapters.parser.asciidoc import AsciiDocParser
+from ish.adapters.parser.cpp import cpp_parser
+from ish.adapters.parser.json import json_parser
+from ish.adapters.parser.markdown import markdown_parser
 from ish.adapters.parser.python import PythonParser
-from ish.adapters.parser.structured import StructuredParser
-from ish.adapters.parser.tree_sitter import cpp_parser
+from ish.adapters.parser.yaml import yaml_parser
 from ish.application.ports.parser import Parser
 
 CODE = "code"
@@ -83,10 +87,10 @@ PARSERS: dict[str, Language] = {
     "python": Language(PythonParser, frozenset({"py", "python3"})),
     # One parser owns C and C++, so every spelling of either names it.
     "cpp": Language(cpp_parser, frozenset({"c", "c++", "cc", "cxx", "h", "hpp"})),
-    "markdown": Language(MarkupParser.markdown, frozenset({"md", "mdown"}), DOC),
-    "asciidoc": Language(MarkupParser.asciidoc, frozenset({"adoc", "asc"}), DOC),
-    "yaml": Language(StructuredParser.yaml, frozenset({"yml"}), CONFIG),
-    "json": Language(StructuredParser.json, category=CONFIG),
+    "markdown": Language(markdown_parser, frozenset({"md", "mdown"}), DOC),
+    "asciidoc": Language(AsciiDocParser, frozenset({"adoc", "asc"}), DOC),
+    "yaml": Language(yaml_parser, frozenset({"yml"}), CONFIG),
+    "json": Language(json_parser, category=CONFIG),
 }
 """Every language ish reads, by the name it is registered under."""
 

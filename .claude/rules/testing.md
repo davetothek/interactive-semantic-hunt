@@ -7,6 +7,8 @@ paths:
 
 - Unit tests live in `tests/unit/` and mirror the source tree down to the
   subpackage: `tests/unit/adapters/parser/`, `tests/unit/interfaces/mcp/`.
+  A backend that is a subpackage gets a test subpackage of the same name:
+  `tests/unit/adapters/parser/asciidoc/`.
 - Integration tests live in `tests/integration/cli/`. At least one runs the
   CLI against a temporary project with nested directories.
 - Coverage is 100 % and the run fails below it. A new line arrives with the

@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.parser.structured import StructuredParser
+from ish.adapters.parser._structured import StructuredParser
+from ish.adapters.parser.json import json_parser as build_json
+from ish.adapters.parser.yaml import yaml_parser as build_yaml
 from ish.application.ports.parser import ParseError, Parser
 
 YML = Path("spec.yaml")
@@ -13,12 +15,12 @@ JSN = Path("data.json")
 
 @pytest.fixture()
 def yaml_parser() -> StructuredParser:
-    return StructuredParser.yaml()
+    return build_yaml()
 
 
 @pytest.fixture()
 def json_parser() -> StructuredParser:
-    return StructuredParser.json()
+    return build_json()
 
 
 class TestIdentity:
@@ -229,7 +231,7 @@ class TestOversizedDocuments:
         assert len(chunks) > 1
 
     def test_no_piece_exceeds_the_limit(self, yaml_parser) -> None:
-        from ish.adapters.parser.structured import MAX_CHUNK_CHARS
+        from ish.adapters.parser._structured import MAX_CHUNK_CHARS
 
         chunks = yaml_parser.parse(YML, self._big(cases=40, filler=900))
         assert all(len(c.text) <= MAX_CHUNK_CHARS for c in chunks)

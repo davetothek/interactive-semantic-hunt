@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from ish.adapters.parser._asciidoc import MAX_DEPTH, Expander
-from ish.adapters.parser.markup import MarkupParser
+from ish.adapters.parser.asciidoc import AsciiDocParser
+from ish.adapters.parser.asciidoc._includes import MAX_DEPTH, Expander
+from ish.adapters.parser.markdown import markdown_parser
 
 
 def _expand(path: Path) -> list[str]:
@@ -91,7 +92,9 @@ class TestExpand:
     ) -> None:
         doc = tmp_path / "d.adoc"
         doc.write_text("include::gone.adoc[]\n")
-        with caplog.at_level(logging.DEBUG, logger="ish.adapters.parser._asciidoc"):
+        with caplog.at_level(
+            logging.DEBUG, logger="ish.adapters.parser.asciidoc._includes"
+        ):
             assert _expand(doc) == ["include::gone.adoc[]\n"]
         assert "1 included files could not be read" in caplog.text
 
@@ -200,7 +203,7 @@ class TestParser:
     """The AsciiDoc parser embeds resolved text, on the lines of the file."""
 
     def test_a_section_holds_the_rows_it_includes(self, spec: Path) -> None:
-        chunks = MarkupParser.asciidoc().parse(spec, spec.read_text())
+        chunks = AsciiDocParser().parse(spec, spec.read_text())
         registers = next(c for c in chunks if c.symbol == "Spec > Registers")
         assert "|REG_A\n|0x00C350\n" in registers.text
         assert "|Name |Reset" in registers.text
@@ -213,7 +216,7 @@ class TestParser:
         lines = ["= Doc\n"] + ["include::big.adoc[]\n" for _ in range(10)]
         doc = tmp_path / "d.adoc"
         doc.write_text("".join(lines))
-        parser = MarkupParser.asciidoc()
+        parser = AsciiDocParser()
         parser.limit = 1000
         chunks = parser.parse(doc, doc.read_text())
         assert len(chunks) > 1
@@ -228,9 +231,11 @@ class TestParser:
         (tmp_path / "huge.adoc").write_text("y" * 5000 + "\n")
         doc = tmp_path / "d.adoc"
         doc.write_text("= Doc\ninclude::huge.adoc[]\n")
-        parser = MarkupParser.asciidoc()
+        parser = AsciiDocParser()
         parser.limit = 1000
-        with caplog.at_level(logging.INFO, logger="ish.adapters.parser.markup"):
+        with caplog.at_level(
+            logging.INFO, logger="ish.adapters.parser.asciidoc.parser"
+        ):
             chunks = parser.parse(doc, doc.read_text())
         # The heading has no prose of its own, so the include alone remains.
         assert [(len(c.text), c.kind) for c in chunks] == [(1000, "table")]
@@ -241,11 +246,11 @@ class TestParser:
         (tmp_path / "part.adoc").write_text("Included prose sentence.\n")
         doc = tmp_path / "d.adoc"
         doc.write_text("Some prose here.\ninclude::part.adoc[]\n")
-        (chunk,) = MarkupParser.asciidoc().parse(doc, doc.read_text())
+        (chunk,) = AsciiDocParser().parse(doc, doc.read_text())
         assert chunk.text == "Some prose here.\nIncluded prose sentence.\n"
 
     def test_markdown_divides_nothing_itself(self) -> None:
-        assert not hasattr(MarkupParser.markdown(), "limit")
+        assert not hasattr(markdown_parser(), "limit")
 
     def test_build_parsers_sets_the_cap_on_asciidoc(self) -> None:
         from ish import bootstrap
@@ -267,7 +272,7 @@ class TestTables:
     def _parse(tmp_path: Path, body: str, limit: int):
         doc = tmp_path / "d.adoc"
         doc.write_text(body)
-        parser = MarkupParser.asciidoc()
+        parser = AsciiDocParser()
         parser.limit = limit
         return parser.parse(doc, doc.read_text())
 
@@ -364,19 +369,19 @@ class TestFigures:
     def test_a_figure_reads_as_a_line_of_text(self, tmp_path: Path, line, text) -> None:
         doc = tmp_path / "d.adoc"
         doc.write_text(f"= Doc\n.Timing of the window\n{line}\n")
-        (chunk,) = MarkupParser.asciidoc().parse(doc, doc.read_text())
+        (chunk,) = AsciiDocParser().parse(doc, doc.read_text())
         assert chunk.text == f"= Doc\nTiming of the window\n{text}\n"
 
     def test_a_literal_block_fence_is_not_a_title(self, tmp_path: Path) -> None:
         doc = tmp_path / "d.adoc"
         doc.write_text("= Doc\n....\nliteral\n....\n")
-        (chunk,) = MarkupParser.asciidoc().parse(doc, doc.read_text())
+        (chunk,) = AsciiDocParser().parse(doc, doc.read_text())
         assert chunk.text.count("....") == 2
 
     def test_markdown_keeps_its_text(self, tmp_path: Path) -> None:
         doc = tmp_path / "d.md"
         doc.write_text("# Doc\n.not a title\n")
-        (chunk,) = MarkupParser.markdown().parse(doc, doc.read_text())
+        (chunk,) = markdown_parser().parse(doc, doc.read_text())
         assert ".not a title" in chunk.text
 
 
@@ -392,7 +397,7 @@ class TestLargeIncludesStandApart:
     def _parse(tmp_path: Path, body: str) -> list:
         doc = tmp_path / "d.adoc"
         doc.write_text(body)
-        return list(MarkupParser.asciidoc().parse(doc, doc.read_text()))
+        return list(AsciiDocParser().parse(doc, doc.read_text()))
 
     @staticmethod
     def _rows(tmp_path: Path, count: int) -> None:
@@ -451,6 +456,6 @@ class TestLargeIncludesStandApart:
     def test_markdown_keeps_one_chunk_a_section(self, tmp_path: Path) -> None:
         doc = tmp_path / "d.md"
         doc.write_text("# Doc\n\ninclude::rows.adoc[]\n")
-        assert [
-            c.kind for c in MarkupParser.markdown().parse(doc, doc.read_text())
-        ] == ["document"]
+        assert [c.kind for c in markdown_parser().parse(doc, doc.read_text())] == [
+            "document"
+        ]

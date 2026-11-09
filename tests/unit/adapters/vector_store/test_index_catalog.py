@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from ish.adapters.vector_store.catalog import IndexCatalog
+from ish.adapters.vector_store._catalog import IndexCatalog
 from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
 
@@ -146,7 +146,7 @@ class TestGoneTrees:
         _index(tmp_path / "idx", "deleted", gone)
         gone.rmdir()
         catalog = IndexCatalog(tmp_path / "idx")
-        with caplog.at_level(logging.INFO, logger="ish.adapters.vector_store.catalog"):
+        with caplog.at_level(logging.INFO, logger="ish.adapters.vector_store._catalog"):
             catalog.entries()
             catalog.entries()
         said = [r for r in caplog.records if "is gone" in r.getMessage()]

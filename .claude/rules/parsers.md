@@ -7,8 +7,9 @@ paths:
 
 ## Adding a language
 
-1. Write the parser class in a new module in this package, beside the
-   others. It declares `language`, `suffixes` with the leading dot, and
+1. Write the parser in `<language>.py` in this package. A language that
+   needs a second file is a subpackage, `<language>/`. The layout follows
+   `architecture.md`. The parser declares `language`, `suffixes` with the leading dot, and
    `parse(path, source) -> Sequence[Chunk]`. That is the whole `Parser` port.
 2. Add one `PARSERS` entry in `__init__.py`. The entry carries the aliases a
    reader may type and the category the language holds: `code`, `doc`, or
@@ -39,21 +40,24 @@ The `add-language` skill walks through it.
 - Report a value no rule can divide once per file, with a count and the
   largest by name. A generated document holds thousands of them.
 - Only a language module carries a plain name in this package. Machinery is
-  prefixed with an underscore: `_limits.py`, `_plugins.py`.
+  prefixed with an underscore: `_limits.py`, `_plugins.py`, `_sections.py`.
 
 ## What each parser owns
 
-- `structured.py` reads YAML and JSON. Split a document at the first list of
-  things it holds. Do not split an entry's own fields.
-- `markup.py` reads Markdown and AsciiDoc as one parser built twice. A
-  section runs to the next heading. The symbol is the heading path. Skip
+- `_structured.py` reads YAML and JSON for `yaml.py` and `json.py`. Split a
+  document at the first list of things it holds. Do not split an entry's own
+  fields.
+- `_sections.py` holds the section walk that `markdown.py` and `asciidoc/`
+  share. A section runs to the next heading. The symbol is the heading path. Skip
   fenced blocks. A file with no heading is one chunk named after the file
   when it holds a line of prose, and nothing when it holds only machinery.
-- The AsciiDoc flavor resolves includes through `_asciidoc.py`: attributes,
+- `asciidoc/` overrides three hooks of the walk: `_expand`, `_blocks`, and
+  `_pieces`. It resolves includes through `asciidoc/_includes.py`: attributes,
   attribute paths, and tagged regions, read relative to the including file.
   Sections still divide at the headings of the file, so line numbers stay
   true, and the parser divides a long section itself, between lines of the
-  file, under the `limit` that `build_parsers()` sets. A table that fits is
+  file, under the `limit` that `build_parsers()` sets. `asciidoc/_tables.py`
+  finds the tables in the expanded text. A table that fits is
   kept whole. A longer one divides between rows, and each piece repeats its
   head and closes it. A figure reads as `Figure: alt text`. An include
   that brings in more than `INLINE_CHARS` is a `table` chunk of its own,
@@ -61,7 +65,8 @@ The `add-language` skill walks through it.
   left in place, as another.
 - `ask` reads a chunk through `build_reader()`, which parses the file again,
   so a model reads the text the index embedded, includes resolved.
-- `tree_sitter.py` reads C and C++ as one parser, `cpp`, which owns `.h`. A
+- `_tree_sitter.py` walks a Tree-sitter grammar. `cpp.py` configures it for C
+  and C++ as one parser, `cpp`, which owns `.h`. A
   type is a definition only when it has a body. A declaration is a chunk only
   when it declares a function, and is dropped when the same file defines it.
 - `_plugins.py` loads a parser from `~/.config/ish/parsers/`. Only that

@@ -265,7 +265,7 @@ class TestVectorStoreWiring:
         """A worktree under the main checkout must not join a search of it."""
         import subprocess
 
-        from ish.adapters.vector_store.catalog import IndexCatalog
+        from ish.adapters.vector_store._catalog import IndexCatalog
         from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
         main = tmp_path / "main"
@@ -367,7 +367,7 @@ class TestVectorStoreWiring:
         """An index from before checkouts were recorded is read as before."""
         import subprocess
 
-        from ish.adapters.vector_store.catalog import IndexCatalog
+        from ish.adapters.vector_store._catalog import IndexCatalog
         from ish.adapters.vector_store.sqlite import SqliteVectorStore
 
         repo = tmp_path / "repo"
@@ -453,7 +453,7 @@ class TestContextWindow:
         assert bootstrap.model_id(Settings(), _StubEmbedder("g")) == "ollama:g"
 
     def test_the_cap_follows_the_window(self) -> None:
-        from ish.adapters.parser.structured import StructuredParser
+        from ish.adapters.parser._structured import StructuredParser
 
         built = bootstrap.build_parsers(replace(Settings(), context_tokens=8192))
         sizes = {p._inner._limit for p in built}

@@ -25,7 +25,7 @@ change, and stop.
 
 from collections.abc import Sequence
 
-from ish.adapters.embedder.prefixes import PrefixingEmbedder
+from ish.adapters.embedder._prefixes import PrefixingEmbedder
 
 DEFAULT_MODEL = "<model>"
 
@@ -89,7 +89,7 @@ dependency: the hook prompts on `uv add`.
 ## 4. Prefixes
 
 When the model was trained with a task prefix for documents and another for
-queries, add a row to `_CONVENTIONS` in `prefixes.py`, keyed by model name.
+queries, add a row to `_CONVENTIONS` in `_prefixes.py`, keyed by model name.
 A new prefix changes what a stored vector means, so bump `SCHEMA_VERSION` in
 `adapters/vector_store/sqlite.py` and say so in the changelog.
 

@@ -19,8 +19,8 @@ import tempfile
 from collections.abc import Mapping, Sequence
 
 from ish.adapters.language_model import _grounded
-from ish.adapters.language_model.prompts import Prompts
-from ish.adapters.language_model.prompts import load as load_prompts
+from ish.adapters.language_model._prompts import Prompts
+from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
     Reply,

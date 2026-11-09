@@ -19,8 +19,8 @@ from typing import Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.language_model import LANGUAGE_MODELS
-from ish.adapters.language_model.prompts import Prompts
-from ish.adapters.language_model.prompts import load as load_prompts
+from ish.adapters.language_model._prompts import Prompts
+from ish.adapters.language_model._prompts import load as load_prompts
 from ish.adapters.link.base_url import BaseUrl
 from ish.adapters.link.file_uri import FileUri
 from ish.adapters.parser import (
@@ -30,7 +30,7 @@ from ish.adapters.parser import (
     categories,
     spellings,
 )
-from ish.adapters.vector_store.catalog import IndexCatalog, IndexEntry
+from ish.adapters.vector_store._catalog import IndexCatalog, IndexEntry
 from ish.application.categories import Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter

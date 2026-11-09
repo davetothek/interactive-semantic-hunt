@@ -17,7 +17,7 @@ paths:
    name.
 
 Then, when needed: an extra in `pyproject.toml` and a `[[tool.ty.overrides]]`
-entry for its import, and a row in `prefixes.py` when the model was trained
+entry for its import, and a row in `_prefixes.py` when the model was trained
 with task prefixes. The `add-embedder` skill walks through it.
 
 ## Rules
@@ -27,7 +27,7 @@ with task prefixes. The `add-embedder` skill walks through it.
   line that names the extra.
 - Do not add a client package for Ollama. Reach it with `urllib`. Importing
   the `ollama` package cost 71 % of a warm query.
-- Task prefixes are keyed by model name in `prefixes.py`, because the
+- Task prefixes are keyed by model name in `_prefixes.py`, because the
   convention belongs to the model, not to the backend serving it.
 - Anything that changes what a stored vector means, the prefixes or the text
   handed to `_embed`, bumps `SCHEMA_VERSION` in the SQLite adapter. A
@@ -43,6 +43,6 @@ with task prefixes. The `add-embedder` skill walks through it.
 - `DEFAULT_BATCH_SIZE` is one text a request. It bounds how long a search
   waits behind an index run to one text, and it carries no accuracy cost:
   the vectors are the same bit for bit at any size.
-- A query leaves the marker in `turn.py` before it is sent, and an index run
+- A query leaves the marker in `_turn.py` before it is sent, and an index run
   waits between requests while the marker is fresh. A query never waits for
   the marker. A backend that embeds in its own process needs neither.
