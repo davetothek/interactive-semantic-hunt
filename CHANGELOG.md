@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.9.2 - 2026-11-09
+
 ### Added
 
 - `ask_files` sets how many parsed files an answer keeps, 32 by default.
