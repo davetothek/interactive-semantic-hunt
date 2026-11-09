@@ -206,6 +206,27 @@ one turn, so they cost the same. The model searched again for two hard
 questions and for all four that the documents do not answer, and it still
 refused those four. An answer cost about 0.4 cents against 0.3.
 
+### Keep the files parsed
+
+An answer reads the text of each chunk from its file, parsed again the
+way the index parsed it, so an AsciiDoc section comes with its includes
+resolved. A file with large includes takes seconds to parse. ish keeps
+the last `ask_files` files parsed, 32 by default, so a second question
+about the same files reads none again.
+
+A server that answers from one tree can keep the whole tree. With
+`ask_warm`, `ish-mcp` parses the files of its tree on a thread when it
+starts, up to `ask_files`, so the first questions read no file either:
+
+```toml
+ask_files = 100000
+ask_warm = true
+```
+
+Measured on a 4-vCPU server with a tree of AsciiDoc specifications:
+reading the chunks of one answer took 8 to 20 s before. The text of a
+whole tree of a few thousand files fits in tens of megabytes.
+
 ### Change what the model is told
 
 The instructions a language model receives are text files that ship with

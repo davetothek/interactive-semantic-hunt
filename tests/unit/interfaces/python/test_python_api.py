@@ -560,3 +560,69 @@ class TestAskBrief:
             assert ish.ask("configure").model == "full"
             assert ish.ask("configure", brief=True).model == "brief"
         assert built == [True, False]
+
+
+class TestWarmReader:
+    """A server parses its files before the first question, once.
+
+    An AsciiDoc file with large includes takes seconds to parse, and an
+    answer parsed every file it read again. On a 4-vCPU server reading
+    the chunks of one answer took 8 to 20 s.
+    """
+
+    class Model:
+        model_name = "fake-model"
+
+        def answer(self, question, sources):
+            from ish.application.ports.language_model import Passage, Reply
+
+            return Reply(passages=(Passage("Yes.", ("1",)),), covered=True)
+
+    @pytest.fixture()
+    def parses(self, monkeypatch) -> list[str]:
+        """Count each file a parser reads, from the moment it is asked."""
+        seen: list[str] = []
+        real = bootstrap.build_parsers
+
+        def counting(settings):
+            parsers = real(settings)
+            for parser in parsers:
+                parse = parser.parse
+
+                def counted(path, source, parse=parse):
+                    seen.append(path.name)
+                    return parse(path, source)
+
+                parser.parse = counted
+            return parsers
+
+        monkeypatch.setattr(bootstrap, "build_parsers", counting)
+        return seen
+
+    def test_every_file_is_parsed_once_and_an_answer_parses_none(
+        self, project: Path, offline, parses, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            bootstrap, "build_language_model", lambda s, **_: self.Model()
+        )
+        with _ish(project) as ish:
+            ish.index()
+            parses.clear()
+            assert ish.warm_reader() == 3
+            assert sorted(parses) == ["app.py", "guide.md", "test_app.py"]
+            parses.clear()
+            ish.ask("how to configure")
+            ish.ask("parse the config")
+            assert parses == []
+
+    def test_ask_files_bounds_the_files_parsed(
+        self, project: Path, offline, parses
+    ) -> None:
+        settings = Settings(no_cache=True, git=False, ask_files=2)
+        with Ish(project, settings=settings) as ish:
+            ish.index()
+            assert len(ish.warm_reader_plan()) == 2
+
+    def test_the_plan_reads_what_is_stored(self, project: Path, offline) -> None:
+        with _ish(project) as ish:
+            assert ish.warm_reader_plan() == []

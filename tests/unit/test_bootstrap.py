@@ -1501,8 +1501,7 @@ class TestReader:
     def test_the_reader_keeps_a_bounded_number_of_files(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        monkeypatch.setattr(bootstrap, "READER_FILES", 2)
-        read = bootstrap.build_reader(Settings())
+        read = bootstrap.build_reader(Settings(ask_files=2))
         for n in range(4):
             doc = tmp_path / f"d{n}.adoc"
             doc.write_text(f"= D{n}\ntext {n}\n")

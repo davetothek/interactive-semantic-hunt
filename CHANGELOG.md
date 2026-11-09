@@ -10,6 +10,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `ask_files` sets how many parsed files an answer keeps, 32 by default.
+  With `ask_warm`, `ish-mcp` parses the files of its tree on a thread
+  when it starts, so a server answers its first questions without
+  parsing a file again. An answer on a 4-vCPU server spent 8 to 20 s
+  parsing the AsciiDoc files it read.
+
 - `ish --ask` and `ish --brief` end with one line on stderr that says
   where the time and the tokens went: the seconds of the search, of
   reading the chunks, of the rerank, and of the answer, with each model
