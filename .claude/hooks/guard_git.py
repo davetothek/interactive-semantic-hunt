@@ -58,6 +58,11 @@ _SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
 # A leading ``NAME=value`` that sets an environment variable.
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
+# A redirection is no argument of the command. Its operator holds the
+# target in the same word, as in 2>&1, or stands alone before it.
+_REDIRECTION = re.compile(r"^(?:\d+|&)?(?:>>?|<)")
+_REDIRECTION_ALONE = re.compile(r"^(?:\d+|&)?(?:>>?|<<?)$")
+
 DEPENDENCY_COMMANDS = (
     ("uv", "add"),
     ("uv", "remove"),
@@ -89,7 +94,7 @@ def _stricter(first: Decision, second: Decision) -> Decision:
 
 def _judge_segment(segment: str, cwd: str | None) -> Decision:
     """Judge one command. A *cwd* of None means the directory is unknown."""
-    tokens = _tokens(segment)
+    tokens = _without_redirections(_tokens(segment))
     while tokens and _ASSIGNMENT.match(tokens[0]):
         tokens = tokens[1:]
     if not tokens:
@@ -232,6 +237,20 @@ def _after_git_options(tokens: list[str]) -> list[str]:
         step = 2 if tokens[index] in takes_value else 1
         index += step
     return tokens[index:]
+
+
+def _without_redirections(tokens: list[str]) -> list[str]:
+    """Return the words of a command without its redirections and their targets."""
+    words: list[str] = []
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+        elif _REDIRECTION_ALONE.match(token):
+            skip = True
+        elif not _REDIRECTION.match(token):
+            words.append(token)
+    return words
 
 
 def _tokens(segment: str) -> list[str]:

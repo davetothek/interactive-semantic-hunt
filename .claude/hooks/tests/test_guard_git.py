@@ -35,6 +35,13 @@ HOOK = Path(guard_git.__file__)
         ("git push -fu origin feature", DENY, "force"),
         ("git push --force-with-lease origin feature", ASK, "lease"),
         ("git push --force-with-lease=main origin feature", ASK, "lease"),
+        # A redirection is not an argument, and it hides nothing.
+        ("git push origin feature/x 2>&1", ALLOW, ""),
+        ("git push origin main 2>&1", DENY, "main"),
+        ("git push origin feature/x > push.log", ALLOW, ""),
+        ("git push --force origin feature > push.log 2>&1", DENY, "force"),
+        ("git push origin feature/x 2> /dev/null", ALLOW, ""),
+        ("git push 2>/dev/null origin main", DENY, "main"),
         # Discarding work.
         ("git checkout -- src/ish/x.py", DENY, "discards"),
         ("git checkout HEAD -- src/ish/x.py", DENY, "discards"),
@@ -187,6 +194,19 @@ class TestReleaseTagPush:
     def test_merged_release_tag_is_allowed(self, released: Path) -> None:
         decision = guard_git.judge("git push origin v1.2.3", str(released))
         assert decision.kind == ALLOW, decision.reason
+
+    def test_a_redirection_does_not_count_as_an_argument(self, released: Path) -> None:
+        for command in (
+            "git push origin v1.2.3 2>&1",
+            "git push origin v1.2.3 > push.log 2>&1",
+            "git push origin v1.2.3 2> /dev/null",
+        ):
+            decision = guard_git.judge(command, str(released))
+            assert decision.kind == ALLOW, (command, decision.reason)
+
+    def test_a_second_tag_after_a_redirection_is_denied(self, released: Path) -> None:
+        decision = guard_git.judge("git push origin v1.2.3 2>&1 v1.2.4", str(released))
+        assert decision.kind == DENY
 
     def test_full_tag_ref_is_allowed(self, released: Path) -> None:
         decision = guard_git.judge("git push origin refs/tags/v1.2.3", str(released))
