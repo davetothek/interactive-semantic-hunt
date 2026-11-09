@@ -8,10 +8,10 @@ daemon elsewhere, which suits embedding vectors but not sending text, so
 this backend refuses any host that is not a loopback address.
 """
 
-import os
 from collections.abc import Sequence
 
-from ish.adapters.embedder.ollama import DEFAULT_HOST, _is_loopback, _normalize_host
+from ish.adapters import _http
+from ish.adapters._ollama import is_loopback, resolve_host
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
@@ -54,8 +54,8 @@ class OllamaLanguageModel:
             raise LanguageModelError(
                 "Set answer_model to an Ollama generation model for the ollama backend."
             )
-        chosen = _normalize_host(host or os.environ.get("OLLAMA_HOST") or DEFAULT_HOST)
-        if not _is_loopback(chosen):
+        chosen = resolve_host(host)
+        if not is_loopback(chosen):
             raise LanguageModelError(
                 f"The ollama language model only sends text to this machine, "
                 f"and {chosen} is another. Point OLLAMA_HOST at a local daemon."
@@ -129,38 +129,28 @@ class OllamaLanguageModel:
 
     def _post(self, payload: dict[str, object]) -> dict:
         """Send one chat request and return the decoded reply."""
-        # The HTTP client costs 20 ms to import, which a search never pays.
-        import json
-        import urllib.error
-        import urllib.request
-
-        request = urllib.request.Request(
-            f"{self.host}/api/chat",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                return json.loads(response.read())
-        except TimeoutError as exc:
+            return _http.post_json(
+                f"{self.host}/api/chat", payload, timeout=self._timeout
+            )
+        except _http.Timeout as exc:
             raise LanguageModelError(
                 f"Ollama at {self.host} did not answer within {self._timeout:g} s."
             ) from exc
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace").strip()
+        except _http.Refused as exc:
             hint = (
                 f" Pull it with 'ollama pull {self.model_name}'."
                 if exc.code == 404
                 else ""
             )
             raise LanguageModelError(
-                f"Ollama refused the request ({exc.code}): {detail}.{hint}"
+                f"Ollama refused the request ({exc.code}): {exc.detail}.{hint}"
             ) from exc
-        except urllib.error.URLError as exc:
+        except _http.Unreachable as exc:
             raise LanguageModelError(
                 f"Cannot reach Ollama at {self.host}: {exc.reason}"
             ) from exc
-        except json.JSONDecodeError as exc:
+        except _http.NotJson as exc:
             raise LanguageModelError(
                 f"Ollama at {self.host} returned a reply that is not JSON."
             ) from exc

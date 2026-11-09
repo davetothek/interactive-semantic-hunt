@@ -25,8 +25,9 @@ with task prefixes. The `add-embedder` skill walks through it.
 - Import the backend's library inside `__init__`, never at module scope. An
   extra may be absent, and the CLI turns the `ModuleNotFoundError` into a
   line that names the extra.
-- Do not add a client package for Ollama. Reach it with `urllib`. Importing
-  the `ollama` package cost 71 % of a warm query.
+- Do not add a client package for Ollama. Reach it with `urllib` through
+  `adapters/_http.py`. Importing the `ollama` package cost 71 % of a warm
+  query.
 - Task prefixes are keyed by model name in `_prefixes.py`, because the
   convention belongs to the model, not to the backend serving it.
 - Anything that changes what a stored vector means, the prefixes or the text

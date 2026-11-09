@@ -330,20 +330,6 @@ class TestFailures:
         assert "OLLAMA_HOST" in message
         assert "gpu-box" in message
 
-    @pytest.mark.parametrize(
-        ("host", "local"),
-        [
-            ("http://localhost:11434", True),
-            ("http://127.0.0.1:11434", True),
-            ("http://[::1]:11434", True),
-            ("http://gpu-box:11434", False),
-            ("http://10.0.0.5:9999", False),
-            ("http://:11434", False),
-        ],
-    )
-    def test_a_host_is_read_as_local_or_remote(self, host: str, local: bool) -> None:
-        assert ollama._is_loopback(host) is local
-
     def test_model_missing_says_to_pull_it(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
