@@ -15,6 +15,7 @@ root. Read `src/` before a substantial change.
 | run every check the way CI does | `/check` |
 | add a language or a backend | `/add-language`, `/add-embedder` |
 | prove a ranking change kept accuracy | `/benchmark` |
+| prove what a parser change did to the chunks | `/chunk-diff` |
 | take the before/after number a commit body needs | `/measure` |
 | open a pull request, cut a release | `/pr`, `/release` — only the user invokes these |
 | rewrite prose into the house style | `/ste-writing` |
