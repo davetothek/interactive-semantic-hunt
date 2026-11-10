@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.9.4 - 2026-11-10
+
 ### Added
 
 - `--render` shows the answer of `ish --ask` rendered on a terminal: a
