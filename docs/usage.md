@@ -148,11 +148,17 @@ out is left out. A server parses its whole tree when it starts, so its
 glossary covers the tree. A local answer knows the acronyms that the
 chunks it read define.
 
-On a terminal the answer is in color: headings bold, the markup dim, the
-gaps the documents leave in yellow, and each source link clickable. Only
-styles are added, so text copied from the terminal is the same Markdown a
-pipe or a file gets. `--color never`, or `NO_COLOR=1`, turns color off, and
-`--color always` keeps it through a pipe, such as into `less -R`.
+The answer is Markdown, on a terminal as in a pipe or a file, so text
+copied from the terminal is the text of the answer.
+
+With `--render`, a terminal shows the answer rendered: a table with its
+columns in line, lists, quotes, and each source as a link that opens with
+a click. Each citation is the number of its source, and it opens that
+source. A pipe or a file still gets the Markdown, and `--brief` stays
+plain text. Set `render = true` in the configuration to render every
+answer, and `--no-render` turns it off for one question. With
+`--color never`, or `NO_COLOR=1`, a rendered answer keeps its layout,
+takes no style, and prints each URL beside its label.
 
 After a blank line, stderr shows where the time and the tokens went, stage
 by stage, in grey, and the version of ish:
@@ -227,7 +233,8 @@ builds a language model and sends no text anywhere.
 | `-c`, `--config PATH` | Read the options from this file, not from the search upward |
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
-| `--color WHEN` | Color the answer, the logs, and the timing table: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
+| `--color WHEN` | Color the logs, the timing table, and a rendered answer: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
+| `--render`, `--no-render` | Render the answer of `--ask` on a terminal. A pipe still gets the Markdown |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
 | `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |

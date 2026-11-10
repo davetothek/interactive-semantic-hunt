@@ -115,6 +115,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
+| Interface | `src/ish/interfaces/cli/terminal.py` | An answer rendered for a terminal, and the grey of the timing table |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |
 | Interface | `src/ish/interfaces/mcp/protocol.py` | MCP JSON-RPC dispatch |
 | Interface | `src/ish/interfaces/mcp/transport.py` | MCP framing: stdio, and HTTP behind a token |
@@ -426,6 +427,9 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   way, and alone or in a request of 8 the vectors differ by 0.0.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
+- Rich takes 61 ms to import, median of 7, against about 380 ms for a
+  whole CLI query. Hence its import inside `rendered()`, which only an
+  answer with `--render` on a terminal reaches.
 
 ### Interfaces
 

@@ -8,6 +8,22 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `--render` shows the answer of `ish --ask` rendered on a terminal: a
+  table with its columns in line, lists, quotes, and each source as a link
+  that opens with a click. Each citation is the number of its source and
+  opens it. A pipe or a file still gets the Markdown. `render = true` in
+  the configuration renders every answer, and `--no-render` turns it off
+  for one question. Rich draws the answer. Textual installs Rich already,
+  and ish loads it only to render.
+
+### Changed
+
+- `ish --ask` prints the answer as plain Markdown on a terminal again, as
+  a pipe gets it. The colors of 0.9.3 made the markup harder to read. The
+  timing table stays grey.
+
 ## 0.9.3 - 2026-11-09
 
 ### Added

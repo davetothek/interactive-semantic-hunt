@@ -31,6 +31,7 @@ classifiers = [
 dependencies = [
     "numpy>=2.5.2",
     "pyyaml>=6.0",
+    "rich>=13.3.3",
     "textual>=0.70.0",
     "tree-sitter>=0.26.0",
     "tree-sitter-c>=0.24.2",

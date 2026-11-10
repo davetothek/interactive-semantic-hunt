@@ -255,10 +255,19 @@ class Settings:
         default="auto",
         metadata=_opt(
             OUTPUT,
-            "Color the answer, the logs, and the timing line: auto colors "
-            "what goes to a terminal unless NO_COLOR is set.",
+            "Color the logs, the timing table, and a rendered answer: auto "
+            "colors what goes to a terminal unless NO_COLOR is set.",
             choices=["auto", "always", "never"],
             metavar="WHEN",
+        ),
+    )
+    render: bool = field(
+        default=False,
+        metadata=_opt(
+            OUTPUT,
+            "Render the answer of --ask on a terminal: tables, lists, and "
+            "links in place of the Markdown. A pipe still gets the Markdown.",
+            action="boolean_optional",
         ),
     )
     verbosity: int = field(

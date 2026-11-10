@@ -524,6 +524,7 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "pyyaml" },
+    { name = "rich" },
     { name = "textual" },
     { name = "tree-sitter" },
     { name = "tree-sitter-c" },
@@ -557,6 +558,7 @@ requires-dist = [
     { name = "llama-cpp-python", marker = "extra == 'llama'", specifier = ">=0.2.75" },
     { name = "numpy", specifier = ">=2.5.2" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rich", specifier = ">=13.3.3" },
     { name = "sentence-transformers", marker = "extra == 'st'" },
     { name = "textual", specifier = ">=0.70.0" },
     { name = "tree-sitter", specifier = ">=0.26.0" },
