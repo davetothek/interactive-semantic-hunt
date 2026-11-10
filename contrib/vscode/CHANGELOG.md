@@ -7,6 +7,15 @@ from. The extension talks to whichever `ish-mcp` it finds on PATH.
 
 ## Unreleased
 
+### Added
+
+- `ish: Ask a question` runs `ish --ask` and opens the answer as a
+  read-only Markdown document beside the editor. The command line
+  answers, so the `remote` server and the language model are the ones a
+  shell uses. The notification has a Cancel button that stops the
+  question, and the time and the tokens of the answer go to the `ish`
+  output channel. `ish.askCommand` names the command.
+
 ### Fixed
 
 - A search does not wait behind the index progress check. The server

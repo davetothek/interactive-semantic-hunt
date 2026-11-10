@@ -8,7 +8,8 @@ server that ships with [interactive-semantic-hunt](https://pypi.org/project/inte
 It is the same shape as the Neovim client in `contrib/nvim/`: one
 resident server per workspace folder, started on the first search and
 reused after, so a query costs a round trip and no process start.
-Nothing here searches on its own.
+Nothing here searches on its own. A question runs `ish --ask`, the
+command line of the same package.
 
 When `ish-serve` keeps the workspace folder current, or a folder above
 it, the `ish-mcp` this extension starts refreshes nothing itself and
@@ -20,7 +21,7 @@ for that.
 
 1. Install ish and a backend, as the [project README](https://github.com/davetothek/interactive-semantic-hunt#install)
    says. `ish-mcp` must be on PATH, or name it in the `ish.command`
-   setting.
+   setting. A question needs `ish` as well, or `ish.askCommand`.
 2. Install the extension: from the Marketplace, or from a `.vsix` built
    as described below.
 3. Open a folder and press `Ctrl+Alt+I` (`Cmd+Alt+I` on a Mac), or run
@@ -52,10 +53,25 @@ they agree and lists them at the head of the results, where Enter takes
 one. A QuickPick has no hook for a key inside its input, so Tab is
 bound only while this picker is open.
 
+Run `ish: Ask a question` for an answer in place of a list. Type the
+question, and the answer opens as a Markdown document beside the
+editor, with each source as a link that opens the file at its lines.
+The document is read-only and closes with no question about saving.
+`Markdown: Open Preview to the Side` shows it rendered. An answer takes
+seconds, so a notification names the question while it runs, and its
+Cancel button stops it.
+
+The command line answers, not the resident server. The `remote`
+server, the language model, and the filter words in the question are
+the ones a shell uses, and [Answer questions](https://davetothek.github.io/interactive-semantic-hunt/configuration/#answer-questions)
+says how to choose a model. VS Code must start with `ISH_MCP_TOKEN` in
+its environment when the settings name a `remote` server.
+
 | command | what it does |
 |---|---|
 | `ish: Search by meaning` | open the picker over the workspace folder of the file in view |
 | `ish: Search below this file's directory` | the same, with `under:` set to the file's directory |
+| `ish: Ask a question` | answer a question from the tree, in a Markdown document beside the editor |
 | `ish: Refresh the index` | bring the index up to date now, and show the progress |
 | `ish: Restart the server` | stop every `ish-mcp` this window started |
 
@@ -64,7 +80,8 @@ been searched in this window, so an edit is searchable moments after
 the save rather than on the server's next poll. `ish.refreshOnSave`
 turns it off.
 
-The server's stderr goes to the `ish` output channel.
+The server's stderr goes to the `ish` output channel, and so do the
+time and the tokens of each answer.
 
 ## Settings
 
@@ -76,6 +93,7 @@ The server's stderr goes to the `ish` output channel.
 | `ish.debounceMs` | `120` | how long typing must pause before a search is sent |
 | `ish.preview` | `true` | show the highlighted chunk while the picker is open |
 | `ish.refreshOnSave` | `true` | refresh the index when a file in a searched folder is saved |
+| `ish.askCommand` | `ish` | the command that answers a question |
 
 What is indexed, which backend embeds it, and how paths are sorted into
 `code`, `doc`, `test`, and `config` come from ish's own config file,
