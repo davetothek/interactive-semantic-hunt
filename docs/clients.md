@@ -40,8 +40,10 @@ map('n', '<leader>gf', function() require('utils.ish_link').open() end,
     { desc = 'Open the ish link under the cursor' })
 ```
 
-It takes the link under the cursor, or the first link on the line, so it
-works on the label of a footnote too. A file URI opens the file. An http or
+It takes the link under the cursor, or the first link on the line. On a
+marker such as `[^1]` in the prose it takes the source that the marker
+names, and on a line of details below a source it takes that source. A file
+URI opens the file. An http or
 https link, which a server gives when it sets `link_base`, is read with curl
 into a buffer named after the link, at the first line of its `#L` range, and
 `:w` keeps a copy. curl reads `~/.netrc`, so a tree behind basic
@@ -59,13 +61,61 @@ require('utils.ish_link').token_origins = { 'https://docs.example.com' }
 
 curl reads the header from stdin, so the token is not on its command line.
 
+A plugin that maps the same key when it loads takes the key from the
+opener. `link()` returns the link the cursor points at, or nil, so one
+mapping can serve both:
+
+```lua
+map('n', '<leader>gf', function()
+  local links = require('utils.ish_link')
+  local link = links.link()
+  if link then
+    links.open(link)
+  else
+    vim.cmd('DiffviewFileHistory %')
+  end
+end, { desc = 'Open the ish link, or the file history' })
+```
+
+`contrib/nvim/ish_ask.lua` asks a question and opens the answer in a split.
+Copy it to `lua/utils/ish_ask.lua`, beside the link opener, and bind it:
+
+```lua
+map('n', '<leader>fa', function() require('utils.ish_ask').ask() end,
+    { desc = 'Ask ish a question' })
+```
+
+It asks for the question and opens the split at once, with the seconds it
+has waited. When `ish --ask` returns, the split holds the answer as
+Markdown. The command line answers, so the `remote` server, the language
+model, and the filter words in the question are the ones a shell uses. It
+needs `ish` on PATH. A call can give the question, the tree, and more flags:
+
+```lua
+require('utils.ish_ask').ask('how is the watchdog configured',
+    { cwd = 'docs/', args = { '--brief' } })
+```
+
+In the answer, `gf` and `<leader>gf` open the source the cursor points at in
+the window the question came from, so the answer stays in view. The module
+sets the keys on the buffer of the answer, where no global mapping of the
+same key reaches. `split` and `link_keys` change the window and the keys:
+
+```lua
+local ask = require('utils.ish_ask')
+ask.split = 'botright 15split'
+ask.link_keys = { 'gf' }
+```
+
 ## Use from VS Code
 
 `contrib/vscode/` is an extension that drives the same `ish-mcp` server
 from a QuickPick. Press `Ctrl+Alt+I` and type. The highlighted chunk shows
 in the editor beside the picker, Enter opens it with its lines selected, and
 Tab finishes a filter word. While the index refreshes, the status bar shows
-`ish ███░░░░░ 38%`. It needs `ish-mcp` on PATH, like the Neovim client, and
+`ish ███░░░░░ 38%`. `ish: Ask a question` runs `ish --ask` and opens the
+answer as a Markdown document beside the editor. It needs `ish-mcp` on PATH,
+and `ish` for a question, like the Neovim client, and
 [its README](https://github.com/davetothek/interactive-semantic-hunt/blob/main/contrib/vscode/README.md) says how to build, install, and
 release it. It ships on its own
 schedule, apart from the PyPI package.

@@ -42,6 +42,11 @@
         "category": "ish"
       },
       {
+        "command": "ish.ask",
+        "title": "Ask a question",
+        "category": "ish"
+      },
+      {
         "command": "ish.refresh",
         "title": "Refresh the index",
         "category": "ish"
@@ -106,6 +111,11 @@
           "type": "boolean",
           "default": true,
           "description": "Ask the server to refresh the index when a file in a searched workspace folder is saved."
+        },
+        "ish.askCommand": {
+          "type": "string",
+          "default": "ish",
+          "description": "The command that answers a question. It must be on PATH, or name the full path."
         }
       }
     },

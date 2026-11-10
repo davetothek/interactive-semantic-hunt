@@ -6,11 +6,16 @@
 // start. Filters typed into the query, such as `lang:cpp type:doc
 // under:/src/`, travel in the query text and are read by the server,
 // exactly as they are from the command line, the picker, and Neovim.
+//
+// A question is the one thing that does not go to the server. It runs
+// `ish --ask`, which may hand it to the `remote` server of the settings,
+// and the answer opens as a Markdown document beside the editor.
 
 import * as path from "node:path";
 
 import * as vscode from "vscode";
 
+import { answerName, answerOf, askArgs, run as runAsk } from "./ask";
 import { isFilterWord, takeCandidate } from "./completion";
 import { DONE, render as renderProgress } from "./progress";
 import { iconFor, parseResults, type Result } from "./results";
@@ -26,6 +31,8 @@ const DONE_MS = 1500;
 /** How long after a save to wait for the next one before refreshing.
  * A format-on-save writes a file twice within a moment. */
 const SAVE_DEBOUNCE_MS = 1000;
+/** The scheme of a document that holds an answer. */
+const ANSWER_SCHEME = "ish-answer";
 
 /** One list entry. A result opens a file. A candidate finishes a word. */
 interface Item extends vscode.QuickPickItem {
@@ -52,6 +59,7 @@ interface Settings {
   debounceMs: number;
   preview: boolean;
   refreshOnSave: boolean;
+  askCommand: string;
 }
 
 function settings(): Settings {
@@ -63,6 +71,7 @@ function settings(): Settings {
     debounceMs: read.get<number>("debounceMs", 120),
     preview: read.get<boolean>("preview", true),
     refreshOnSave: read.get<boolean>("refreshOnSave", true),
+    askCommand: read.get<string>("askCommand", "ish"),
   };
 }
 
@@ -472,11 +481,95 @@ function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): v
   }
 }
 
+/**
+ * The answers of this window, each a read-only Markdown document.
+ *
+ * An answer is nobody's file. A document of its own scheme closes with
+ * no question about saving, and the Markdown preview reads it like any
+ * other document.
+ */
+class Answers implements vscode.TextDocumentContentProvider {
+  private readonly texts = new Map<string, string>();
+
+  /** Keep *markdown*, and return the address that shows it. */
+  add(question: string, markdown: string): vscode.Uri {
+    const uri = vscode.Uri.from({
+      scheme: ANSWER_SCHEME,
+      path: `/${this.texts.size + 1}/${answerName(question)}`,
+    });
+    this.texts.set(uri.toString(), markdown);
+    return uri;
+  }
+
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return this.texts.get(uri.toString()) ?? "";
+  }
+}
+
+/**
+ * Ask a question about *root*, and show the answer beside the editor.
+ *
+ * An answer takes seconds, so a notification says the question is out,
+ * and its Cancel button stops the command. What ish writes on stderr,
+ * the time and the tokens of the answer, goes to the output channel.
+ */
+async function ask(
+  answers: Answers,
+  output: vscode.OutputChannel,
+  root: string,
+): Promise<void> {
+  const typed = await vscode.window.showInputBox({
+    title: "ish: ask a question",
+    prompt: "ish answers from the indexed documents and code, with a link to each source.",
+    placeHolder: "how is the watchdog configured",
+  });
+  const question = typed?.trim() ?? "";
+  if (question === "") {
+    return;
+  }
+  const outcome = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `ish: ${question}`,
+      cancellable: true,
+    },
+    (_progress, token) => {
+      const stop = new AbortController();
+      token.onCancellationRequested(() => stop.abort());
+      return runAsk(settings().askCommand, askArgs(question, root), root, stop.signal);
+    },
+  );
+  if (outcome.cancelled) {
+    return;
+  }
+  if (outcome.stderr.trim() !== "") {
+    output.appendLine(outcome.stderr.trimEnd());
+  }
+  const answer = answerOf(outcome);
+  if ("reason" in answer) {
+    void vscode.window.showErrorMessage(`ish gave no answer: ${answer.reason}`);
+    return;
+  }
+  const document = await vscode.workspace.openTextDocument(
+    answers.add(question, answer.markdown),
+  );
+  await vscode.window.showTextDocument(document, {
+    viewColumn: vscode.ViewColumn.Beside,
+    preview: false,
+  });
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("ish");
   const servers = new Servers(output);
   const watch = new IndexWatch();
-  context.subscriptions.push(output, servers, watch);
+  const answers = new Answers();
+  context.subscriptions.push(
+    output,
+    servers,
+    watch,
+    vscode.workspace.registerTextDocumentContentProvider(ANSWER_SCHEME, answers),
+  );
   let saveTimer: NodeJS.Timeout | undefined;
   context.subscriptions.push({ dispose: () => clearTimeout(saveTimer) });
 
@@ -485,7 +578,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const editor = vscode.window.activeTextEditor;
       const root = rootFor(editor);
       if (root === undefined) {
-        void vscode.window.showWarningMessage("ish: open a folder or a file to search.");
+        void vscode.window.showWarningMessage("ish: open a folder or a file first.");
         return;
       }
       body(root, editor);
@@ -512,6 +605,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       "ish.refresh",
       withRoot((root) => watch.start(servers.for(root), root)),
+    ),
+    vscode.commands.registerCommand(
+      "ish.ask",
+      withRoot((root) => void ask(answers, output, root)),
     ),
     vscode.commands.registerCommand("ish.complete", () => {
       void active?.complete();

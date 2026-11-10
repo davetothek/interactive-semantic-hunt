@@ -2,8 +2,11 @@
 --
 -- An answer of `ish --ask` lists each source as a link with its lines in
 -- the fragment, such as `file:///src/app.py#L12-27`, or with `link_base`
--- set on the server, `https://docs.example.com/tree/app.py#L12-27`. A
--- file URI opens the file. An http or https link is read with curl into
+-- set on the server, `https://docs.example.com/tree/app.py#L12-27`. The
+-- prose cites a source with a marker such as `[^1]`, and the opener
+-- follows a marker to its source.
+--
+-- A file URI opens the file. An http or https link is read with curl into
 -- a buffer named after the link, so the filetype and the jump work as
 -- for a file on disk, and `:w` keeps a copy. curl reads ~/.netrc, so a
 -- tree behind basic authentication needs one line there. Any other
@@ -31,17 +34,62 @@ M.token_origins = {}
 
 local URL = "%a[%w+.-]*://[^%s%)%]>\"'`]+"
 
--- Return the link under the cursor, or the first link on the line. The
--- cursor often sits on the label of a Markdown link, not on its target.
+-- Return the marker of a source, such as `1` for `[^1]`, when the cursor
+-- is on one in *line*.
+local function marker_at(line, column)
+  local from = 1
+  while true do
+    local start, stop, label = line:find("%[%^([^%]]+)%]", from)
+    if not start then
+      return nil
+    end
+    if column >= start and column <= stop then
+      return label
+    end
+    from = stop + 1
+  end
+end
+
+-- Return the link of the source that *label* marks in the current buffer.
+local function source_of(label)
+  local head = "[^" .. label .. "]:"
+  for _, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+    if vim.startswith(line, head) then
+      return line:match(URL)
+    end
+  end
+  return nil
+end
+
+-- Return the link of the source that the indented line at *row* describes.
+-- An answer puts the kind and the directory of a source on indented lines
+-- below its link, so the link is on the first line above that starts at
+-- the margin.
+local function source_above(row)
+  for above = row - 1, 1, -1 do
+    local line = vim.api.nvim_buf_get_lines(0, above - 1, above, false)[1]
+    if not line:match("^%s+%S") then
+      return line:match(URL)
+    end
+  end
+  return nil
+end
+
+-- Return the link the cursor points at, or nil. In order: the link under
+-- the cursor, the source of the marker under the cursor, the first link
+-- on the line, and the source that an indented line describes. The cursor
+-- often sits on the label of a Markdown link or on a marker in the prose,
+-- not on the target.
 local function link_at_cursor()
   local line = vim.api.nvim_get_current_line()
-  local column = vim.api.nvim_win_get_cursor(0)[2] + 1
+  local row, column = unpack(vim.api.nvim_win_get_cursor(0))
+  column = column + 1
   local first
   local from = 1
   while true do
     local start, stop = line:find(URL, from)
     if not start then
-      return first
+      break
     end
     local found = line:sub(start, stop)
     if column >= start and column <= stop then
@@ -50,6 +98,12 @@ local function link_at_cursor()
     first = first or found
     from = stop + 1
   end
+  local label = marker_at(line, column)
+  local marked = label and source_of(label)
+  if marked or first then
+    return marked or first
+  end
+  return line:match("^%s+%S") and source_above(row) or nil
 end
 
 local function decode(text)
@@ -112,6 +166,12 @@ local function show(base, line, text)
   end
   vim.api.nvim_set_current_buf(buffer)
   jump(line)
+end
+
+--- Return the link the cursor points at, or nil when it points at none.
+--- A mapping that shares its key uses this to decide what the key does.
+function M.link()
+  return link_at_cursor()
 end
 
 -- Open *link*, or the link under the cursor when none is given.

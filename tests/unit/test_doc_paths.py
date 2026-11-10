@@ -34,6 +34,7 @@ OUTSIDE = {
     "ish.toml": "the flat form of that configuration",
     "lua/utils/ish.lua": "where a user copies the Neovim picker",
     "lua/utils/ish_link.lua": "where a user copies the Neovim link opener",
+    "lua/utils/ish_ask.lua": "where a user copies the Neovim ask command",
     "spec.md": "written by /spec-interview while a design is under way",
     "tasks.md": "written by /spec-interview with spec.md",
 }
