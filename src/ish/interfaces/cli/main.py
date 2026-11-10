@@ -6,6 +6,7 @@ Parse arguments, delegate wiring to the bootstrap module, format output.
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 
@@ -162,17 +163,24 @@ def _versions(server: str = "") -> str:
 def _show(args: CliArgs, answer: str, usage: str) -> None:
     """Print *answer* on stdout, and below it the *usage* table on stderr.
 
-    Color each stream on its own, so an answer piped to a file is plain
-    Markdown while the table beside it stays grey in the terminal. Leave a
-    blank line above the table, so it reads apart from the answer.
+    Print the Markdown as it is, so a copy from the terminal is the text
+    that a pipe gets. With ``render``, a terminal shows the full answer
+    rendered, and a pipe still gets the Markdown. Grey the table when its
+    stream takes color. Leave a blank line above the table, so it reads
+    apart from the answer.
     """
-    from ish.interfaces.cli.highlight import grey, highlight
+    from ish.interfaces.cli.terminal import MAX_WIDTH, grey, rendered
 
-    mode = args.settings.color
-    shown = highlight(answer) if resolve_color(mode, sys.stdout) else answer
-    sys.stdout.write(f"{shown}\n")
+    settings = args.settings
+    if settings.render and not args.brief and sys.stdout.isatty():
+        answer = rendered(
+            answer,
+            width=min(shutil.get_terminal_size().columns, MAX_WIDTH),
+            color=resolve_color(settings.color, sys.stdout),
+        )
+    sys.stdout.write(f"{answer}\n")
     sys.stdout.flush()
-    if resolve_color(mode, sys.stderr):
+    if resolve_color(settings.color, sys.stderr):
         usage = "\n".join(grey(line) for line in usage.split("\n"))
     sys.stderr.write(f"\n{usage}\n")
 

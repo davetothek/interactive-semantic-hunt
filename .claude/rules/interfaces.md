@@ -33,9 +33,12 @@ finishes a filter word. Nothing else is added.
   `ish-serve` writes the same text into its status.
 - Count skipped files in one line at WARNING. Name them at `-v`.
 - `--color` decides color for each stream apart: `auto` colors a terminal
-  unless `NO_COLOR` is set. An answer on a terminal goes through
-  `cli/highlight.py`, which adds styles and changes no character, so a
-  copy from the terminal is the Markdown that a pipe gets.
+  unless `NO_COLOR` is set.
+- An answer is plain Markdown on every stream, so a copy from the terminal
+  is the text that a pipe gets. Only `--render` shows it rendered, and only
+  on a terminal, through `cli/terminal.py`.
+- Import Rich only inside the function that renders an answer. A search
+  and a plain answer must not load it.
 
 ## TUI
 

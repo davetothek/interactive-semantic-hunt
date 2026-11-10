@@ -1,5 +1,6 @@
 """Run `ish --ask` end to end, with a fake embedder and a fake model."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -106,10 +107,10 @@ class TestAsk:
         err = capsys.readouterr().err
         assert "\n\nstage " in "\n" + err
 
-    def test_color_always_styles_the_answer_and_greys_the_usage(
+    def test_color_always_greys_the_usage_and_leaves_the_answer_plain(
         self, project: Path, monkeypatch, capsys
     ) -> None:
-        from ish.interfaces.cli.highlight import GREY, strip
+        from ish.interfaces.cli.terminal import GREY
 
         _model(monkeypatch, FakeModel())
         main(["--ask", "what does the watchdog do", str(project), *FLAGS])
@@ -118,8 +119,46 @@ class TestAsk:
         args = ["--ask", "what does the watchdog do", str(project), *FLAGS]
         main([*args, "--color", "always"])
         styled = capsys.readouterr()
-        assert "\033[" in styled.out and strip(styled.out) == plain.out
+        assert styled.out == plain.out
         assert GREY + "stage " in styled.err and GREY + "ish " in styled.err
+
+    def test_render_shows_a_terminal_the_answer_without_its_markup(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        _model(monkeypatch, FakeModel())
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        args = ["--ask", "what does the watchdog do", str(project), *FLAGS]
+        assert main([*args, "--render", "--color", "never"]) == 0
+        out = capsys.readouterr().out
+        assert "The watchdog resets the board [1]." in out
+        assert " 1 boot.md:1-3" in out and "(file://" in out
+        assert "#" not in out.replace("#L1-3", "") and "[^1]" not in out
+
+    def test_render_keeps_to_a_width_that_reads_well(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        from ish.interfaces.cli.terminal import MAX_WIDTH
+
+        _model(monkeypatch, FakeModel())
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        monkeypatch.setenv("COLUMNS", "300")
+        args = ["--ask", "what does the watchdog do", str(project), *FLAGS]
+        main([*args, "--render", "--color", "never"])
+        lines = capsys.readouterr().out.split("\n")
+        # Rich centers the title, so the first line shows the width in use.
+        assert len(lines[0]) > 60
+        assert all(len(line) <= MAX_WIDTH for line in lines)
+
+    def test_render_leaves_a_pipe_its_markdown(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        _model(monkeypatch, FakeModel())
+        args = ["--ask", "what does the watchdog do", str(project), *FLAGS]
+        main(args)
+        plain = capsys.readouterr().out
+        _model(monkeypatch, FakeModel())
+        main([*args, "--render"])
+        assert capsys.readouterr().out == plain
 
     def test_a_pipe_gets_plain_markdown(
         self, project: Path, monkeypatch, capsys
@@ -337,6 +376,18 @@ class TestBrief:
         assert code == 0
         assert capsys.readouterr().out == "It resets the board.\n"
         assert kinds == [True]
+
+    def test_render_leaves_the_short_answer_as_plain_text(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        args = ["--brief", "what does the watchdog do", str(project), *FLAGS]
+        _model(monkeypatch, FakeModel())
+        main(args)
+        plain = capsys.readouterr().out
+        _model(monkeypatch, FakeModel())
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        main([*args, "--render"])
+        assert plain.strip() and capsys.readouterr().out == plain
 
     def test_brief_with_nothing_covered_exits_2(
         self, project: Path, monkeypatch, capsys
