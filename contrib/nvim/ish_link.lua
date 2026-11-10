@@ -23,8 +23,11 @@
 -- through vim.notify: with `cmdheight = 0` a message draws over the
 -- statusline, so a fetch that works says nothing.
 --
---   vim.keymap.set('n', '<leader>gf', function() require('utils.ish_link').open() end,
---     { desc = 'Open the ish link under the cursor' })
+-- `follow()` is the opener for `gf`. It leaves the name of a file, and a
+-- line with no link, to the built-in command.
+--
+--   vim.keymap.set('n', 'gf', function() require('utils.ish_link').follow() end,
+--     { desc = 'Open the ish link, or the file under the cursor' })
 
 local M = {}
 
@@ -172,6 +175,25 @@ end
 --- A mapping that shares its key uses this to decide what the key does.
 function M.link()
   return link_at_cursor()
+end
+
+-- Return true when the cursor is on the name of a file that the built-in
+-- `gf` finds. `findfile` returns a link as it is, so a link is not a file
+-- here.
+local function on_file()
+  local name = vim.fn.expand("<cfile>")
+  return not name:find("://", 1, true) and vim.fn.findfile(name) ~= ""
+end
+
+--- Open the link the cursor points at, as `gf`. The name of a file under
+--- the cursor, and a line with no link, go to the built-in `gf`.
+function M.follow()
+  local link = not on_file() and link_at_cursor()
+  if link then
+    M.open(link)
+  else
+    vim.api.nvim_feedkeys("gf", "n", false)
+  end
 end
 
 -- Open *link*, or the link under the cursor when none is given.

@@ -20,14 +20,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - Ask from Neovim. `contrib/nvim/ish_ask.lua` asks a question through
   `ish --ask` and opens the Markdown answer in a split, so the `remote`
   server and the language model are the ones the command line uses. In the
-  answer, `gf` and `<leader>gf` open the source under the cursor in the
-  window the question came from.
+  answer, `gf` opens the source under the cursor in the window the
+  question came from.
 - Ask from VS Code. `ish: Ask a question` in `contrib/vscode/` opens the
   answer as a Markdown document beside the editor.
 - `contrib/nvim/ish_link.lua` follows a marker such as `[^1]` to its
   source, and a line of details to the source above it. `link()` returns
-  the link the cursor points at, so a mapping that shares its key with a
-  plugin can choose what the key does.
+  the link the cursor points at, and `follow()` is the opener for `gf`: it
+  leaves the name of a file, and a line with no link, to the built-in
+  command.
 
 ### Changed
 
