@@ -24,7 +24,7 @@ local M = {}
 M.split = 'vsplit'
 
 -- Keys that open the source under the cursor, in the answer only.
-M.link_keys = { 'gf', '<leader>gf' }
+M.link_keys = { 'gf' }
 
 -- How often the waiting line counts the seconds, in milliseconds.
 local TICK_MS = 1000

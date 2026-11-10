@@ -33,14 +33,20 @@ starts on the first search and is reused after that, which cuts a keystroke
 from about 500 ms to about 150 ms. Copy it beside the picker.
 
 `contrib/nvim/ish_link.lua` opens a source of an answer at the lines it
-names. Copy it to `lua/utils/ish_link.lua` and bind it:
+names. Copy it to `lua/utils/ish_link.lua` and bind it to `gf`:
 
 ```lua
-map('n', '<leader>gf', function() require('utils.ish_link').open() end,
-    { desc = 'Open the ish link under the cursor' })
+map('n', 'gf', function() require('utils.ish_link').follow() end,
+    { desc = 'Open the ish link, or the file under the cursor' })
 ```
 
-It takes the link under the cursor, or the first link on the line. On a
+`follow()` leaves the key to the built-in command where the cursor points
+at no link. The name of a file under the cursor also stays with the
+built-in command, on a line that holds a link as well. `open()` opens the
+link and has no such fallback, and `link()` returns the link the cursor
+points at, or nil.
+
+The opener takes the link under the cursor, or the first link on the line. On a
 marker such as `[^1]` in the prose it takes the source that the marker
 names, and on a line of details below a source it takes that source. A file
 URI opens the file. An http or
@@ -61,22 +67,6 @@ require('utils.ish_link').token_origins = { 'https://docs.example.com' }
 
 curl reads the header from stdin, so the token is not on its command line.
 
-A plugin that maps the same key when it loads takes the key from the
-opener. `link()` returns the link the cursor points at, or nil, so one
-mapping can serve both:
-
-```lua
-map('n', '<leader>gf', function()
-  local links = require('utils.ish_link')
-  local link = links.link()
-  if link then
-    links.open(link)
-  else
-    vim.cmd('DiffviewFileHistory %')
-  end
-end, { desc = 'Open the ish link, or the file history' })
-```
-
 `contrib/nvim/ish_ask.lua` asks a question and opens the answer in a split.
 Copy it to `lua/utils/ish_ask.lua`, beside the link opener, and bind it:
 
@@ -96,15 +86,15 @@ require('utils.ish_ask').ask('how is the watchdog configured',
     { cwd = 'docs/', args = { '--brief' } })
 ```
 
-In the answer, `gf` and `<leader>gf` open the source the cursor points at in
-the window the question came from, so the answer stays in view. The module
-sets the keys on the buffer of the answer, where no global mapping of the
-same key reaches. `split` and `link_keys` change the window and the keys:
+In the answer, `gf` opens the source the cursor points at in the window
+the question came from, so the answer stays in view. The module sets the
+key on the buffer of the answer, where no global mapping of the same key
+reaches. `split` and `link_keys` change the window and the keys:
 
 ```lua
 local ask = require('utils.ish_ask')
 ask.split = 'botright 15split'
-ask.link_keys = { 'gf' }
+ask.link_keys = { 'gf', '<CR>' }
 ```
 
 ## Use from VS Code
