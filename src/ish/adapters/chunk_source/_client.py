@@ -32,11 +32,15 @@ class RemoteClient:
         token: str,
         token_variable: str,
         timeout: float = TIMEOUT_SECONDS,
+        *,
+        login: bool = False,
     ) -> None:
         """Talk to the server at *url*.
 
-        *token_variable* is the environment variable the token came from.
+        *token_variable* is the environment variable a token comes from.
         An error about the token names it, and never shows the token.
+        With *login*, the token is the login token of ``ish remote login``,
+        and a refusal says to sign in again.
         Raise ``ChunkSourceError`` for a URL that is not http or https,
         for a URL that holds a user name or a password, and for an
         empty token.
@@ -54,11 +58,14 @@ class RemoteClient:
                 f"Give the URL alone. The token goes in {token_variable}."
             )
         if not token:
-            raise ChunkSourceError(f"Set {token_variable} to the token of {url}.")
+            raise ChunkSourceError(
+                f"Set {token_variable} to the token of {url}, or run: ish remote login"
+            )
         self._url = url
         self.host = parts.netloc
         self._token = token
         self._token_variable = token_variable
+        self._login = login
         self._timeout = timeout
         self._last_id = 0
         self._open = False
@@ -127,6 +134,10 @@ class RemoteClient:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 body = response.read()
         except urllib.error.HTTPError as exc:
+            if exc.code == 401 and self._login:
+                raise ChunkSourceError(
+                    f"{self._url} refused your login. Run: ish remote login"
+                ) from exc
             if exc.code == 401:
                 raise ChunkSourceError(
                     f"{self._url} refused the token in {self._token_variable}."

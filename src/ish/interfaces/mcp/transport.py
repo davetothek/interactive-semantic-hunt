@@ -16,7 +16,11 @@ import threading
 from collections.abc import Callable
 from typing import Any, Protocol, TextIO, runtime_checkable
 
-from ish.application.ports.authenticator import Identity
+from ish.application.ports.authenticator import (
+    Identity,
+    SignInRefused,
+    SignInUnavailable,
+)
 from ish.settings import MCP_TOKEN_ENV_VAR
 
 log = logging.getLogger(__name__)
@@ -25,8 +29,37 @@ log = logging.getLogger(__name__)
 class Handler(Protocol):
     """What a transport hands each message to."""
 
-    def handle_line(self, line: str) -> dict[str, Any] | None:
-        """Handle one raw message. Return the reply, or None to stay quiet."""
+    def handle_line(self, line: str, who: str = "") -> dict[str, Any] | None:
+        """Handle one raw message. Return the reply, or None to stay quiet.
+
+        *who* is the user a transport admitted the message for, or empty
+        when the transport admits nobody, as stdio does.
+        """
+        ...
+
+
+class Granted(Protocol):
+    """A login token a desk gave."""
+
+    @property
+    def token(self) -> str: ...
+
+    @property
+    def user(self) -> str: ...
+
+    @property
+    def expires(self) -> float: ...
+
+
+class Desk(Protocol):
+    """What signs a user in on the sign-in path."""
+
+    def methods(self) -> list[str]:
+        """Return the names of the sign-in methods."""
+        ...
+
+    def sign_in(self, method: str, user: str, password: str) -> Granted:
+        """Return a login token for *user*, or raise."""
         ...
 
 
@@ -64,6 +97,8 @@ class StdioTransport:
 
 TOKEN_VARIABLE = MCP_TOKEN_ENV_VAR
 MCP_PATH = "/mcp"
+# Beside `/mcp`, so a reverse proxy that forwards one forwards both.
+LOGIN_PATH = "/login"
 
 # A JSON-RPC message from a client is small. A body beyond this is not
 # one, and reading it would let a client fill the memory of the server.
@@ -82,15 +117,25 @@ class HttpTransport:
     A request without a bearer token, or with one that *admit* does not
     know, gets 401 and runs nothing. The transport knows no method of
     authentication. It asks *admit* about each token.
+
+    With a *desk*, ``/login`` signs a user in. A GET lists the sign-in
+    methods and needs no token. A POST carries the method, the user name,
+    and the password in its body, and gets a login token back. No line
+    of a log holds the body.
     """
 
     def __init__(
-        self, host: str, port: int, admit: Callable[[str], Identity | None]
+        self,
+        host: str,
+        port: int,
+        admit: Callable[[str], Identity | None],
+        desk: Desk | None = None,
     ) -> None:
         """Listen on *host* and *port*, and run a request *admit* admits."""
         self._host = host
         self._port = port
         self._admit = admit
+        self._desk = desk
         self._httpd: Any = None
         self.address: tuple[str, int] | None = None
         # Set once the socket is bound, so a caller that asked for port 0
@@ -123,31 +168,88 @@ class HttpTransport:
         from http.server import BaseHTTPRequestHandler
 
         admit = self._admit
+        desk = self._desk
 
         class _Request(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
+                if self.path == LOGIN_PATH and desk is not None:
+                    self._sign_in(desk)
+                    return
                 if self.path != MCP_PATH:
                     self._reply(404)
                     return
                 scheme, _, bearer = (self.headers.get("Authorization") or "").partition(
                     " "
                 )
-                if scheme != "Bearer" or admit(bearer) is None:
+                identity = admit(bearer) if scheme == "Bearer" else None
+                if identity is None:
                     self._reply(401, headers={"WWW-Authenticate": "Bearer"})
                     return
-                length = int(self.headers.get("Content-Length") or 0)
-                if length > MAX_BODY_BYTES:
-                    self._reply(413)
+                body = self._body()
+                if body is None:
                     return
-                line = self.rfile.read(length).decode("utf-8", "replace")
-                reply = server.handle_line(line)
+                reply = server.handle_line(
+                    body.decode("utf-8", "replace"), who=identity.user
+                )
                 if reply is None:
                     self._reply(202)
                     return
                 self._reply(200, json.dumps(reply).encode())
 
             def do_GET(self) -> None:
+                if self.path == LOGIN_PATH and desk is not None:
+                    self._json(200, {"methods": desk.methods()})
+                    return
                 self._reply(405, headers={"Allow": "POST"})
+
+            def _body(self) -> bytes | None:
+                """Return the body of the request, or reply 413 and None."""
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > MAX_BODY_BYTES:
+                    self._reply(413)
+                    return None
+                return self.rfile.read(length)
+
+            def _sign_in(self, desk: Desk) -> None:
+                """Sign a user in, and reply with the login token or the reason."""
+                body = self._body()
+                if body is None:
+                    return
+                try:
+                    asked = json.loads(body)
+                except ValueError:
+                    asked = None
+                if not isinstance(asked, dict) or not all(
+                    isinstance(asked.get(key), str)
+                    for key in ("method", "user", "password")
+                ):
+                    self._json(400, {"error": SIGN_IN_BODY})
+                    return
+                try:
+                    granted = desk.sign_in(
+                        asked["method"], asked["user"], asked["password"]
+                    )
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
+                    return
+                except SignInRefused as exc:
+                    self._json(401, {"error": str(exc)})
+                    return
+                except SignInUnavailable as exc:
+                    self._json(503, {"error": str(exc)})
+                    return
+                log.info("Signed %s in, until %s", granted.user, _when(granted.expires))
+                self._json(
+                    200,
+                    {
+                        "token": granted.token,
+                        "user": granted.user,
+                        "expires": granted.expires,
+                    },
+                )
+
+            def _json(self, status: int, data: dict[str, Any]) -> None:
+                self._reply(status, json.dumps(data).encode())
 
             def _reply(
                 self, status: int, body: bytes = b"", headers: dict | None = None
@@ -165,3 +267,17 @@ class HttpTransport:
                 log.debug("%s %s", self.address_string(), format % args)
 
         return _Request
+
+
+# What a POST to the sign-in path must hold.
+SIGN_IN_BODY = (
+    "Send a JSON object with the method, the user name, and the password, each as text."
+)
+
+
+def _when(seconds: float) -> str:
+    """Return the moment *seconds* after the epoch, in UTC, to the minute."""
+    import datetime
+
+    moment = datetime.datetime.fromtimestamp(seconds, datetime.UTC)
+    return moment.strftime("%Y-%m-%d %H:%M UTC")

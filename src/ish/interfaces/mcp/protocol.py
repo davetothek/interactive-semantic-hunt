@@ -15,6 +15,10 @@ from ish.interfaces.mcp.transport import StdioTransport, Transport
 
 log = logging.getLogger(__name__)
 
+# Who called which tool, and never the arguments. A server over HTTP
+# shows these lines at every verbosity.
+audit = logging.getLogger("ish.audit")
+
 # Protocol revisions this server understands. Echo back whichever the
 # client asked for when it is one of these, so a newer host still works.
 SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -72,8 +76,11 @@ class Server:
         transport.serve(self)
         log.info("MCP server stopped")
 
-    def handle_line(self, line: str) -> dict[str, Any] | None:
-        """Handle one raw message. Return the reply, or None to stay quiet."""
+    def handle_line(self, line: str, who: str = "") -> dict[str, Any] | None:
+        """Handle one raw message. Return the reply, or None to stay quiet.
+
+        *who* is the user the transport admitted the message for.
+        """
         try:
             message = json.loads(line)
         except json.JSONDecodeError as exc:
@@ -82,10 +89,12 @@ class Server:
         if not isinstance(message, dict):
             return _error(None, INVALID_REQUEST, "Expected a JSON object.")
 
-        return self.handle(message)
+        return self.handle(message, who)
 
-    def handle(self, message: Mapping[str, Any]) -> dict[str, Any] | None:
-        """Dispatch one decoded message."""
+    def handle(
+        self, message: Mapping[str, Any], who: str = ""
+    ) -> dict[str, Any] | None:
+        """Dispatch one decoded message for *who*."""
         method = message.get("method")
         request_id = message.get("id")
 
@@ -95,7 +104,7 @@ class Server:
             return None
 
         try:
-            result = self._dispatch(str(method), message.get("params") or {})
+            result = self._dispatch(str(method), message.get("params") or {}, who)
         except _MethodNotFound:
             return _error(request_id, METHOD_NOT_FOUND, f"Unknown method: {method}")
         except Exception as exc:
@@ -108,13 +117,15 @@ class Server:
     # Methods
     # ------------------------------------------------------------------
 
-    def _dispatch(self, method: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    def _dispatch(
+        self, method: str, params: Mapping[str, Any], who: str = ""
+    ) -> dict[str, Any]:
         if method == "initialize":
             return self._initialize(params)
         if method == "tools/list":
             return {"tools": [tool.describe() for tool in self._tools.values()]}
         if method == "tools/call":
-            return self._call(params)
+            return self._call(params, who)
         if method == "ping":
             return {}
         raise _MethodNotFound
@@ -130,13 +141,16 @@ class Server:
             "serverInfo": {"name": self._name, "version": self._version},
         }
 
-    def _call(self, params: Mapping[str, Any]) -> dict[str, Any]:
+    def _call(self, params: Mapping[str, Any], who: str = "") -> dict[str, Any]:
         """Run one tool and wrap whatever it returns as text content.
 
         Report a tool failure through ``isError`` rather than a JSON-RPC
-        error, so the host can show the reason to the model.
+        error, so the host can show the reason to the model. Write who
+        called which tool to the audit log, and never the arguments.
         """
         name = params.get("name")
+        if who:
+            audit.info("%s calls %s", who, name)
         tool = self._tools.get(str(name))
         if tool is None:
             return _tool_error(f"Unknown tool: {name}")

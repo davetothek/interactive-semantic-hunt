@@ -92,6 +92,18 @@ class TestRefusal:
         ):
             _client(running, token="wrong").call("echo", {})
 
+    def test_a_login_the_server_refuses_says_to_sign_in_again(
+        self, running: Running
+    ) -> None:
+        client = RemoteClient(
+            f"{running.url}/mcp", "wrong", MCP_TOKEN_ENV_VAR, timeout=5, login=True
+        )
+        with pytest.raises(ChunkSourceError) as refused:
+            client.call("echo", {})
+        assert str(refused.value) == (
+            f"{running.url}/mcp refused your login. Run: ish remote login"
+        )
+
     def test_another_status_names_the_code(self, running: Running) -> None:
         client = RemoteClient(
             f"{running.url}/other", TOKEN, MCP_TOKEN_ENV_VAR, timeout=5

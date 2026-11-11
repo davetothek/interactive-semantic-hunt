@@ -32,6 +32,18 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - `auth` names the ways a server over HTTP admits a request. `token`, the
   default, admits the token in `ISH_MCP_TOKEN`, as before. An empty `auth`
   stops the server with an error that names it.
+- `ish remote login` signs in to the server, and `ish remote logout` signs
+  out. A server that names a sign-in method in `auth` lists it at `/login`,
+  beside `/mcp`, and gives a login token that lasts `login_days`, 30 by
+  default. The client asks for the password with no echo, sends it in the
+  body of one request, and keeps it nowhere. It keeps the token in
+  `~/.config/ish/logins.json`, which only you can read, and every command
+  of `ish remote` sends it when `ISH_MCP_TOKEN` is not set. A password goes
+  only over https, or to a server on this machine.
+- A server keeps the SHA-256 of each login token, never the token, in
+  `logins.jsonl` beside its indexes. The operator ends a login by deleting
+  its line. Each tool call writes one line that names the user and the
+  tool, never the query.
 - `ish remote mcp` serves `search_code` and `ask` on stdio for the tree
   of a server, as `ish remote search` and `ish remote ask` do. An agent or
   an editor gets the tree of the server, and the language model of this

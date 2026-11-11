@@ -377,7 +377,8 @@ class TestFailures:
         monkeypatch.delenv(MCP_TOKEN_ENV_VAR)
         assert run(["remote", *command]) == 1
         assert _errors(caplog) == [
-            f"Set {MCP_TOKEN_ENV_VAR} to the token of {served.url}."
+            f"Set {MCP_TOKEN_ENV_VAR} to the token of {served.url}, "
+            "or run: ish remote login"
         ]
         assert served.calls == []
         assert capsys.readouterr().out == ""

@@ -80,8 +80,10 @@ finishes a filter word. Nothing else is added.
   the status file.
 - `ish-mcp` serves stdio by default. `ish-mcp --http HOST:PORT` serves the
   same tools over MCP Streamable HTTP at `/mcp`. Each request carries a
-  bearer token that a method of `auth` admits, through the admit function
-  of `bootstrap.build_admission()`. The transport knows no method. Over
+  bearer token that a method of `auth` admits, or a login token, through
+  the `Access` of `bootstrap.build_access()`. The transport knows no
+  method. `/login` beside `/mcp` lists the sign-in methods and signs a
+  user in. No log line holds its body. Over
   HTTP it offers
   `sources` in place of `ask`. It returns chunks with their text, and the
   server builds no language model. A transport in
@@ -103,6 +105,12 @@ finishes a filter word. Nothing else is added.
 - `ish remote mcp` offers `search_code` and `ask` alone, with the
   schemas of the local tools. A call with a `path` is refused. `ish mcp`
   takes no option that names a server.
+- `ish remote login` asks for the password with no echo, only after
+  `password_problem()` allows it, and keeps no password. A command of
+  `ish remote` sends `ISH_MCP_TOKEN`, or else the login token of the URL.
+- Each tool call over HTTP writes one line to the `ish.audit` logger: the
+  user and the tool, never the arguments. `ish mcp --http` shows it at
+  every verbosity.
 - A local search and a local `ish mcp` import no chunk source and no
   `remote` module. `tests/unit/interfaces/cli/test_run.py` checks it in a
   fresh interpreter.

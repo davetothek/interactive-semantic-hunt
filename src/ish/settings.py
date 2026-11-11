@@ -486,6 +486,15 @@ class Settings:
             action="store_true",
         ),
     )
+    login_days: int = field(
+        default=30,
+        metadata=_opt(
+            SERVER,
+            "Days a login token from ish remote login lasts.",
+            type=int,
+            metavar="DAYS",
+        ),
+    )
     auth: tuple[str, ...] = field(
         default=("token",),
         metadata=_opt(

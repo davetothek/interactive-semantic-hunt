@@ -89,5 +89,8 @@ class TestRemoteMcp:
             monkeypatch, ["remote", "mcp"], _call(1, "search_code", {"query": "x"})
         )
         assert (code, results) == (1, {})
-        assert f"Set {MCP_TOKEN_ENV_VAR} to the token of {served.url}." in caplog.text
+        assert (
+            f"Set {MCP_TOKEN_ENV_VAR} to the token of {served.url}, "
+            "or run: ish remote login"
+        ) in caplog.text
         assert served.calls == []

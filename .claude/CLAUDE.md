@@ -75,7 +75,9 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Port | `src/ish/application/ports/language_model.py` | `LanguageModel` Protocol, `Source`, `Reply` |
 | Port | `src/ish/application/ports/link.py` | `LinkResolver` Protocol |
 | Port | `src/ish/application/ports/chunk_source.py` | `ChunkSource` Protocol and `ChunkSourceError` |
-| Port | `src/ish/application/ports/authenticator.py` | `Authenticator` Protocol and `Identity` |
+| Port | `src/ish/application/ports/authenticator.py` | `Authenticator` and `SignIn` Protocols, `Identity`, and the two refusals of a sign-in |
+| Port | `src/ish/application/ports/login_store.py` | `LoginStore` Protocol and `Login`, the hash of a login token as a server keeps it |
+| Port | `src/ish/application/ports/login.py` | `Login` Protocol, `SignedIn`, and `LoginError`: sign this machine in to a server |
 | Application | `src/ish/application/scan.py` | Scan use case: discover, accept, parse |
 | Application | `src/ish/application/index.py` | Index use case: staleness, orphans, embedding |
 | Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
@@ -86,6 +88,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |
 | Application | `src/ish/application/preview.py` | Read the source a chunk points at |
 | Application | `src/ish/application/answer.py` | Answer use case: search, read, fit the budget, ask the model |
+| Application | `src/ish/application/access.py` | Access use case: admit a request, sign a user in, give a login token |
 | Application | `src/ish/application/sources.py` | Sources use case: the chunks a search found, with their text and terms |
 | Adapter | `src/ish/adapters/_http.py` | One JSON request over HTTP, and the four ways it fails |
 | Adapter | `src/ish/adapters/_ollama.py` | The daemon host the Ollama embedder and language model share |
@@ -112,6 +115,9 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
 | Adapter | `src/ish/adapters/authenticator/__init__.py` | `AUTHENTICATORS` — every way a server admits a request, and the recipe for adding one |
 | Adapter | `src/ish/adapters/authenticator/token.py` | The static token of the operator |
+| Adapter | `src/ish/adapters/login_store/file.py` | The logins of a server, as a file of JSON lines beside its indexes |
+| Adapter | `src/ish/adapters/login/http.py` | Sign in on the path beside `/mcp`, and keep the login token |
+| Adapter | `src/ish/adapters/_logins.py` | The login tokens of this machine, one for each server, in a file only the user can read |
 | Adapter | `src/ish/adapters/chunk_source/mcp.py` | Chunks from the index of an ish server, over MCP |
 | Adapter | `src/ish/adapters/chunk_source/_client.py` | One tool call to an MCP server over HTTP, and the ways it fails |
 | Adapter | `src/ish/adapters/vector_store/sqlite/` | Persistent vector store (default): `store.py`, its tables in `_schema.py`, its matrix file in `_matrix.py` |

@@ -15,7 +15,7 @@ with ``configured`` and one of ``admit`` or ``sign_in``:
         def sign_in(self, user: str, password: str) -> Identity:
             ...                              # raise SignInRefused for a wrong one
 
-``configured`` gets the values ``bootstrap.build_admission`` reads for
+``configured`` gets the values ``bootstrap.build_access`` reads for
 the methods, as strings. An adapter reads no settings and no environment
 of its own. Raise ``ValueError`` when a value the method needs is
 missing, so the server refuses to start and names it.
@@ -25,7 +25,7 @@ To add a method to ish:
 1. Write the class in a new module in this package, beside the others.
 2. Add one line to ``AUTHENTICATORS`` below: its ``configured``, keyed by
    its name in ``auth``.
-3. Add the values it needs to ``bootstrap.build_admission``.
+3. Add the values it needs to ``bootstrap.build_access``.
 """
 
 from collections.abc import Callable, Mapping

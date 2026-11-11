@@ -188,6 +188,28 @@ texts use, with the chunk that spells it out. The tool runs no language
 model. A client reads it to write an answer with a model of its own. One
 call returns at most 200 chunks.
 
+### Sign users in
+
+A server can give each user a login token of their own, in place of one
+token for everyone. Name a sign-in method in `auth`, beside `token`:
+
+```toml
+auth = ["token", "ldap"]
+login_days = 30
+```
+
+The server lists the methods at `/login`, beside `/mcp`, with no token.
+`ish remote login` posts a user name and a password there, and the server
+sends back a login token that lasts `login_days`. Forward `/login` with
+`/mcp` in the reverse proxy.
+
+The server keeps the SHA-256 of each login token, never the token, in
+`logins.jsonl` beside its indexes, one login a line: the hash, the user,
+the method, and the expiry. A copy of the file opens nothing. To end a
+login, delete its line. The next request with that token gets 401. Each
+tool call writes one line to the log that names the user and the tool,
+never the query.
+
 Point a client at it:
 
 ```json

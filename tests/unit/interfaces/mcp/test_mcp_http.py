@@ -1,6 +1,7 @@
 """Test MCP over HTTP against a real server on a free port."""
 
 import json
+import logging
 import threading
 import urllib.error
 import urllib.request
@@ -33,9 +34,9 @@ class Running:
         server = Server("test", "0", tools)
         original = server.handle_line
 
-        def handle(line: str):
+        def handle(line: str, who: str = ""):
             self.calls.append(line)
-            return original(line)
+            return original(line, who)
 
         server.handle_line = handle
         self.thread = threading.Thread(
@@ -251,6 +252,17 @@ class TestEntryPoint:
         assert "sources" in offered
         assert "ask" not in offered
 
+    def test_a_server_over_http_shows_who_calls_at_every_verbosity(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        audit = logging.getLogger("ish.audit")
+        monkeypatch.setattr(audit, "level", logging.NOTSET)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(TOKEN_VARIABLE, TOKEN)
+        monkeypatch.setattr(HttpTransport, "serve", lambda self, server: None)
+        assert server_module.main(["--http", "127.0.0.1:8765"]) == 0
+        assert audit.level == logging.INFO
+
     def test_ish_mcp_has_no_option_for_a_server(self, capsys) -> None:
         # `ish remote mcp` reads a server. `ish mcp` is the local tree.
         with pytest.raises(SystemExit):
@@ -392,3 +404,150 @@ class TestNoAskOverHttp:
         assert reply is not None
         assert reply["result"]["isError"] is True
         assert reply["result"]["content"][0]["text"] == "Unknown tool: ask"
+
+
+PASSWORD = "hunter2-EXAMPLE"
+
+
+class Desk:
+    """A sign-in desk with one method, which records who asked."""
+
+    def __init__(self) -> None:
+        self.asked: list[tuple[str, str]] = []
+
+    def methods(self) -> list[str]:
+        return ["directory"]
+
+    def sign_in(self, method: str, user: str, password: str):
+        from ish.application.access import Granted
+        from ish.application.ports.authenticator import (
+            SignInRefused,
+            SignInUnavailable,
+        )
+
+        self.asked.append((method, user))
+        if not user:
+            raise ValueError("Give a user name.")
+        if password == "down-EXAMPLE":
+            raise SignInUnavailable("The directory cannot be reached.")
+        if password != PASSWORD:
+            raise SignInRefused("The directory refused the user name or the password.")
+        return Granted("login-token-EXAMPLE", user, 2_000_000_000.0)
+
+
+class TestSignInPath:
+    """`/login` lists the methods, and gives a login token for a password."""
+
+    @pytest.fixture()
+    def desk(self) -> Iterator[tuple[str, Desk]]:
+        made = Desk()
+        transport = HttpTransport("127.0.0.1", 0, ADMIT, made)
+        thread = threading.Thread(
+            target=transport.serve, args=(Server("t", "0", []),), daemon=True
+        )
+        thread.start()
+        assert transport.ready.wait(5)
+        assert transport.address is not None
+        host, port = transport.address
+        yield f"http://{host}:{port}", made
+        transport.stop()
+        thread.join(5)
+
+    def _send(self, url: str, body: bytes | None = None) -> tuple[int, dict]:
+        request = urllib.request.Request(
+            f"{url}/login", data=body, method="GET" if body is None else "POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def _sign_in(self, url: str, **fields: object) -> tuple[int, dict]:
+        asked = {"method": "directory", "user": "reader", "password": PASSWORD}
+        return self._send(url, json.dumps(asked | fields).encode())
+
+    def test_a_get_lists_the_methods_with_no_token(self, desk) -> None:
+        url, _ = desk
+        assert self._send(url) == (200, {"methods": ["directory"]})
+
+    def test_a_password_the_desk_accepts_gives_a_token(self, desk) -> None:
+        url, made = desk
+        assert self._sign_in(url) == (
+            200,
+            {"token": "login-token-EXAMPLE", "user": "reader", "expires": 2e9},
+        )
+        assert made.asked == [("directory", "reader")]
+
+    def test_a_refusal_is_401_with_its_reason(self, desk) -> None:
+        url, _ = desk
+        assert self._sign_in(url, password="wrong-EXAMPLE") == (
+            401,
+            {"error": "The directory refused the user name or the password."},
+        )
+
+    def test_a_directory_that_is_down_is_503(self, desk) -> None:
+        url, _ = desk
+        assert self._sign_in(url, password="down-EXAMPLE") == (
+            503,
+            {"error": "The directory cannot be reached."},
+        )
+
+    def test_a_request_the_desk_cannot_take_is_400(self, desk) -> None:
+        url, _ = desk
+        assert self._sign_in(url, user="") == (400, {"error": "Give a user name."})
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            b"not json",
+            b"[1, 2]",
+            b'{"method": "directory", "user": "reader"}',
+            b'{"method": "directory", "user": "reader", "password": 7}',
+        ],
+    )
+    def test_a_body_that_is_not_a_sign_in_is_400(self, body: bytes, desk) -> None:
+        url, made = desk
+        status, reply = self._send(url, body)
+        assert status == 400
+        assert reply["error"].startswith("Send a JSON object with the method")
+        assert made.asked == []
+
+    def test_a_body_too_large_is_413(self, desk) -> None:
+        url, made = desk
+        request = urllib.request.Request(f"{url}/login", data=b"{}", method="POST")
+        request.add_header("Content-Length", str(MAX_BODY_BYTES + 1))
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(request, timeout=10)
+        assert refused.value.code == 413
+        assert made.asked == []
+
+    def test_no_line_of_the_log_holds_the_password(self, desk, caplog) -> None:
+        url, _ = desk
+        with caplog.at_level(logging.DEBUG, logger="ish"):
+            self._sign_in(url)
+            self._sign_in(url, password="wrong-EXAMPLE")
+        # The log is not empty, so the checks below read the lines it wrote.
+        assert "POST /login" in caplog.text
+        assert PASSWORD not in caplog.text
+        assert "wrong-EXAMPLE" not in caplog.text
+        assert "login-token-EXAMPLE" not in caplog.text
+        assert "Signed reader in, until 2033-05-18 03:33 UTC" in caplog.text
+
+    def test_a_server_with_no_desk_has_no_sign_in_path(self, running: Running) -> None:
+        get = urllib.request.Request(f"{running.url}/login")
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(get, timeout=10)
+        assert refused.value.code == 405
+        assert running.post(b"{}", path="/login")[0] == 404
+
+
+class TestAudit:
+    """A tool call over HTTP names who made it, and never what it asked."""
+
+    def test_the_static_token_calls_a_tool(self, running: Running, caplog) -> None:
+        with caplog.at_level(logging.INFO, logger="ish.audit"):
+            running.post(_call("hello"))
+        assert [r.getMessage() for r in caplog.records if r.name == "ish.audit"] == [
+            "token calls hello"
+        ]

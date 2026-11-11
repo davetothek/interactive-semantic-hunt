@@ -27,6 +27,7 @@ from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.remote import RemoteIsh
 from ish.settings import (
     CONFIG_OPTION,
+    MCP_TOKEN_ENV_VAR,
     REMOTE_ENV_VAR,
     Settings,
     load_settings,
@@ -39,7 +40,12 @@ log = logging.getLogger("ish.cli")
 SEARCH = "search"
 ASK = "ask"
 MCP = "mcp"
-COMMANDS = (SEARCH, ASK, MCP)
+LOGIN = "login"
+LOGOUT = "logout"
+COMMANDS = (SEARCH, ASK, MCP, LOGIN, LOGOUT)
+
+# The commands that take no text, no filter, and no --brief.
+_BARE = (MCP, LOGIN, LOGOUT)
 
 # What each command reads from the line, as its usage names it.
 _TEXT = {SEARCH: "query", ASK: "question"}
@@ -68,7 +74,9 @@ OPTIONS = (
 _USAGE = (
     "%(prog)s search QUERY [options]\n"
     "       %(prog)s ask QUESTION [--brief] [options]\n"
-    "       %(prog)s mcp [options]"
+    "       %(prog)s mcp [options]\n"
+    "       %(prog)s login [--method NAME] [--user NAME] [options]\n"
+    "       %(prog)s logout [options]"
 )
 
 _DESCRIPTION = (
@@ -79,13 +87,18 @@ _DESCRIPTION = (
     "                  language model of this machine.\n"
     "  mcp             Serve search_code and ask on stdio, the same way,\n"
     "                  for an agent or an editor.\n"
+    "  login           Sign in to the server, and keep its login token.\n"
+    "  logout          Delete the login token of the server.\n"
     "\n"
     f"--url, {REMOTE_ENV_VAR}, or `remote` in the user config file names the\n"
     "server, in that order. A config file in a tree names no server. The\n"
     "server searches its own tree, so the line takes no path."
 )
 
-_USE = "Use: ish remote search QUERY, ish remote ask QUESTION, or ish remote mcp"
+_USE = (
+    "Use: ish remote search QUERY, ish remote ask QUESTION, ish remote mcp, "
+    "ish remote login, or ish remote logout"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -104,6 +117,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--brief",
         action="store_true",
         help="Answer in a sentence or two, with no sources.",
+    )
+    parser.add_argument(
+        "--method",
+        default="",
+        metavar="NAME",
+        help="Sign in with this method of the server, with no prompt.",
+    )
+    parser.add_argument(
+        "--user",
+        default="",
+        metavar="NAME",
+        help="Sign in as this user, with no prompt for the name.",
     )
     parser.add_argument(
         "-c",
@@ -129,8 +154,10 @@ def _problem(args: argparse.Namespace, settings: Settings) -> str:
         return f"{args.command!r} is not a command of ish remote. {_USE}"
     if not settings.remote:
         return no_server
-    if args.command == MCP:
-        return _mcp_problem(args)
+    if args.command in _BARE:
+        return _bare_problem(args)
+    if args.method or args.user:
+        return "--method and --user are options of ish remote login."
     text = _TEXT[args.command]
     if not args.words or not args.words[0].strip():
         return f"ish remote {args.command} needs a {text}."
@@ -144,21 +171,28 @@ def _problem(args: argparse.Namespace, settings: Settings) -> str:
     return ""
 
 
-def _mcp_problem(args: argparse.Namespace) -> str:
-    """Return what is wrong with a line of ``ish remote mcp``, or an empty text.
+def _bare_problem(args: argparse.Namespace) -> str:
+    """Return what is wrong with a line of a command with no text, or nothing.
 
-    Each call of a tool brings its own text and its own filters, so the
-    line takes neither.
+    ``ish remote mcp`` takes neither a text nor a filter, because each
+    call of a tool brings its own. ``login`` and ``logout`` search nothing.
     """
+    command = args.command
     if args.words:
-        return "ish remote mcp takes no query. Each call of a tool brings its own."
+        if command == MCP:
+            return "ish remote mcp takes no query. Each call of a tool brings its own."
+        return f"ish remote {command} takes no query."
     if args.brief:
         return "--brief is an option of ish remote ask."
     if args.lang or args.under or args.type:
-        return (
-            "ish remote mcp takes no --lang, --under, or --type. "
-            "Each call of a tool brings its own."
-        )
+        if command == MCP:
+            return (
+                "ish remote mcp takes no --lang, --under, or --type. "
+                "Each call of a tool brings its own."
+            )
+        return f"ish remote {command} takes no --lang, --under, or --type."
+    if command != LOGIN and (args.method or args.user):
+        return "--method and --user are options of ish remote login."
     return ""
 
 
@@ -263,6 +297,107 @@ def mcp(settings: Settings) -> int:
     return 0
 
 
+def login(settings: Settings, method: str = "", user: str = "") -> int:
+    """Sign in to the server, and keep its login token. Return an exit code.
+
+    Start the one method the server offers, or the one *method* names.
+    Ask for the method when the server offers several and stdin is a
+    terminal. Ask for the user name unless *user* gives it, and for the
+    password always, with no echo. Send no password over plain http to
+    another machine. Keep no password.
+    """
+    import getpass
+
+    from ish import bootstrap
+
+    try:
+        desk = bootstrap.build_login(settings)
+        methods = desk.methods()
+    except Exception as exc:
+        return _failed(exc)
+    if not methods:
+        log.error(
+            "%s offers no sign-in. Ask its operator for a token, and set %s.",
+            desk.host,
+            MCP_TOKEN_ENV_VAR,
+        )
+        return 1
+    chosen = _method(desk.host, methods, method)
+    if not chosen:
+        return 1
+    problem = desk.password_problem()
+    if problem:
+        log.error("%s", problem)
+        return 1
+    try:
+        name = user or input(f"User name at {desk.host}: ").strip()
+        password = getpass.getpass(f"Password of {name} at {desk.host}: ")
+    except (EOFError, KeyboardInterrupt):
+        sys.stderr.write("\nish: no sign-in\n")
+        return 130
+    try:
+        signed = desk.sign_in(chosen, name, password)
+    except Exception as exc:
+        return _failed(exc)
+    finally:
+        del password
+    sys.stderr.write(
+        f"Signed in to {desk.host} as {signed.user} until {_moment(signed.expires)}.\n"
+    )
+    return 0
+
+
+def _method(host: str, methods: list[str], asked: str) -> str:
+    """Return the sign-in method to start, or an empty text after an error."""
+    if asked:
+        if asked in methods:
+            return asked
+        log.error(
+            "%s offers no sign-in method %r. It offers: %s.",
+            host,
+            asked,
+            ", ".join(methods),
+        )
+        return ""
+    if len(methods) == 1:
+        return methods[0]
+    offered = ", ".join(methods)
+    if not sys.stdin.isatty():
+        log.error(
+            "%s offers several sign-in methods: %s. Give --method NAME.", host, offered
+        )
+        return ""
+    answer = input(f"Sign-in method at {host} ({offered}): ").strip()
+    if answer in methods:
+        return answer
+    log.error("%r is not a sign-in method of %s. It offers: %s.", answer, host, offered)
+    return ""
+
+
+def logout(settings: Settings) -> int:
+    """Delete the login token of the server on this machine. Return an exit code."""
+    from ish import bootstrap
+
+    try:
+        desk = bootstrap.build_login(settings)
+        removed = desk.sign_out()
+    except Exception as exc:
+        return _failed(exc)
+    if removed:
+        sys.stderr.write(f"Signed out of {desk.host}.\n")
+    else:
+        sys.stderr.write(f"No login token of {desk.host} is kept here.\n")
+    return 0
+
+
+def _moment(seconds: float) -> str:
+    """Return the moment *seconds* after the epoch, in UTC, to the minute."""
+    import datetime
+
+    moment = datetime.datetime.fromtimestamp(seconds, datetime.UTC)
+    return f"{moment:%Y-%m-%d %H:%M} UTC"
+
+
 def _failed(exc: Exception) -> int:
     """Report *exc* in one line, and return the exit code of a failure."""
     log.error("%s", exc)
@@ -309,6 +444,10 @@ def main(argv: list[str] | None = None) -> int:
     }
     if args.command == MCP:
         return mcp(settings)
+    if args.command == LOGIN:
+        return login(settings, args.method, args.user)
+    if args.command == LOGOUT:
+        return logout(settings)
     if args.command == ASK:
         return ask(settings, args.words[0], brief=args.brief, **narrowing)
     return search(settings, args.words[0], **narrowing)

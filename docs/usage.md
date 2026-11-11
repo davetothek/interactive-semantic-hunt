@@ -213,6 +213,32 @@ The token is the one secret, and it goes in the environment. ish refuses
 a URL that holds a user name or a password, because the URL names the
 server in each error and on stderr.
 
+#### Sign in
+
+A server that offers a sign-in gives a login token in place of a shared
+one:
+
+```sh
+export ISH_REMOTE="https://docs.example.com/mcp"
+ish remote login
+ish remote search "watchdog period"
+ish remote logout
+```
+
+`ish remote login` asks for your user name and your password. The
+password does not show as you type. `--user NAME` gives the name, and
+`--method NAME` picks a method when the server offers more than one. The
+password goes to the server in the body of one request, and ish keeps it
+nowhere. ish sends no password over plain http to another machine.
+
+The server sends back a login token that lasts 30 days, or what its
+operator sets. ish keeps it in `~/.config/ish/logins.json`, one token for
+each server URL, in a file only you can read. ish refuses the file when
+other users can read it, and names the file. Every command of `ish
+remote` sends the login token when `ISH_MCP_TOKEN` is not set. When the
+token expires, or the operator ends it, ish says to run `ish remote login`
+again. `ish remote logout` deletes the token of the server.
+
 `ish remote search` prints the result lines of the server. `--limit` and
 `--format` travel with the query.
 

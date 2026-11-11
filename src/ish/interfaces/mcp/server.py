@@ -833,11 +833,15 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
     if args.http:
         try:
             address = _address(args.http)
-            transport = HttpTransport(*address, bootstrap.build_admission(settings))
+            access = bootstrap.build_access(settings)
+            transport = HttpTransport(*address, access.admit, access)
         except ValueError as exc:
             log.error("%s", exc)
             return 1
 
+    if args.http:
+        # Who called which tool shows at every verbosity.
+        logging.getLogger("ish.audit").setLevel(logging.INFO)
     tools = IshTools(settings, root)
     server = Server(
         SERVER_NAME, installed_version(), tools.tools(over_http=bool(args.http))

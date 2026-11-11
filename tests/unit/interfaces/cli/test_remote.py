@@ -15,7 +15,10 @@ from ish.settings import CONFIG_FILENAME, REMOTE_ENV_VAR
 # A server nothing listens on. A line that is refused never reaches for it.
 NOWHERE = "http://127.0.0.1:9/mcp"
 
-USE = "Use: ish remote search QUERY, ish remote ask QUESTION, or ish remote mcp"
+USE = (
+    "Use: ish remote search QUERY, ish remote ask QUESTION, ish remote mcp, "
+    "ish remote login, or ish remote logout"
+)
 NO_SERVER = "No server is set. Give --url URL, or set ISH_REMOTE."
 
 
@@ -148,7 +151,7 @@ class TestTheOptions:
 
     def test_every_option_is_one_of_the_list(self) -> None:
         args = build_parser().parse_intermixed_args(["search", "q"])
-        own = {"command", "words", "brief", "config"}
+        own = {"command", "words", "brief", "config", "method", "user"}
         assert set(vars(args)) == set(OPTIONS) | own
 
     def test_lang_takes_a_name_this_machine_does_not_know(self) -> None:
@@ -264,3 +267,261 @@ class TestMcp:
 
         monkeypatch.setattr(Server, "serve", interrupted)
         assert run(["remote", "mcp", "--url", NOWHERE]) == 0
+
+
+PASSWORD = "hunter2-EXAMPLE"
+
+
+class FakeLogin:
+    """A server to sign in to, which records each sign-in."""
+
+    host = "docs.example.invalid"
+
+    def __init__(self, methods=("directory",), problem: str = "") -> None:
+        self._methods = list(methods)
+        self._problem = problem
+        self.signed: list[tuple[str, str, str]] = []
+        self.kept = True
+
+    def methods(self) -> list[str]:
+        return self._methods
+
+    def password_problem(self) -> str:
+        return self._problem
+
+    def sign_in(self, method: str, user: str, password: str):
+        from ish.application.ports.login import LoginError, SignedIn
+
+        self.signed.append((method, user, password))
+        if password != PASSWORD:
+            raise LoginError("The directory refused the user name or the password.")
+        return SignedIn(user, 2_000_000_000.0)
+
+    def sign_out(self) -> bool:
+        kept, self.kept = self.kept, False
+        return kept
+
+
+class TestLogin:
+    """`ish remote login` asks for what it needs, and keeps no password."""
+
+    @pytest.fixture()
+    def server(self, nowhere, monkeypatch) -> FakeLogin:
+        made = FakeLogin()
+        monkeypatch.setattr(bootstrap, "build_login", lambda settings: made)
+        monkeypatch.setattr("getpass.getpass", lambda prompt: PASSWORD)
+        return made
+
+    def _answers(self, monkeypatch, *answers: str) -> list[str]:
+        asked: list[str] = []
+        left = list(answers)
+
+        def answer(prompt: str) -> str:
+            asked.append(prompt)
+            return left.pop(0)
+
+        monkeypatch.setattr("builtins.input", answer)
+        return asked
+
+    def test_one_method_and_a_user_need_only_the_password(
+        self, server: FakeLogin, monkeypatch, capsys
+    ) -> None:
+        asked = self._answers(monkeypatch)
+        assert run(["remote", "login", "--user", "reader"]) == 0
+        assert server.signed == [("directory", "reader", PASSWORD)]
+        assert asked == []
+        assert capsys.readouterr().err == (
+            "Signed in to docs.example.invalid as reader until 2033-05-18 03:33 UTC.\n"
+        )
+
+    def test_the_user_name_is_asked_for(self, server: FakeLogin, monkeypatch) -> None:
+        asked = self._answers(monkeypatch, " reader ")
+        assert run(["remote", "login"]) == 0
+        assert asked == ["User name at docs.example.invalid: "]
+        assert server.signed == [("directory", "reader", PASSWORD)]
+
+    def test_the_password_prompt_names_the_user_and_the_server(
+        self, server: FakeLogin, monkeypatch
+    ) -> None:
+        prompts: list[str] = []
+        monkeypatch.setattr(
+            "getpass.getpass", lambda prompt: prompts.append(prompt) or PASSWORD
+        )
+        assert run(["remote", "login", "--user", "reader"]) == 0
+        assert prompts == ["Password of reader at docs.example.invalid: "]
+
+    def test_method_selects_one_of_several_with_no_prompt(
+        self, server: FakeLogin, monkeypatch
+    ) -> None:
+        server._methods = ["directory", "other"]
+        asked = self._answers(monkeypatch)
+        assert run(["remote", "login", "--method", "other", "--user", "reader"]) == 0
+        assert server.signed == [("other", "reader", PASSWORD)]
+        assert asked == []
+
+    def test_several_methods_on_a_terminal_ask_which(
+        self, server: FakeLogin, monkeypatch
+    ) -> None:
+        server._methods = ["directory", "other"]
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        asked = self._answers(monkeypatch, "other", "reader")
+        assert run(["remote", "login"]) == 0
+        assert asked[0] == "Sign-in method at docs.example.invalid (directory, other): "
+        assert server.signed == [("other", "reader", PASSWORD)]
+
+    def test_an_answer_that_is_no_method_stops(
+        self, server: FakeLogin, monkeypatch, caplog
+    ) -> None:
+        server._methods = ["directory", "other"]
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        self._answers(monkeypatch, "magic")
+        assert run(["remote", "login"]) == 1
+        assert _errors(caplog) == [
+            "'magic' is not a sign-in method of docs.example.invalid. "
+            "It offers: directory, other."
+        ]
+        assert server.signed == []
+
+    def test_several_methods_with_no_terminal_name_the_option(
+        self, server: FakeLogin, monkeypatch, caplog
+    ) -> None:
+        server._methods = ["directory", "other"]
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        assert run(["remote", "login"]) == 1
+        assert _errors(caplog) == [
+            "docs.example.invalid offers several sign-in methods: directory, other. "
+            "Give --method NAME."
+        ]
+
+    def test_a_method_the_server_does_not_offer(
+        self, server: FakeLogin, caplog
+    ) -> None:
+        assert run(["remote", "login", "--method", "magic"]) == 1
+        assert _errors(caplog) == [
+            "docs.example.invalid offers no sign-in method 'magic'. "
+            "It offers: directory."
+        ]
+
+    def test_a_server_with_no_sign_in_names_the_token(
+        self, server: FakeLogin, caplog
+    ) -> None:
+        server._methods = []
+        assert run(["remote", "login"]) == 1
+        assert _errors(caplog) == [
+            "docs.example.invalid offers no sign-in. Ask its operator for a token, "
+            "and set ISH_MCP_TOKEN."
+        ]
+
+    def test_no_password_is_asked_for_a_server_that_may_get_none(
+        self, server: FakeLogin, monkeypatch, caplog
+    ) -> None:
+        server._problem = (
+            "ish sends no password to docs.example.invalid over plain http."
+        )
+
+        def refuse(prompt):
+            raise AssertionError("the password was asked for")
+
+        monkeypatch.setattr("getpass.getpass", refuse)
+        assert run(["remote", "login", "--user", "reader"]) == 1
+        assert _errors(caplog) == [server._problem]
+
+    def test_ctrl_d_at_a_prompt_signs_nobody_in(
+        self, server: FakeLogin, monkeypatch, capsys
+    ) -> None:
+        def closed(prompt):
+            raise EOFError
+
+        monkeypatch.setattr("getpass.getpass", closed)
+        assert run(["remote", "login", "--user", "reader"]) == 130
+        assert capsys.readouterr().err.endswith("ish: no sign-in\n")
+        assert server.signed == []
+
+    def test_a_refusal_is_one_line_that_holds_no_password(
+        self, server: FakeLogin, monkeypatch, capsys, caplog
+    ) -> None:
+        monkeypatch.setattr("getpass.getpass", lambda prompt: "wrong-EXAMPLE")
+        assert run(["remote", "login", "--user", "reader", "-vv"]) == 1
+        assert _errors(caplog) == [
+            "The directory refused the user name or the password."
+        ]
+        shown = capsys.readouterr()
+        assert "wrong-EXAMPLE" not in shown.err + shown.out + caplog.text
+
+    def test_a_server_that_cannot_be_read(self, nowhere, monkeypatch, caplog) -> None:
+        from ish.application.ports.login import LoginError
+
+        def refuse(settings):
+            raise LoginError("The URL of the server ends in /mcp.")
+
+        monkeypatch.setattr(bootstrap, "build_login", refuse)
+        assert run(["remote", "login"]) == 1
+        assert _errors(caplog) == ["The URL of the server ends in /mcp."]
+
+
+class TestLogout:
+    @pytest.fixture()
+    def server(self, nowhere, monkeypatch) -> FakeLogin:
+        made = FakeLogin()
+        monkeypatch.setattr(bootstrap, "build_login", lambda settings: made)
+        return made
+
+    def test_logout_deletes_the_token(self, server: FakeLogin, capsys) -> None:
+        assert run(["remote", "logout"]) == 0
+        assert capsys.readouterr().err == "Signed out of docs.example.invalid.\n"
+        assert run(["remote", "logout"]) == 0
+        assert capsys.readouterr().err == (
+            "No login token of docs.example.invalid is kept here.\n"
+        )
+
+    def test_a_token_file_that_cannot_be_read(
+        self, server: FakeLogin, monkeypatch, caplog
+    ) -> None:
+        from ish.application.ports.login import LoginError
+
+        def broken():
+            raise LoginError("Cannot delete the login token: no such file")
+
+        monkeypatch.setattr(server, "sign_out", broken)
+        assert run(["remote", "logout"]) == 1
+        assert _errors(caplog) == ["Cannot delete the login token: no such file"]
+
+
+class TestTheLineOfLoginAndLogout:
+    @pytest.mark.parametrize(
+        ("line", "error"),
+        [
+            (["login", "reader"], "ish remote login takes no query."),
+            (["logout", "x"], "ish remote logout takes no query."),
+            (
+                ["login", "--under", "docs"],
+                "ish remote login takes no --lang, --under, or --type.",
+            ),
+            (["logout", "--brief"], "--brief is an option of ish remote ask."),
+            (
+                ["logout", "--method", "x"],
+                "--method and --user are options of ish remote login.",
+            ),
+            (
+                ["mcp", "--user", "x"],
+                "--method and --user are options of ish remote login.",
+            ),
+            (
+                ["search", "watchdog", "--method", "x"],
+                "--method and --user are options of ish remote login.",
+            ),
+        ],
+    )
+    def test_the_line_is_refused(
+        self, line: list[str], error: str, nowhere, caplog
+    ) -> None:
+        assert run(["remote", *line]) == 1
+        assert _errors(caplog) == [error]
+
+    @pytest.mark.parametrize("command", ["login", "logout"])
+    def test_no_server_shows_the_option_and_the_variable(
+        self, command: str, tmp_path, monkeypatch, caplog
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        assert run(["remote", command]) == 1
+        assert _errors(caplog) == [NO_SERVER]

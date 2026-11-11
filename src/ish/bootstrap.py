@@ -51,11 +51,12 @@ from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
-from ish.settings import MCP_TOKEN_ENV_VAR, Settings
+from ish.settings import MCP_TOKEN_ENV_VAR, Settings, user_config_path
 
 if TYPE_CHECKING:
     # For the type checker alone. A local search loads no authentication code.
-    from ish.application.ports import authenticator
+    from ish.application.access import Access
+    from ish.application.ports.login import Login
 
 log = logging.getLogger(__name__)
 
@@ -289,19 +290,30 @@ def build_prompts(settings: Settings) -> Prompts:
     return load_prompts(directory)
 
 
-def build_admission(
-    settings: Settings,
-) -> Callable[[str], "authenticator.Identity | None"]:
-    """Construct the check a server over HTTP runs on each bearer token.
+# The file beside the indexes where a server keeps the logins it gave.
+LOGIN_FILE = "logins.jsonl"
 
-    Build each method that ``auth`` names, and return a function that
-    asks them in turn and returns the first identity. Import the methods
-    here, so a run that serves no HTTP loads none of them. Raise
-    ``ValueError`` when ``auth`` names no method or an unknown one, and
-    when a method lacks a value it needs.
+# The file beside the user config where a client keeps its login tokens.
+TOKEN_FILE = "logins.json"
+
+# Seconds in a day, for `login_days`.
+DAY_SECONDS = 86_400
+
+
+def build_access(settings: Settings) -> "Access":
+    """Construct what admits the requests of a server over HTTP.
+
+    Build each method that ``auth`` names. A method that admits a bearer
+    token checks each request, and a method that checks a password signs
+    users in for ``login_days``. Keep the logins in a file beside the
+    indexes. Import the methods here, so a run that serves no HTTP loads
+    none of them. Raise ``ValueError`` when ``auth`` names no method or
+    an unknown one, and when a method lacks a value it needs.
     """
     from ish.adapters.authenticator import AUTHENTICATORS
-    from ish.application.ports.authenticator import Authenticator
+    from ish.adapters.login_store import LoginFile
+    from ish.application.access import Access
+    from ish.application.ports.authenticator import Authenticator, SignIn
 
     if not settings.auth:
         raise ValueError(
@@ -317,31 +329,76 @@ def build_admission(
         "token": os.environ.get(MCP_TOKEN_ENV_VAR, ""),
         "token_variable": MCP_TOKEN_ENV_VAR,
     }
-    built = [AUTHENTICATORS[name](options) for name in dict.fromkeys(settings.auth)]
-    methods = [method for method in built if isinstance(method, Authenticator)]
+    methods = {
+        name: AUTHENTICATORS[name](options) for name in dict.fromkeys(settings.auth)
+    }
+    return Access(
+        [method for method in methods.values() if isinstance(method, Authenticator)],
+        {
+            name: method
+            for name, method in methods.items()
+            if isinstance(method, SignIn)
+        },
+        LoginFile(index_dir(settings) / LOGIN_FILE),
+        settings.login_days * DAY_SECONDS,
+    )
 
-    def admit(bearer: str) -> "authenticator.Identity | None":
-        for method in methods:
-            identity = method.admit(bearer)
-            if identity is not None:
-                return identity
-        return None
 
-    return admit
+def token_file() -> Path:
+    """Return the file where this machine keeps its login tokens.
+
+    Keep it beside the config file of the user, which no tree can name.
+    """
+    return user_config_path().parent / TOKEN_FILE
 
 
 def build_chunk_source(settings: Settings) -> ChunkSource:
     """Construct the source that reads the chunks of the server at ``remote``.
 
-    Read the token from the environment, where the server reads its own.
-    Import the adapter here, so a run that reads no server loads no
-    client. Raise ``ChunkSourceError`` for a URL that is not http or
-    https, and for a token that is not set.
+    Read the token from ``ISH_MCP_TOKEN``, or else the login token that
+    ``ish remote login`` kept for that URL. Import the adapter here, so a
+    run that reads no server loads no client. Raise ``ChunkSourceError``
+    for a URL that is not http or https, for no token, for a login token
+    that has expired, and for a token file that ish refuses.
     """
+    import datetime
+    import time
+
+    from ish.adapters._logins import TokenFile, TokenFileError
     from ish.adapters.chunk_source.mcp import McpChunkSource
+    from ish.application.ports.chunk_source import ChunkSourceError
 
     token = os.environ.get(MCP_TOKEN_ENV_VAR, "")
-    return McpChunkSource(settings.remote, token, MCP_TOKEN_ENV_VAR)
+    if token:
+        return McpChunkSource(settings.remote, token, MCP_TOKEN_ENV_VAR)
+    try:
+        saved = TokenFile(token_file()).get(settings.remote)
+    except (OSError, TokenFileError) as exc:
+        raise ChunkSourceError(str(exc)) from exc
+    if saved is not None and saved.expires <= time.time():
+        ended = datetime.datetime.fromtimestamp(saved.expires, datetime.UTC)
+        raise ChunkSourceError(
+            f"Your login to {settings.remote} ended on "
+            f"{ended:%Y-%m-%d %H:%M} UTC. Run: ish remote login"
+        )
+    return McpChunkSource(
+        settings.remote,
+        saved.token if saved else "",
+        MCP_TOKEN_ENV_VAR,
+        login=saved is not None,
+    )
+
+
+def build_login(settings: Settings) -> "Login":
+    """Construct what signs this machine in to the server at ``remote``.
+
+    Import the adapter here, so a run that signs nobody in loads none of
+    it. Raise ``LoginError`` for a URL that it refuses.
+    """
+    from ish.adapters._logins import TokenFile
+    from ish.adapters.login import HttpLogin
+
+    return HttpLogin(settings.remote, TokenFile(token_file()))
 
 
 def build_link_resolver(settings: Settings, root: Path) -> LinkResolver:

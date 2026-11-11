@@ -14,9 +14,11 @@ paths:
   `LANGUAGE_MODELS` in `adapters/language_model`, and `AUTHENTICATORS` in
   `adapters/authenticator`, and wires adapters into use cases. It does not
   hold a registry itself.
-- `build_admission()` is the one place that reads the values of the
+- `build_access()` is the one place that reads the values of the
   authentication methods. It imports their registry inside the function,
-  so a local search loads no authentication code.
+  so a local search loads no authentication code. `build_login()` and
+  `build_chunk_source()` are the only readers of the token file of the
+  client, `token_file()`.
 - `build_language_model()` builds a backend only when
   `allowed_language_models` names it. No default, no fallback. A search
   never calls it: `Ish` builds the model on the first question.

@@ -37,14 +37,17 @@ class McpChunkSource:
         token: str,
         token_variable: str,
         timeout: float = TIMEOUT_SECONDS,
+        *,
+        login: bool = False,
     ) -> None:
         """Read from the server at *url*, behind *token*.
 
-        *token_variable* is the environment variable the token came from,
-        which an error about the token names. Raise ``ChunkSourceError``
+        *token_variable* is the environment variable a token comes from,
+        which an error about the token names. With *login*, the token is
+        the login token of ``ish remote login``. Raise ``ChunkSourceError``
         for a URL that is not http or https, and for an empty token.
         """
-        self._client = RemoteClient(url, token, token_variable, timeout)
+        self._client = RemoteClient(url, token, token_variable, timeout, login=login)
         self.host = self._client.host
         self._links: dict[Chunk, str] = {}
         self._types: dict[Chunk, str] = {}
