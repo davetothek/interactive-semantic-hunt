@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from ish.application.glossary import Glossary, acronyms, definitions, long_form
+from ish.application.glossary import (
+    Definition,
+    Glossary,
+    acronyms,
+    definitions,
+    long_form,
+)
 from ish.domain.chunk import Chunk
 
 
@@ -136,3 +142,27 @@ class TestGlossary:
         glossary.add(chunk("/b/2.adoc"), "Auto Exposure (AE)")
         glossary.add(chunk("/c/3.adoc"), "auto exposure (AE)")
         assert glossary.lookup("AE", [chunk("/z/q.adoc")]).meaning == "Auto Exposure"
+
+
+class TestKeep:
+    """A client keeps a meaning the server found, with the chunk that writes it."""
+
+    def test_a_kept_definition_is_looked_up(self) -> None:
+        glossary = Glossary()
+        doc = chunk("spec/a.adoc")
+        glossary.keep(Definition("AE", "Auto Exposure", doc))
+        assert glossary.lookup("AE") == Definition("AE", "Auto Exposure", doc)
+
+    def test_a_chunk_counts_once_for_an_acronym(self) -> None:
+        # The tree writes one meaning in two chunks and the other in one.
+        # A chunk that counted twice would turn the vote.
+        glossary = Glossary()
+        doc = chunk("spec/a.adoc")
+        glossary.add(doc, "Auto Exposure (AE)")
+        glossary.keep(Definition("AE", "Auto Exposure", doc))
+        glossary.keep(Definition("AE", "Auto Exposure", doc))
+        glossary.keep(Definition("AE", "Application Engineer", chunk("x/b.adoc")))
+        glossary.keep(Definition("AE", "Application Engineer", chunk("x/c.adoc")))
+        found = glossary.lookup("AE", [chunk("y/d.adoc")])
+        assert found is not None
+        assert found.meaning == "Application Engineer"

@@ -5,7 +5,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from ish.interfaces.mcp.client import RemoteClient, RemoteError
+from ish.adapters.chunk_source._client import RemoteClient
+from ish.application.ports.chunk_source import ChunkSourceError
 from ish.interfaces.mcp.protocol import Tool
 from ish.settings import MCP_TOKEN_ENV_VAR
 from tests.unit.interfaces.mcp.test_mcp_http import TOKEN, Running
@@ -32,7 +33,7 @@ def running() -> Iterator[Running]:
 
 
 def _client(running: Running, token: str = TOKEN) -> RemoteClient:
-    return RemoteClient(f"{running.url}/mcp", token, timeout=5)
+    return RemoteClient(f"{running.url}/mcp", token, MCP_TOKEN_ENV_VAR, timeout=5)
 
 
 class TestCall:
@@ -55,11 +56,11 @@ class TestCall:
         ]
 
     def test_a_failed_tool_raises_with_its_message(self, running: Running) -> None:
-        with pytest.raises(RemoteError, match="question"):
+        with pytest.raises(ChunkSourceError, match="question"):
             _client(running).call("broken", {})
 
     def test_an_unknown_tool_raises(self, running: Running) -> None:
-        with pytest.raises(RemoteError, match="nope"):
+        with pytest.raises(ChunkSourceError, match="nope"):
             _client(running).call("nope", {})
 
 
@@ -68,26 +69,34 @@ class TestRefusal:
         "url", ["ish.example.com/mcp", "ftp://host/mcp", "http://"]
     )
     def test_a_url_that_is_not_http_is_refused(self, url: str) -> None:
-        with pytest.raises(RemoteError, match="not an http or https URL"):
-            RemoteClient(url, TOKEN)
+        with pytest.raises(ChunkSourceError, match="not an http or https URL"):
+            RemoteClient(url, TOKEN, MCP_TOKEN_ENV_VAR)
 
     def test_the_host_names_the_server(self, running: Running) -> None:
         assert _client(running).host == running.url.removeprefix("http://")
 
+    def test_an_at_sign_in_the_path_is_no_password(self) -> None:
+        client = RemoteClient(
+            "https://docs.example.invalid/@team/mcp", TOKEN, MCP_TOKEN_ENV_VAR
+        )
+        assert client.host == "docs.example.invalid"
+
     def test_no_token_is_refused_before_any_request(self, running: Running) -> None:
-        with pytest.raises(RemoteError, match=MCP_TOKEN_ENV_VAR):
+        with pytest.raises(ChunkSourceError, match=MCP_TOKEN_ENV_VAR):
             _client(running, token="")
         assert running.calls == []
 
     def test_a_wrong_token_names_the_variable(self, running: Running) -> None:
         with pytest.raises(
-            RemoteError, match=f"refused the token in {MCP_TOKEN_ENV_VAR}"
+            ChunkSourceError, match=f"refused the token in {MCP_TOKEN_ENV_VAR}"
         ):
             _client(running, token="wrong").call("echo", {})
 
     def test_another_status_names_the_code(self, running: Running) -> None:
-        client = RemoteClient(f"{running.url}/other", TOKEN, timeout=5)
-        with pytest.raises(RemoteError, match="HTTP 404"):
+        client = RemoteClient(
+            f"{running.url}/other", TOKEN, MCP_TOKEN_ENV_VAR, timeout=5
+        )
+        with pytest.raises(ChunkSourceError, match="HTTP 404"):
             client.call("echo", {})
 
     def test_a_server_that_is_not_there_cannot_be_reached(
@@ -95,8 +104,49 @@ class TestRefusal:
     ) -> None:
         url = f"{running.url}/mcp"
         running.close()
-        with pytest.raises(RemoteError, match="Cannot reach"):
-            RemoteClient(url, TOKEN, timeout=5).call("echo", {})
+        with pytest.raises(ChunkSourceError, match="Cannot reach"):
+            RemoteClient(url, TOKEN, MCP_TOKEN_ENV_VAR, timeout=5).call("echo", {})
+
+
+class TestUrlWithAPassword:
+    """The host and each error name the server, so its URL holds no secret.
+
+    A URL such as ``https://user:password@host/mcp`` put the password in
+    the line that names the server, and in every error of a call.
+    """
+
+    PASSWORD = "hunter2-EXAMPLE"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            f"https://reader:{PASSWORD}@docs.example.invalid/mcp",
+            f"https://{PASSWORD}@docs.example.invalid/mcp",
+            f"ftp://reader:{PASSWORD}@docs.example.invalid/mcp",
+            f"reader:{PASSWORD}@docs.example.invalid/mcp",
+        ],
+    )
+    def test_the_url_is_refused_and_the_error_does_not_show_it(self, url: str) -> None:
+        with pytest.raises(ChunkSourceError) as failure:
+            RemoteClient(url, TOKEN, MCP_TOKEN_ENV_VAR)
+        assert self.PASSWORD not in str(failure.value)
+        assert "reader" not in str(failure.value)
+
+    def test_the_error_says_where_the_token_goes(self) -> None:
+        url = f"https://reader:{self.PASSWORD}@docs.example.invalid/mcp"
+        with pytest.raises(ChunkSourceError) as failure:
+            RemoteClient(url, TOKEN, MCP_TOKEN_ENV_VAR)
+        assert str(failure.value) == (
+            "The URL of the server holds a user name or a password. "
+            f"Give the URL alone. The token goes in {MCP_TOKEN_ENV_VAR}."
+        )
+
+    def test_a_url_with_no_password_is_still_shown(self) -> None:
+        with pytest.raises(ChunkSourceError) as failure:
+            RemoteClient("ish.example.com/mcp", TOKEN, MCP_TOKEN_ENV_VAR)
+        assert str(failure.value) == (
+            "'ish.example.com/mcp' is not an http or https URL."
+        )
 
 
 class TestBadReplies:
@@ -116,17 +166,17 @@ class TestBadReplies:
         monkeypatch.setattr(
             "urllib.request.urlopen", lambda request, timeout: Response()
         )
-        return RemoteClient("https://example.invalid/mcp", TOKEN)
+        return RemoteClient("https://example.invalid/mcp", TOKEN, MCP_TOKEN_ENV_VAR)
 
     def test_a_body_that_is_not_json(self, monkeypatch) -> None:
-        with pytest.raises(RemoteError, match="did not answer with JSON"):
+        with pytest.raises(ChunkSourceError, match="did not answer with JSON"):
             self._replying(monkeypatch, b"<html>").call("echo", {})
 
     def test_an_empty_reply_to_a_request(self, monkeypatch) -> None:
-        with pytest.raises(RemoteError, match="no reply to initialize"):
+        with pytest.raises(ChunkSourceError, match="no reply to initialize"):
             self._replying(monkeypatch, b"").call("echo", {})
 
     def test_a_json_rpc_error(self, monkeypatch) -> None:
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"message": "bad"}})
-        with pytest.raises(RemoteError, match="refused initialize: bad"):
+        with pytest.raises(ChunkSourceError, match="refused initialize: bad"):
             self._replying(monkeypatch, body.encode()).call("echo", {})

@@ -86,9 +86,23 @@ finishes a filter word. Nothing else is added.
   `interfaces/mcp/transport.py` frames messages and nothing else, so a new
   one changes no tool. A REST API stays out.
 
+## A server
+
+- `ish remote` goes through `RemoteIsh`, and nothing else does. It gets
+  its chunks from `bootstrap.build_chunk_source()` and answers through the
+  `AnswerQuestion` that a local answer uses.
+- Build the language model before the first request. A machine with no
+  allowed model reads no text of the server.
+- Send a filter only when the call gives it. A filter from the
+  configuration of this machine is for a tree of this machine.
+- A line without the word `remote` reads no server. `--remote URL` with
+  `--ask` or `--brief` is the one exception, and it warns.
+- A local search imports no chunk source and neither `remote` module.
+  `tests/unit/interfaces/cli/test_run.py` checks it in a fresh interpreter.
+
 ## Neovim
 
 - The picker never waits on the main loop. Return a function to fzf-lua, not
   a table.
-- A question from an editor runs `ish --ask`, in Neovim and in VS Code. The
-  resident server answers from the local tree only, and passes over `remote`.
+- A question from an editor runs `ish --ask`, in Neovim and in VS Code. It
+  answers from the local tree, as the resident server does.

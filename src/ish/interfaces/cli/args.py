@@ -7,7 +7,7 @@ and ``ish.toml`` always accept the same option set.
 import argparse
 import os
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ _DESCRIPTION = {
         "  search QUERY [PATH]   Search, also for a query that names a command.\n"
         "  ask QUESTION [PATH]   Answer a question, with the sources it cites.\n"
         "  pick [PATH]           Open the interactive picker.\n"
+        "  remote COMMAND ...    Search, or ask, the tree of a server.\n"
         "  mcp                   Serve the tools over MCP. Also: ish-mcp\n"
         "  serve [TREE]          Keep the indexes of a tree current. Also: ish-serve\n"
         "  complete TEXT [PATH]  Finish a filter word. Also: ish-complete\n"
@@ -93,27 +94,41 @@ def _describe_default(value: object) -> str:
     return str(value)
 
 
-def add_settings_options(parser: argparse.ArgumentParser) -> None:
+def add_settings_options(
+    parser: argparse.ArgumentParser,
+    names: Collection[str] | None = None,
+    *,
+    renamed: Mapping[str, str] | None = None,
+    any_value: Collection[str] = (),
+) -> None:
     """Add one command-line flag for every configurable setting, by section.
 
     Show the sections in the order ``SECTIONS`` gives, and the options of
-    each in the order they are declared.
+    each in the order they are declared. With *names*, add only those
+    settings, for a command that most settings do not reach. *renamed*
+    gives a setting the flag that this command calls it by. A setting in
+    *any_value* takes every value, where another machine decides which
+    values are valid.
     """
+    renamed = renamed or {}
     groups = {title: parser.add_argument_group(title) for title in SECTIONS}
     for f in fields(Settings):
+        if names is not None and f.name not in names:
+            continue
         meta = f.metadata
         group = groups[meta["section"]]
-        flags = [meta.get("flag") or f"--{f.name.replace('_', '-')}"]
+        derived = f"--{f.name.replace('_', '-')}"
+        flags = [renamed.get(f.name) or meta.get("flag") or derived]
         if meta.get("flag"):
             # Keep the derived long flag alongside an explicit short one.
-            flags.append(f"--{f.name.replace('_', '-')}")
+            flags.append(derived)
 
         kwargs = dict(meta.get("cli", {}))
         # The settings module names this action rather than importing a
         # parser, so translate it here.
         if kwargs.get("action") == "boolean_optional":
             kwargs["action"] = argparse.BooleanOptionalAction
-        if f.name in _DYNAMIC_CHOICES:
+        if f.name in _DYNAMIC_CHOICES and f.name not in any_value:
             kwargs["choices"] = _DYNAMIC_CHOICES[f.name]()
 
         default = _describe_default(f.default)

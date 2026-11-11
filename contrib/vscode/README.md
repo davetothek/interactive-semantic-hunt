@@ -61,11 +61,11 @@ The document is read-only and closes with no question about saving.
 seconds, so a notification names the question while it runs, and its
 Cancel button stops it.
 
-The command line answers, not the resident server. The `remote`
-server, the language model, and the filter words in the question are
-the ones a shell uses, and [Answer questions](https://davetothek.github.io/interactive-semantic-hunt/configuration/#answer-questions)
-says how to choose a model. VS Code must start with `ISH_MCP_TOKEN` in
-its environment when the settings name a `remote` server.
+The command line answers, not the resident server. It answers from
+the tree on this machine, and the language model and the filter words
+in the question are the ones a shell uses.
+[Answer questions](https://davetothek.github.io/interactive-semantic-hunt/configuration/#answer-questions)
+says how to choose a model.
 
 | command | what it does |
 |---|---|

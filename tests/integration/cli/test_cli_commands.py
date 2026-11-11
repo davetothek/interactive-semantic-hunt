@@ -9,6 +9,7 @@ import pytest
 from ish import bootstrap
 from ish.domain.chunk import Chunk
 from ish.interfaces.cli.main import main
+from ish.settings import REMOTE_ENV_VAR
 from tests.integration.cli.test_cli_ask import FLAGS, FakeEmbedder, FakeModel, _model
 
 QUESTION = "what does the watchdog do"
@@ -101,6 +102,69 @@ class TestTheReplacedFlags:
 
     def test_a_search_gets_no_warning(self, project: Path, caplog) -> None:
         assert main(["watchdog", str(project), *FLAGS]) == 0
+        assert _warnings(caplog) == []
+
+    def test_remote_on_a_search_says_which_tree_it_read(
+        self, project: Path, capsys, caplog
+    ) -> None:
+        # The flag never sent a search to a server. It still searches here.
+        assert main(["watchdog", str(project), "--remote", NOWHERE, *FLAGS]) == 0
+        first = capsys.readouterr().out.splitlines()[0]
+        assert first == "[1.00] docs/boot.md:1-3  document  Watchdog"
+        assert _warnings(caplog) == [
+            "--remote goes away in a later release. "
+            "This line reads the tree on this machine. "
+            "To search the server, use: ish remote search QUERY --url URL"
+        ]
+        assert NOWHERE not in caplog.text
+
+
+class TestAServerFromTheEnvironment:
+    """`ISH_REMOTE` is for `ish remote`. A line without that word stays here."""
+
+    def test_ask_answers_on_this_machine_and_says_so(
+        self, project: Path, monkeypatch, capsys, caplog
+    ) -> None:
+        monkeypatch.setenv(REMOTE_ENV_VAR, NOWHERE)
+        _model(monkeypatch, FakeModel())
+        assert main(["--ask", QUESTION, str(project), *FLAGS]) == 0
+        assert ANSWER in capsys.readouterr().out
+        assert _warnings(caplog) == [
+            "--ask goes away in a later release. Use: ish ask QUESTION. "
+            "This answer comes from this machine. "
+            "To ask the server, use: ish remote ask QUESTION"
+        ]
+
+    def test_brief_names_the_brief_command_of_the_server(
+        self, project: Path, monkeypatch, capsys, caplog
+    ) -> None:
+        monkeypatch.setenv(REMOTE_ENV_VAR, NOWHERE)
+        _model(monkeypatch, FakeModel())
+        assert main(["--brief", QUESTION, str(project), *FLAGS]) == 0
+        assert capsys.readouterr().out == "The watchdog resets the board.\n"
+        assert _warnings(caplog) == [
+            "--brief goes away in a later release. Use: ish ask QUESTION --brief. "
+            "This answer comes from this machine. "
+            "To ask the server, use: ish remote ask QUESTION --brief"
+        ]
+
+    @pytest.mark.parametrize("line", [["watchdog"], ["search", "watchdog"]])
+    def test_a_search_reads_the_tree_of_this_machine(
+        self, line: list[str], project: Path, monkeypatch, capsys, caplog
+    ) -> None:
+        monkeypatch.setenv(REMOTE_ENV_VAR, NOWHERE)
+        assert main([*line, str(project), *FLAGS]) == 0
+        first = capsys.readouterr().out.splitlines()[0]
+        assert first == "[1.00] docs/boot.md:1-3  document  Watchdog"
+        assert _warnings(caplog) == []
+
+    def test_the_command_ask_answers_on_this_machine_with_no_warning(
+        self, project: Path, monkeypatch, capsys, caplog
+    ) -> None:
+        monkeypatch.setenv(REMOTE_ENV_VAR, NOWHERE)
+        _model(monkeypatch, FakeModel())
+        assert main(["ask", QUESTION, str(project), *FLAGS]) == 0
+        assert ANSWER in capsys.readouterr().out
         assert _warnings(caplog) == []
 
 

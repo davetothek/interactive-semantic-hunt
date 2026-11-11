@@ -47,6 +47,11 @@ behind a bearer token, and a REST API stays out by decision.
 search finds, with citations. A language model writes the answer, and
 only a backend that `allowed_language_models` names is ever built.
 
+`ish remote` searches the tree of an `ish-mcp --http` server, through
+the `RemoteIsh` session. For a question, the server returns chunks with
+their text and runs no model. The model of the machine that asks writes
+the answer, under the same allowlist.
+
 ## Architecture
 
 Hexagonal, ports and adapters. `interfaces → application → domain`, with
@@ -67,6 +72,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Port | `src/ish/application/ports/vector_store.py` | `VectorReader` and `VectorStore` Protocols |
 | Port | `src/ish/application/ports/language_model.py` | `LanguageModel` Protocol, `Source`, `Reply` |
 | Port | `src/ish/application/ports/link.py` | `LinkResolver` Protocol |
+| Port | `src/ish/application/ports/chunk_source.py` | `ChunkSource` Protocol and `ChunkSourceError` |
 | Application | `src/ish/application/scan.py` | Scan use case: discover, accept, parse |
 | Application | `src/ish/application/index.py` | Index use case: staleness, orphans, embedding |
 | Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
@@ -101,12 +107,15 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
 | Adapter | `src/ish/adapters/language_model/_prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
+| Adapter | `src/ish/adapters/chunk_source/mcp.py` | Chunks from the index of an ish server, over MCP |
+| Adapter | `src/ish/adapters/chunk_source/_client.py` | One tool call to an MCP server over HTTP, and the ways it fails |
 | Adapter | `src/ish/adapters/vector_store/sqlite/` | Persistent vector store (default): `store.py`, its tables in `_schema.py`, its matrix file in `_matrix.py` |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
 | Adapter | `src/ish/adapters/vector_store/_catalog.py` | Which index file describes which tree |
 | Adapter | `src/ish/adapters/vcs/git.py` | Ask git what it ignores |
 | Interface | `src/ish/interfaces/python/api.py` | `Ish`, the session every interface shares |
+| Interface | `src/ish/interfaces/python/remote.py` | `RemoteIsh`, the session for the tree of a server |
 | Interface | `src/ish/interfaces/format.py` | Shared output formatting |
 | Interface | `src/ish/interfaces/log.py` | Logging setup, shared by every entry point |
 | Interface | `src/ish/interfaces/busy.py` | The busy line: spinner, step, rate, and time left |
@@ -116,6 +125,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
 | Interface | `src/ish/interfaces/cli/__init__.py` | `ish` entry point: hand the line to the program its first word names |
 | Interface | `src/ish/interfaces/cli/main.py` | The search program: search, ask, pick, list |
+| Interface | `src/ish/interfaces/cli/remote.py` | The remote program: search a server, or answer from it |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/cli/terminal.py` | An answer rendered for a terminal, and the grey of the timing table |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |

@@ -77,9 +77,9 @@ map('n', '<leader>fa', function() require('utils.ish_ask').ask() end,
 
 It asks for the question and opens the split at once, with the seconds it
 has waited. When `ish --ask` returns, the split holds the answer as
-Markdown. The command line answers, so the `remote` server, the language
-model, and the filter words in the question are the ones a shell uses. It
-needs `ish` on PATH. A call can give the question, the tree, and more flags:
+Markdown. The command line answers from the tree on this machine, so the
+language model and the filter words in the question are the ones a shell
+uses. It needs `ish` on PATH. A call can give the question, the tree, and more flags:
 
 ```lua
 require('utils.ish_ask').ask('how is the watchdog configured',
@@ -200,5 +200,5 @@ Point a client at it:
 The server speaks plain HTTP. Put it behind a reverse proxy that holds the
 certificate when the token crosses a network you do not trust.
 
-The `ish` command asks such a server with `--remote`. See
+`ish remote search` and `ish remote ask` read such a server. See
 [Ask a server](usage.md#ask-a-server).

@@ -19,7 +19,7 @@ class TestSearch:
         assert not args.ask
         assert not args.interactive
 
-    @pytest.mark.parametrize("word", [*COMMANDS, "mcp", "serve", "complete"])
+    @pytest.mark.parametrize("word", [*COMMANDS, "remote", "mcp", "serve", "complete"])
     def test_a_query_can_be_the_name_of_a_command(self, word: str) -> None:
         assert CliArgs.from_args(["search", word]).query == word
 
@@ -144,7 +144,7 @@ class TestEveryCommand:
 
     def test_the_help_lists_every_command(self) -> None:
         text = build_parser().format_help()
-        for word in (*COMMANDS, "mcp", "serve", "complete"):
+        for word in (*COMMANDS, "remote", "mcp", "serve", "complete"):
             assert f"\n  {word} " in text
 
     def test_a_tree_to_forget_is_the_path(self, tmp_path: Path) -> None:

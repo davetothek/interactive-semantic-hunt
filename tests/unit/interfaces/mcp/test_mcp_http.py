@@ -268,9 +268,9 @@ class TestSourcesOverHttp:
     def test_the_reply_holds_the_text_of_a_chunk_and_a_term(
         self, served: Running
     ) -> None:
-        from ish.interfaces.mcp.client import RemoteClient
+        from ish.adapters.chunk_source._client import RemoteClient
 
-        client = RemoteClient(f"{served.url}/mcp", TOKEN, timeout=10)
+        client = RemoteClient(f"{served.url}/mcp", TOKEN, "ISH_MCP_TOKEN", timeout=10)
         reply = json.loads(client.call("sources", {"query": "exposure", "limit": 5}))
         (source,) = reply["sources"]
         assert source["path"] == "exposure.md"

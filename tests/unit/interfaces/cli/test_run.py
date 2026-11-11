@@ -65,6 +65,27 @@ class TestMcp:
         assert capsys.readouterr().out.startswith("usage: ish-mcp ")
 
 
+class TestRemote:
+    def test_it_starts_the_program_that_reads_a_server(
+        self, project: Path, caplog
+    ) -> None:
+        assert run(["remote", "search", "load_config"]) == 1
+        assert "No server is set" in caplog.text
+
+    def test_the_usage_names_the_command_given(self, capsys) -> None:
+        with pytest.raises(SystemExit):
+            run(["remote", "--help"])
+        assert capsys.readouterr().out.startswith("usage: ish remote ")
+
+    def test_the_rest_of_the_line_reaches_it(self, monkeypatch) -> None:
+        from ish.interfaces.cli import remote
+
+        seen: list[list[str]] = []
+        monkeypatch.setattr(remote, "main", lambda argv: seen.append(argv) or 0)
+        assert run(["remote", "ask", "why"]) == 0
+        assert seen == [["ask", "why"]]
+
+
 class TestTheSearchProgram:
     def test_a_line_with_no_command_reaches_it(self, project: Path, capsys) -> None:
         assert run([str(project), "--no-git"]) == 0
@@ -145,6 +166,36 @@ class TestWhatACommandImports:
             "    pass"
         )
         assert "ish.interfaces.cli.main" in loaded
-        apart = ("ish.interfaces.mcp", "ish.interfaces.daemon")
+        apart = (
+            "ish.interfaces.mcp",
+            "ish.interfaces.daemon",
+            "ish.interfaces.cli.remote",
+            "ish.interfaces.python.remote",
+            "ish.adapters.chunk_source",
+        )
         assert not [name for name in loaded if name.startswith(apart)]
         assert "ish.interfaces.cli.complete" not in loaded
+
+    def test_a_search_with_a_server_set_imports_no_remote_client(self) -> None:
+        loaded = _loaded(
+            "import os\n"
+            "os.environ['ISH_REMOTE'] = 'http://127.0.0.1:9/mcp'\n"
+            "from ish.interfaces.cli import run\n"
+            "try:\n"
+            "    run(['search', 'query', '--version'])\n"
+            "except SystemExit:\n"
+            "    pass"
+        )
+        apart = ("ish.interfaces.cli.remote", "ish.adapters.chunk_source")
+        assert not [name for name in loaded if name.startswith(apart)]
+
+    def test_ish_remote_imports_no_server_and_no_picker(self) -> None:
+        loaded = _loaded(
+            "import io, contextlib\n"
+            "from ish.interfaces.cli import run\n"
+            "with contextlib.redirect_stderr(io.StringIO()):\n"
+            "    run(['remote', 'search', 'query'])"
+        )
+        assert "ish.interfaces.cli.remote" in loaded
+        apart = ("ish.interfaces.mcp", "ish.interfaces.daemon", "ish.interfaces.tui")
+        assert not [name for name in loaded if name.startswith(apart)]

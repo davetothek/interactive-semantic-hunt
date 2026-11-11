@@ -48,6 +48,13 @@ It is a secret, not an option. A secret must not sit in a config file
 or show as a flag, so the name stays out of the option set.
 """
 
+REMOTE_ENV_VAR = ENV_PREFIX + "REMOTE"
+"""The environment variable that names the server of ``ish remote``.
+
+It is the ``remote`` setting, read as every setting is. The name is here
+for an error that tells the user to set it.
+"""
+
 DEFAULT_EMBEDDER = "ollama"
 DEFAULT_IGNORE = (".git", ".venv", "venv", "__pycache__")
 
@@ -345,7 +352,7 @@ class Settings:
         default="",
         metadata=_opt(
             ANSWERS,
-            "MCP server URL that answers --ask and --brief. Empty answers here.",
+            "URL of the MCP server that `ish remote` searches. Also: ISH_REMOTE",
             metavar="URL",
         ),
     )

@@ -36,6 +36,7 @@ from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
 from ish.application.index import Index
 from ish.application.languages import LanguageResolver, resolve_with
+from ish.application.ports.chunk_source import ChunkSource
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.language_model import LanguageModel, LanguageModelError
 from ish.application.ports.link import LinkResolver
@@ -50,7 +51,7 @@ from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
-from ish.settings import Settings
+from ish.settings import MCP_TOKEN_ENV_VAR, Settings
 
 log = logging.getLogger(__name__)
 
@@ -282,6 +283,20 @@ def build_prompts(settings: Settings) -> Prompts:
     """Read the instructions, from ``prompt_dir`` where it holds a file."""
     directory = Path(settings.prompt_dir).expanduser() if settings.prompt_dir else None
     return load_prompts(directory)
+
+
+def build_chunk_source(settings: Settings) -> ChunkSource:
+    """Construct the source that reads the chunks of the server at ``remote``.
+
+    Read the token from the environment, where the server reads its own.
+    Import the adapter here, so a run that reads no server loads no
+    client. Raise ``ChunkSourceError`` for a URL that is not http or
+    https, and for a token that is not set.
+    """
+    from ish.adapters.chunk_source.mcp import McpChunkSource
+
+    token = os.environ.get(MCP_TOKEN_ENV_VAR, "")
+    return McpChunkSource(settings.remote, token, MCP_TOKEN_ENV_VAR)
 
 
 def build_link_resolver(settings: Settings, root: Path) -> LinkResolver:

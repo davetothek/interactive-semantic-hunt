@@ -192,34 +192,54 @@ third of the output tokens and half the time.
 
 ### Ask a server
 
-`--ask` and `--brief` can ask an `ish-mcp --http` server instead of the
-tree on this machine. Name the server with `--remote`, or with `remote` in
-the config file, and put its token in `ISH_MCP_TOKEN`:
+`ish remote` reads an `ish mcp --http` server, not a tree on this machine.
+Name the server with `--url`, with `ISH_REMOTE`, or with `remote` in the
+config file, in that order, and put its token in `ISH_MCP_TOKEN`:
 
 ```sh
+export ISH_REMOTE="https://docs.example.com/mcp"
 export ISH_MCP_TOKEN="<the token of the server>"
-ish --remote https://docs.example.com/mcp --ask "how is the watchdog configured"
+ish remote search "watchdog period"
+ish remote ask "how is the watchdog configured"
+ish remote ask --brief "how long is the watchdog period"
 ```
 
-The server searches its own tree and writes the answer with its own
-language model, so this machine needs no index and no model. The filter
-words and the `--lang`, `--under`, and `--type` flags travel with the
-question, and so does `--ask-turns N` when you give it: `0` answers from the
-first search, and up to `5` lets the model search again before it answers.
-Without the flag the server uses its own `ask_turns`. The path argument does not, because a path on this machine
-means nothing to the server. The exit codes are the same as for a local
-answer. A plain search and `-i` still read the local tree.
+The token is the one secret, and it goes in the environment. ish refuses
+a URL that holds a user name or a password, because the URL names the
+server in each error and on stderr.
 
-The total is the seconds you waited, and beside it the seconds the server
-spent. The rest is the network and the queue. The last line names the
-version of the server as well. A server that sends no timings is too old
-to time its stages, and the table gives its tokens alone.
+`ish remote search` prints the result lines of the server. `--limit` and
+`--format` travel with the query.
+
+For `ish remote ask`, the server searches its own tree and returns the
+chunks with their text. The language model of this machine picks the chunks
+and writes the answer, so this machine needs no index and the server runs
+no model. Choose the model on this machine, as for a local answer. With
+`--ask-turns N`, the model can search the server again before it answers.
+
+The filter words in the query travel to the server, and so do the `--lang`,
+`--under`, and `--type` flags of the line. A filter from the environment or
+from a config file of this machine stays here, and so does a path: the
+server searches its own tree, and `ish remote` takes no path. The exit
+codes are the same as for a local answer.
+
+The table on stderr shows the stages of this machine. The last line names
+the version of ish here, the version of the server, and its host:
+
+```text
+ish 0.9.4 · server 0.9.4 at docs.example.com
+```
 
 The links in the answer are the ones the server makes. Set `link_base` on
 the server, so they point at a published tree rather than at its disk. When
 that tree is behind the same token, the [Neovim link
 opener](clients.md#use-from-neovim) sends `ISH_MCP_TOKEN` with each fetch.
-Set `ISH_REMOTE` rather than `--remote` so the opener knows the server.
+Set `ISH_REMOTE` rather than `--url` so the opener knows the server.
+
+Every line without the word `remote` reads the tree on this machine, with
+`ISH_REMOTE` set or not. One exception stays for one release: `--remote URL`
+with `--ask` or `--brief`, on a line with no command, asks that server and
+prints a warning that names `ish remote ask`.
 
 Answers are off until you choose a model. See
 [Answer questions](configuration.md#answer-questions). A plain search never
@@ -264,7 +284,7 @@ builds a language model and sends no text anywhere.
 | `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
 | `--prompt-dir DIR` | Instruction files that replace the shipped ones, file by file |
 | `--link-base URL` | Base URL where the tree is published, for the links of an answer |
-| `--remote URL` | MCP server that answers `--ask` and `--brief`, with its token in `ISH_MCP_TOKEN` |
+| `--remote URL` | Server that `--ask` and `--brief` read on a line with no command, for one release. Use `ish remote` with `--url URL` |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
 or parsed is counted in one line; `-v` names them.

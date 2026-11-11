@@ -19,19 +19,37 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   finds with the text of each, and the meaning of each acronym the texts
   use. A client reads it to write an answer with a model of its own. The
   tool runs no language model. A stdio server does not list it.
+- `ish remote search QUERY` prints the results of a server over HTTP.
+  `--limit`, `--format`, `--lang`, `--under`, and `--type` travel with
+  the query.
+- `ish remote ask QUESTION` answers from the tree of a server with the
+  language model of this machine. The server returns chunks and runs no
+  model. `--brief` gives the short answer, and `--ask-turns N` lets the
+  model search the server again. The last line of stderr names the
+  server and its version.
+- `--url`, then `ISH_REMOTE`, then `remote` in a config file names the
+  server of `ish remote`. Its token is in `ISH_MCP_TOKEN`.
 
 ### Changed
 
 - The first word of a command line is a command when it is `search`,
   `ask`, `pick`, `mcp`, `serve`, or `complete`. To search for one of
   these words, use `ish search WORD` or `ish -- WORD`.
-- `ish ask` always answers on this machine. Only `ish --ask` follows the
-  `remote` option to a server.
+- A line without the word `remote` reads the tree on this machine, also
+  when `ISH_REMOTE` or a config file names a server. `ish --ask` with
+  such a server answers here and prints a warning that names
+  `ish remote ask`. An editor client asks through `ish --ask`, so it
+  answers from the local tree.
+- `--remote URL` with `--ask` or `--brief` gets chunks from the server,
+  and the language model of this machine writes the answer. This machine
+  needs a `language_model` for it.
 
 ### Deprecated
 
 - `--ask` and `--brief` on a line with no command. They work as before
   and print one warning that names `ish ask`. `-i` stays.
+- `--remote URL` on a line with no command. It prints one warning that
+  names `ish remote`. Use `ish remote` with `--url URL`.
 
 ## 0.9.4 - 2026-11-10
 

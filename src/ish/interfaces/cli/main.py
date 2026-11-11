@@ -5,12 +5,10 @@ Parse arguments, delegate wiring to the bootstrap module, format output.
 unless it names a program of its own.
 """
 
-import json
 import logging
 import os
 import shutil
 import sys
-import time
 
 from ish import bootstrap
 from ish.application.answer import FOLLOWING, AnswerStep
@@ -26,7 +24,7 @@ from ish.interfaces.format import (
 )
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
-from ish.settings import MCP_TOKEN_ENV_VAR
+from ish.settings import Settings
 
 log = logging.getLogger("ish.cli")
 
@@ -64,10 +62,19 @@ def _run_ask(args: CliArgs) -> int:
     if not args.query:
         log.error("%s needs a question.", "ish ask" if args.command else "--ask")
         return 1
-    # The `ask` command answers on this machine. Only the flag follows
-    # `remote` to a server.
-    if args.settings.remote and not args.command:
-        return _run_remote_ask(args)
+    # Only `--remote URL` on a line with no command asks a server. A URL
+    # from the environment or a config file is for `ish remote`.
+    if _names_a_server(args):
+        from ish.interfaces.cli import remote
+
+        return remote.ask(
+            args.settings,
+            args.query,
+            brief=args.brief,
+            lang=args.overrides.get("lang") or (),
+            under=args.overrides.get("under") or "",
+            type=args.overrides.get("type") or (),
+        )
     line = ProgressLine()
     ticker = Ticker()
     with Ish(args.path, settings=args.settings) as ish:
@@ -76,7 +83,7 @@ def _run_ask(args: CliArgs) -> int:
             line.clear()
             answer = ish.ask(
                 args.query,
-                on_step=lambda step: _report(ticker, step),
+                on_step=lambda step: report_step(ticker, step),
                 brief=args.brief,
             )
         except KeyboardInterrupt:
@@ -93,78 +100,25 @@ def _run_ask(args: CliArgs) -> int:
             if args.brief
             else format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
         )
-        _show(args, text, format_usage(answer_usage(answer), versions=_versions()))
+        usage = format_usage(answer_usage(answer), versions=versions())
+        show_answer(args.settings, text, usage, brief=args.brief)
     return 0 if answer.covered else 2
 
 
-def _run_remote_ask(args: CliArgs) -> int:
-    """Ask the server that ``remote`` names, and print its answer.
-
-    Keep the exit codes of a local answer. The server searches its own
-    tree, so the path given here does not travel. The filters do, and
-    ``--ask-turns`` when it is given. Say
-    how long the question took, and how much of it the server spent.
-    """
-    from ish.interfaces.mcp.client import RemoteClient, RemoteError
-
-    settings = args.settings
-    arguments: dict[str, object] = {"question": args.query, "brief": args.brief}
-    if settings.lang:
-        arguments["lang"] = list(settings.lang)
-    if settings.under:
-        arguments["under"] = settings.under
-    if settings.type:
-        arguments["type"] = list(settings.type)
-    # The turns travel only when given on this command line. A value from
-    # the config file here is for answers here, and the server has its own.
-    if args.overrides.get("ask_turns") is not None:
-        arguments["ask_turns"] = settings.ask_turns
-
-    ticker = Ticker()
-    start = time.monotonic()
-    try:
-        client = RemoteClient(settings.remote, os.environ.get(MCP_TOKEN_ENV_VAR, ""))
-        ticker.show(f"Asking {client.host}")
-        text = client.call("ask", arguments)
-    except KeyboardInterrupt:
-        ticker.stop()
-        sys.stderr.write("ish: interrupted\n")
-        return 130
-    except RemoteError as exc:
-        ticker.stop()
-        log.error("%s", exc)
-        return 1
-    finally:
-        ticker.stop()
-
-    try:
-        reply = json.loads(text)
-    except ValueError:
-        log.error("%s did not answer the question with JSON.", settings.remote)
-        return 1
-    shown = reply.get("answer") if args.brief else reply.get("markdown")
-    if not isinstance(shown, str):
-        log.error(
-            "%s sent no Markdown for the answer. Update ish on the server.",
-            settings.remote,
-        )
-        return 1
-    usage = format_usage(
-        reply, time.monotonic() - start, _versions(client.server_version)
-    )
-    _show(args, shown, usage)
-    return 0 if reply.get("covered") else 2
+def _names_a_server(args: CliArgs) -> bool:
+    """Return True when the line has no command and gives ``--remote URL``."""
+    return not args.command and bool(args.overrides.get("remote"))
 
 
-def _versions(server: str = "") -> str:
-    """Name the version of this ish, and of the server that answered."""
+def versions(server: str = "", host: str = "") -> str:
+    """Name the version of this ish, and the server at *host* that answered."""
     from ish.interfaces.cli.args import installed_version
 
     mine = f"ish {installed_version()}"
-    return f"{mine} · server {server}" if server else mine
+    return f"{mine} · server {server} at {host}" if host else mine
 
 
-def _show(args: CliArgs, answer: str, usage: str) -> None:
+def show_answer(settings: Settings, answer: str, usage: str, *, brief: bool) -> None:
     """Print *answer* on stdout, and below it the *usage* table on stderr.
 
     Print the Markdown as it is, so a copy from the terminal is the text
@@ -175,8 +129,7 @@ def _show(args: CliArgs, answer: str, usage: str) -> None:
     """
     from ish.interfaces.cli.terminal import MAX_WIDTH, grey, rendered
 
-    settings = args.settings
-    if settings.render and not args.brief and sys.stdout.isatty():
+    if settings.render and not brief and sys.stdout.isatty():
         answer = rendered(
             answer,
             width=min(shutil.get_terminal_size().columns, MAX_WIDTH),
@@ -189,7 +142,7 @@ def _show(args: CliArgs, answer: str, usage: str) -> None:
     sys.stderr.write(f"\n{usage}\n")
 
 
-def _report(ticker: Ticker, step: AnswerStep) -> None:
+def report_step(ticker: Ticker, step: AnswerStep) -> None:
     """Show *step* on the busy line, and leave a follow-up search standing."""
     if step.stage == FOLLOWING:
         ticker.note(str(step))
@@ -278,19 +231,47 @@ def _run_sweep(args: CliArgs) -> int:
 
 
 def _warn_of_replaced_flag(args: CliArgs) -> None:
-    """Name the command that replaces ``--ask`` or ``--brief``, in one line.
+    """Name the command that replaces ``--ask``, ``--brief``, or ``--remote``.
 
-    Say nothing for a question that goes to a server. No command replaces
-    that one.
+    Write one line for a line with no command, and nothing for a line
+    that starts with one. Never write the URL: the address of a server
+    is not for a log.
     """
-    if args.command or not args.ask or args.settings.remote:
+    if args.command:
         return
-    flag, use = (
-        ("--brief", "ish ask QUESTION --brief")
-        if args.brief
-        else ("--ask", "ish ask QUESTION")
+    brief = " --brief" if args.brief else ""
+    if _names_a_server(args):
+        if args.ask:
+            log.warning(
+                "--remote goes away in a later release. "
+                "Use: ish remote ask QUESTION%s --url URL",
+                brief,
+            )
+            return
+        # Only a question follows the flag to its server.
+        log.warning(
+            "--remote goes away in a later release. "
+            "This line reads the tree on this machine. "
+            "To search the server, use: ish remote search QUERY --url URL"
+        )
+        return
+    if not args.ask:
+        return
+    flag = "--brief" if args.brief else "--ask"
+    # A URL from the environment or a config file asked the server
+    # before `ish remote` took that work. Say where the answer comes from.
+    server = (
+        f". This answer comes from this machine. To ask the server, use: "
+        f"ish remote ask QUESTION{brief}"
+        if args.settings.remote
+        else ""
     )
-    log.warning("%s goes away in a later release. Use: %s", flag, use)
+    log.warning(
+        "%s goes away in a later release. Use: ish ask QUESTION%s%s",
+        flag,
+        brief,
+        server,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

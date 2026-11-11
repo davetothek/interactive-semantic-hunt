@@ -181,6 +181,18 @@ class Glossary:
                     Definition(short, meaning, chunk)
                 )
 
+    def keep(self, definition: Definition) -> None:
+        """Keep a *definition* that another glossary found in its tree.
+
+        A client of a server holds no file of the tree, so the server
+        sends each meaning with the chunk that writes it.
+        """
+        with self._lock:
+            if (definition.chunk, definition.short) in self._seen:
+                return
+            self._seen.add((definition.chunk, definition.short))
+            self._by_short.setdefault(definition.short, []).append(definition)
+
     def lookup(self, short: str, near: Sequence[Chunk] = ()) -> Definition | None:
         """Return the meaning of *short* the tree gives, or None.
 

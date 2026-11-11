@@ -3,8 +3,8 @@
 --
 -- The answer comes from `ish --ask`, which writes Markdown on stdout
 -- with each source as a link. Running the command line keeps one set of
--- settings: `remote`, the language model, and the filters are the ones
--- a shell uses, so an answer here is the answer there.
+-- settings: the language model and the filters are the ones a shell
+-- uses, so an answer here is the answer there.
 --
 -- The split opens at once and names the question, because an answer
 -- takes seconds and a key that shows nothing looks dead. The command

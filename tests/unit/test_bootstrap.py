@@ -14,6 +14,7 @@ from ish.settings import (
     CONFIG_BASENAME,
     CONFIG_DIRNAME,
     CONFIG_FILENAME,
+    MCP_TOKEN_ENV_VAR,
     Settings,
     load_settings,
 )
@@ -1456,6 +1457,34 @@ class TestBuildLanguageModel:
         settings = Settings(language_model="nope", allowed_language_models=("nope",))
         with pytest.raises(LanguageModelError, match="Valid backends: none"):
             bootstrap.build_language_model(settings)
+
+
+class TestBuildChunkSource:
+    """A chunk source reads a server, behind the token in the environment."""
+
+    URL = "http://ish.example.invalid:8765/mcp"
+
+    def test_the_source_reads_the_server_the_settings_name(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSource
+
+        monkeypatch.setenv(MCP_TOKEN_ENV_VAR, "test-token-EXAMPLE")
+        source = bootstrap.build_chunk_source(Settings(remote=self.URL))
+        assert isinstance(source, ChunkSource)
+        assert source.host == "ish.example.invalid:8765"
+
+    def test_no_token_names_the_variable(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSourceError
+
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR, raising=False)
+        with pytest.raises(ChunkSourceError, match=MCP_TOKEN_ENV_VAR):
+            bootstrap.build_chunk_source(Settings(remote=self.URL))
+
+    def test_a_url_that_is_not_http_is_refused(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSourceError
+
+        monkeypatch.setenv(MCP_TOKEN_ENV_VAR, "test-token-EXAMPLE")
+        with pytest.raises(ChunkSourceError, match="not an http or https URL"):
+            bootstrap.build_chunk_source(Settings(remote="ish.example.invalid"))
 
 
 class TestReader:

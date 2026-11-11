@@ -2,9 +2,9 @@
 //
 // `ish --ask` writes the answer as Markdown on stdout, with each source
 // as a link. Running the command line keeps one set of settings: the
-// `remote` server, the language model, and the filters are the ones a
-// shell uses, so an answer here is the answer there. The resident
-// server answers only from the tree on this machine.
+// language model and the filters are the ones a shell uses, so an
+// answer here is the answer there. It answers from the tree on this
+// machine, as the resident server does.
 
 import { execFile } from "node:child_process";
 
