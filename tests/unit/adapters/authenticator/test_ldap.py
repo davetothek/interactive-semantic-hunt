@@ -141,14 +141,17 @@ class TestGroup:
 
 class TestFailure:
     def test_a_directory_that_is_down_is_not_a_wrong_password(
-        self, directory: Directory
+        self, directory: Directory, caplog
     ) -> None:
         directory.down = True
-        with pytest.raises(SignInUnavailable) as failed:
-            _method().sign_in("reader", PASSWORD)
-        assert str(failed.value) == (
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SignInUnavailable) as failed:
+                _method().sign_in("reader", PASSWORD)
+        # A client may not be signed in yet, so its text names no host.
+        assert str(failed.value) == "The directory cannot be reached. Try again later."
+        assert caplog.messages == [
             "The directory at ldap.example.invalid cannot be reached."
-        )
+        ]
 
     @pytest.mark.parametrize(
         ("failure", "text"),
@@ -159,15 +162,19 @@ class TestFailure:
             (fake_ldap.LDAPError({"info": "x"}), "unknown error"),
         ],
     )
-    def test_another_failure_names_what_the_directory_said(
-        self, failure: Exception, text: str, directory: Directory
+    def test_another_failure_names_what_the_directory_said_in_the_log(
+        self, failure: Exception, text: str, directory: Directory, caplog
     ) -> None:
         directory.failure = failure
-        with pytest.raises(SignInUnavailable) as failed:
-            _method().sign_in("reader", PASSWORD)
-        assert (
-            str(failed.value) == f"The directory at ldap.example.invalid failed: {text}"
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SignInUnavailable) as failed:
+                _method().sign_in("reader", PASSWORD)
+        assert str(failed.value) == (
+            "The directory failed. The log of the server says why."
         )
+        assert caplog.messages == [
+            f"The directory at ldap.example.invalid failed: {text}"
+        ]
         assert failed.value.__cause__ is None
 
     def test_a_connection_that_does_not_close_cleanly(
@@ -230,3 +237,13 @@ class TestConfiguration:
             "LDAP sign-in needs python-ldap. Install the ldap extra: "
             "pip install 'interactive-semantic-hunt[ldap]'"
         )
+
+
+class TestTls:
+    @pytest.mark.parametrize("name", ["OPT_X_TLS_REQUIRE_CERT", "OPT_X_TLS_NEWCTX"])
+    def test_a_python_ldap_without_either_tls_option_is_refused(
+        self, name: str, directory: Directory, monkeypatch
+    ) -> None:
+        monkeypatch.delattr(sys.modules["ldap"], name)
+        with pytest.raises(ValueError, match="This python-ldap has no TLS"):
+            _method()

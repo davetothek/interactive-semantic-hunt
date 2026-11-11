@@ -54,10 +54,20 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   sign-in still in flight counts, so guesses sent at once do not pass the
   limit. The server answers 429 while it holds.
 - A command that sends a token or a password follows no redirect, so the
-  token goes only to the address you gave. A server error names the type
-  of the error in its log, and never its text.
+  token goes only to the address you gave, and a plain http request goes
+  to no proxy. A server error names the type of the error in its log, and
+  never its text.
+- A config file in a tree cannot set `auth`, `login_days`, or an `ldap_*`
+  option, so a person who can commit to the tree cannot choose the
+  directory that gets each password. `ish mcp --http` names such a file.
+  The logins stay in the data directory whatever `cache_dir` says, and
+  the server refuses a login file that another user can write.
+- A server over HTTP serves at most 64 connections at once, closes one
+  that sends nothing for 30 s, and checks at most 8 sign-ins at once. A
+  user name has at most 256 characters, and a password 1024. A static
+  token of fewer than 32 characters starts the server with a warning.
 - A server keeps the SHA-256 of each login token, never the token, in
-  `logins.jsonl` beside its indexes. The operator ends a login by deleting
+  `~/.local/share/ish/logins.jsonl`. The operator ends a login by deleting
   its line. Each tool call writes one line that names the user and the
   tool, never the query.
 - `ish remote mcp` serves `search_code` and `ask` on stdio for the tree

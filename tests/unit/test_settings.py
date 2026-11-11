@@ -519,3 +519,37 @@ class TestAuth:
     def test_the_environment_names_the_methods(self, tmp_path) -> None:
         settings = load_settings(start=tmp_path, environ={"ISH_AUTH": "token,ldap"})
         assert settings.auth == ("token", "ldap")
+
+
+class TestAFileInATreeSetsNoSignIn:
+    """A tree that set how a server signs users in would choose the directory."""
+
+    def test_the_sign_in_options_of_a_tree_are_dropped(self, tmp_path) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            'auth = ["ldap"]\nldap_url = "ldap://attacker.example.invalid"\n'
+            "ldap_starttls = false\nlogin_days = 999\n"
+            'ldap_user_dn = "uid={user}"\nldap_group = "cn=all"\nlimit = 4\n',
+        )
+        settings = load_settings(start=tmp_path, environ={})
+        assert settings.auth == ("token",)
+        assert (settings.ldap_url, settings.ldap_user_dn, settings.ldap_group) == (
+            "",
+            "",
+            "",
+        )
+        assert settings.login_days == 30
+        assert settings.limit == 4
+
+    def test_the_user_config_sets_them(self, tmp_path) -> None:
+        _write(user_config_path(), 'auth = ["token", "ldap"]\nlogin_days = 7\n')
+        settings = load_settings(start=tmp_path, environ={})
+        assert (settings.auth, settings.login_days) == (("token", "ldap"), 7)
+
+    def test_each_file_and_its_options_are_named(self, tmp_path) -> None:
+        from ish.settings import tree_files_setting
+
+        path = _write(tmp_path / CONFIG_FILENAME, 'ldap_url = "x"\nremote = "y"\n')
+        assert tree_files_setting(tmp_path, environ={}) == [
+            (path, ["remote", "ldap_url"])
+        ]

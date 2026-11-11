@@ -136,3 +136,53 @@ class TestNoRedirect:
                 server.server_close()
         assert refused.value.code == 307
         assert reached == []
+
+
+class TestNoProxyForPlainHttp:
+    """A proxy of the environment never reads a plain http request."""
+
+    def test_plain_http_goes_straight_to_the_server(self, monkeypatch) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from ish.adapters._http import open_without_redirects
+
+        seen: dict[str, list[str]] = {"server": [], "proxy": []}
+
+        def handler(name: str):
+            class Recorded(BaseHTTPRequestHandler):
+                def do_POST(self) -> None:
+                    seen[name].append(self.path)
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"{}")
+
+                def log_message(self, format, *args) -> None:
+                    return None
+
+            return Recorded
+
+        server = HTTPServer(("127.0.0.1", 0), handler("server"))
+        proxy = HTTPServer(("127.0.0.1", 0), handler("proxy"))
+        threads = [
+            threading.Thread(target=s.serve_forever, daemon=True)
+            for s in (server, proxy)
+        ]
+        for thread in threads:
+            thread.start()
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_address[1]}")
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/login",
+                data=b'{"password": "hunter2-EXAMPLE"}',
+            )
+            with open_without_redirects(request, 10) as response:
+                assert response.read() == b"{}"
+        finally:
+            for each in (server, proxy):
+                each.shutdown()
+                each.server_close()
+        assert seen == {"server": ["/login"], "proxy": []}

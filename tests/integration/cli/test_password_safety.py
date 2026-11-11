@@ -42,6 +42,7 @@ READER = "uid=reader,ou=people,dc=example,dc=invalid"
 class Site:
     url: str
     index: Path
+    logins: Path
     directory: Directory
 
 
@@ -67,6 +68,8 @@ def site(tmp_path_factory) -> Iterator[Site]:
         patch.setattr(bootstrap, "build_embedder", lambda s: FakeEmbedder())
         fake_ldap.install(patch, directory)
         patch.setenv(MCP_TOKEN_ENV_VAR, STATIC)
+        patch.setenv("XDG_DATA_HOME", str(tmp_path_factory.mktemp("data")))
+        logins = bootstrap.login_file()
         access = bootstrap.build_access(settings)
         tools = server_module.IshTools(settings, tree)
         transport = HttpTransport("127.0.0.1", 0, access.admit, access)
@@ -77,7 +80,7 @@ def site(tmp_path_factory) -> Iterator[Site]:
         assert transport.address is not None
         host, port = transport.address
         tools.search({"query": "watchdog"})
-    yield Site(f"http://{host}:{port}/mcp", index, directory)
+    yield Site(f"http://{host}:{port}/mcp", index, logins, directory)
     transport.stop()
     thread.join(5)
     tools.close()
@@ -89,7 +92,7 @@ def client(site: Site, tmp_path, monkeypatch) -> Site:
     monkeypatch.setenv(REMOTE_ENV_VAR, site.url)
     monkeypatch.delenv(MCP_TOKEN_ENV_VAR, raising=False)
     monkeypatch.setattr("getpass.getpass", lambda prompt: PASSWORD)
-    (site.index / bootstrap.LOGIN_FILE).unlink(missing_ok=True)
+    site.logins.unlink(missing_ok=True)
     site.directory.binds.clear()
     return site
 
@@ -205,7 +208,7 @@ class TestPasswordSafety:
             monkeypatch.setattr("getpass.getpass", lambda prompt: PASSWORD)
             assert run(["remote", "login", "--user", USER, "-vv"]) == 0
             assert run(["remote", "search", "watchdog", "-vv"]) == 0
-            (client.index / bootstrap.LOGIN_FILE).write_text("")
+            client.logins.write_text("")
             assert run(["remote", "search", "watchdog", "-vv"]) == 1
             monkeypatch.setenv(MCP_TOKEN_ENV_VAR, "wrong-token-EXAMPLE")
             assert run(["remote", "search", "watchdog", "-vv"]) == 1
@@ -229,7 +232,12 @@ class TestPasswordSafety:
         import os
 
         assert _login() == 0
-        stored = [client.index, bootstrap.token_file().parent, tmp_path]
+        stored = [
+            client.index,
+            client.logins.parent,
+            bootstrap.token_file().parent,
+            tmp_path,
+        ]
         # Every directory where ish keeps a file, on either side.
         for variable in (
             "XDG_CONFIG_HOME",
@@ -250,7 +258,7 @@ class TestPasswordSafety:
 
         assert _login() == 0
         token = _saved_token()
-        kept = (client.index / bootstrap.LOGIN_FILE).read_text()
+        kept = client.logins.read_text()
         assert token not in kept
         (line,) = kept.splitlines()
         assert json.loads(line)["digest"] == hashlib.sha256(token.encode()).hexdigest()

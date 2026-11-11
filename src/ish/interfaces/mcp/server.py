@@ -809,6 +809,27 @@ def _parse(argv: list[str] | None, prog: str):
     return parser.parse_args(argv)
 
 
+def _warn_of_a_tree_that_sets_sign_in(root: Path) -> None:
+    """Name each file in the tree that sets how the server signs users in.
+
+    The loader ignores those options in a file of the tree, because a
+    person who can commit to the tree would choose the directory that gets
+    each password.
+    """
+    from ish.settings import tree_files_setting, user_config_path
+
+    for path, names in tree_files_setting(root):
+        kept = [name for name in names if name != "remote"]
+        if kept:
+            log.warning(
+                "Ignore %s in %s. A file in a tree does not set how a server "
+                "signs users in. Set them in %s or in ISH_* variables.",
+                ", ".join(kept),
+                path,
+                user_config_path(),
+            )
+
+
 def _refuse_a_password_from_the_network(host: str, methods: list[str]) -> None:
     """Raise ``ValueError`` when a server that signs users in listens on a network.
 
@@ -854,6 +875,7 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
     setup_logging(verbosity=settings.verbosity, color=False)
 
     if args.http:
+        _warn_of_a_tree_that_sets_sign_in(root)
         try:
             address = _address(args.http)
             access = bootstrap.build_access(settings)

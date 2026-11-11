@@ -150,3 +150,43 @@ class TestAFileThatCannotBeReadAdmitsNobody:
             + "}\n"
         )
         assert LoginFile(path).find("d1") is None
+
+
+class TestAFileAnotherUserCanWrite:
+    """Another user who could write the file could add a login."""
+
+    def test_a_file_the_group_can_write_admits_nobody(self, tmp_path, caplog) -> None:
+        import os
+
+        path = tmp_path / "logins.jsonl"
+        LoginFile(path, Clock()).add(_login("d1"))
+        os.chmod(path, 0o620)
+        with caplog.at_level(logging.ERROR):
+            assert LoginFile(path).find("d1") is None
+        assert caplog.messages == [
+            f"Cannot read {path}, so it admits nobody: LoginFileError"
+        ]
+
+    def test_a_file_of_another_owner_admits_nobody(self, tmp_path, monkeypatch) -> None:
+        import os
+
+        path = tmp_path / "logins.jsonl"
+        LoginFile(path, Clock()).add(_login("d1"))
+        monkeypatch.setattr(os, "geteuid", lambda: os.stat(path).st_uid + 1)
+        assert LoginFile(path).find("d1") is None
+
+    def test_a_file_that_cannot_be_read_is_not_overwritten(self, tmp_path) -> None:
+        from ish.adapters.login_store.file import LoginFileError
+
+        path = tmp_path / "logins.jsonl"
+        store = LoginFile(path, Clock())
+        store.add(_login("d1"))
+        path.write_bytes(b"\xff" + path.read_bytes())
+        with pytest.raises(LoginFileError, match="so no login is added"):
+            store.add(_login("d2"))
+        assert b'"d1"' in path.read_bytes()
+
+    def test_the_directory_is_the_user_s_alone(self, tmp_path) -> None:
+        path = tmp_path / "server" / "logins.jsonl"
+        LoginFile(path, Clock()).add(_login("d1"))
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700

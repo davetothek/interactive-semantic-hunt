@@ -661,8 +661,18 @@ def _file_options(path: Path) -> Mapping[str, Any]:
 
 
 # Options that a file in a tree may not set. A tree that names the
-# server of `ish remote` chooses where the token of the user goes.
-NOT_FROM_A_TREE = ("remote",)
+# server of `ish remote` chooses where the token of the user goes. A tree
+# that sets how a server signs users in chooses the directory that gets
+# each password, and how long a login lasts.
+NOT_FROM_A_TREE = (
+    "remote",
+    "auth",
+    "login_days",
+    "ldap_url",
+    "ldap_user_dn",
+    "ldap_group",
+    "ldap_starttls",
+)
 
 
 def _from_a_tree(path: Path) -> dict[str, Any]:
@@ -690,14 +700,35 @@ def tree_files_naming_a_server(
     *config* or ``ISH_CONFIG`` names a file, because the loader then
     reads no project file.
     """
+    return [
+        path
+        for path, names in tree_files_setting(start, config=config, environ=environ)
+        if "remote" in names
+    ]
+
+
+def tree_files_setting(
+    start: Path,
+    *,
+    config: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[tuple[Path, list[str]]]:
+    """Return each project config file at or above *start* that sets an
+    option of ``NOT_FROM_A_TREE``, with the names of those it sets.
+
+    The loader ignores each one. Return nothing when *config* or
+    ``ISH_CONFIG`` names a file, because the loader then reads no project
+    file.
+    """
     environ = environ if environ is not None else os.environ
     if config or environ.get(CONFIG_ENV_VAR):
         return []
-    return [
-        path
-        for path in project_configs(start)
-        if any(name in _file_options(path) for name in NOT_FROM_A_TREE)
-    ]
+    found = []
+    for path in project_configs(start):
+        names = [name for name in NOT_FROM_A_TREE if name in _file_options(path)]
+        if names:
+            found.append((path, names))
+    return found
 
 
 def _read_named(path: Path) -> dict[str, Any]:

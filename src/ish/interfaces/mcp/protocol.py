@@ -100,7 +100,7 @@ class Server:
 
         # A message with no id is a notification, which takes no reply.
         if request_id is None:
-            log.debug("Notification: %s", method)
+            log.debug("Notification: %s", printable(str(method)))
             return None
 
         try:
@@ -134,7 +134,11 @@ class Server:
         """Agree a protocol revision and announce what this server offers."""
         asked = params.get("protocolVersion")
         version = asked if asked in SUPPORTED_VERSIONS else DEFAULT_VERSION
-        log.info("Client asked for protocol %s, replying with %s", asked, version)
+        log.info(
+            "Client asked for protocol %s, replying with %s",
+            printable(str(asked)),
+            version,
+        )
         return {
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},

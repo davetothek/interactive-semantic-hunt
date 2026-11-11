@@ -290,8 +290,20 @@ def build_prompts(settings: Settings) -> Prompts:
     return load_prompts(directory)
 
 
-# The file beside the indexes where a server keeps the logins it gave.
+# The file in the data directory where a server keeps the logins it gave.
 LOGIN_FILE = "logins.jsonl"
+
+
+def login_file() -> Path:
+    """Return the file where a server keeps the logins it gave.
+
+    Keep it in the data directory of the user that runs the server. A
+    `cache_dir` that a config file sets moves the indexes and never the
+    logins, so no file in a tree decides where they are read from.
+    """
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "ish" / LOGIN_FILE
+
 
 # The file beside the user config where a client keeps its login tokens.
 TOKEN_FILE = "logins.json"
@@ -343,7 +355,7 @@ def build_access(settings: Settings) -> "Access":
             for name, method in methods.items()
             if isinstance(method, SignIn)
         },
-        LoginFile(index_dir(settings) / LOGIN_FILE),
+        LoginFile(login_file()),
         settings.login_days * DAY_SECONDS,
     )
 

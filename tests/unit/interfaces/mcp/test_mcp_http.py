@@ -313,6 +313,22 @@ class TestEntryPoint:
         monkeypatch.setenv("ISH_AUTH", "token,directory")
         monkeypatch.setenv("ISH_CACHE_DIR", str(tmp_path / "idx"))
 
+    def test_a_tree_that_sets_sign_in_is_named(
+        self, monkeypatch, tmp_path, caplog
+    ) -> None:
+        (tmp_path / "ish.toml").write_text(
+            'ldap_url = "ldap://attacker.example.invalid"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(TOKEN_VARIABLE, TOKEN)
+        monkeypatch.setattr(HttpTransport, "serve", lambda self, server: None)
+        with caplog.at_level(logging.WARNING):
+            assert server_module.main(["--http", "127.0.0.1:8765"]) == 0
+        assert any(
+            m.startswith(f"Ignore ldap_url in {tmp_path / 'ish.toml'}.")
+            for m in caplog.messages
+        )
+
     def test_ish_mcp_has_no_option_for_a_server(self, capsys) -> None:
         # `ish remote mcp` reads a server. `ish mcp` is the local tree.
         with pytest.raises(SystemExit):
@@ -721,3 +737,84 @@ class TestABodyLengthThatIsNoCount:
             transport.stop()
             thread.join(5)
         assert desk.asked == []
+
+
+class TestStalledClients:
+    """A client that opens connections before any sign-in holds no thread for long."""
+
+    def _serve(self, monkeypatch, **limits) -> Iterator[tuple[str, int]]:
+        from ish.interfaces.mcp import transport as transport_module
+
+        for name, value in limits.items():
+            monkeypatch.setattr(transport_module, name, value)
+        transport = HttpTransport("127.0.0.1", 0, ADMIT, Desk())
+        thread = threading.Thread(
+            target=transport.serve, args=(Server("t", "0", []),), daemon=True
+        )
+        thread.start()
+        assert transport.ready.wait(5)
+        assert transport.address is not None
+        yield transport.address
+        transport.stop()
+        thread.join(5)
+
+    def test_a_connection_that_sends_nothing_is_closed(self, monkeypatch) -> None:
+        import socket
+
+        for host, port in self._serve(monkeypatch, SOCKET_SECONDS=0.2):
+            stalled = socket.create_connection((host, port), timeout=5)
+            stalled.sendall(b"POST /login HTTP/1.1\r\nContent-Length: 100\r\n\r\n")
+            # The server closes the socket, so the read ends with no bytes.
+            assert stalled.recv(1024) == b""
+            stalled.close()
+
+    def test_connections_over_the_cap_are_closed_at_once(self, monkeypatch) -> None:
+        import socket
+
+        for host, port in self._serve(monkeypatch, MAX_CONNECTIONS=2):
+            held = [socket.create_connection((host, port), timeout=5) for _ in range(2)]
+            for each in held:
+                each.sendall(b"POST /login HTTP/1.1\r\n")
+            extra = socket.create_connection((host, port), timeout=5)
+            assert extra.recv(1024) == b""
+            for each in [*held, extra]:
+                each.close()
+
+    def test_a_connection_whose_thread_fails_to_start_frees_its_slot(
+        self, monkeypatch
+    ) -> None:
+        import socketserver
+
+        original = socketserver.ThreadingMixIn.process_request
+        failed: list[bool] = []
+
+        def once(self, request, client_address):
+            if not failed:
+                failed.append(True)
+                raise RuntimeError("no thread")
+            return original(self, request, client_address)
+
+        monkeypatch.setattr(socketserver.ThreadingMixIn, "process_request", once)
+        for host, port in self._serve(monkeypatch, MAX_CONNECTIONS=1):
+            for attempt in range(2):
+                try:
+                    url = f"http://{host}:{port}/login"
+                    with urllib.request.urlopen(url, timeout=5) as reply:
+                        assert json.loads(reply.read()) == {"methods": ["directory"]}
+                except OSError:
+                    assert attempt == 0
+        assert failed == [True]
+
+    @pytest.mark.parametrize("length", ["²", "1" * 13])
+    def test_a_length_that_is_no_plain_count_is_400(
+        self, length: str, monkeypatch
+    ) -> None:
+        import http.client
+
+        for host, port in self._serve(monkeypatch):
+            connection = http.client.HTTPConnection(host, port, timeout=10)
+            connection.putrequest("POST", "/login")
+            connection.putheader("Content-Length", length.encode("utf-8"))
+            connection.endheaders()
+            assert connection.getresponse().status == 400
+            connection.close()

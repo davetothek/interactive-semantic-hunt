@@ -314,3 +314,57 @@ class TestManySignInsAtOnce:
             with pytest.raises(RuntimeError):
                 access.sign_in("directory", USER, PASSWORD)
         assert access._checking == {}
+
+
+class TestTheSizeOfASignIn:
+    @pytest.mark.parametrize(
+        ("user", "password", "error"),
+        [
+            ("r" * 257, PASSWORD, "A user name has at most 256 characters."),
+            (USER, "p" * 1025, "A password has at most 1024 characters."),
+        ],
+    )
+    def test_a_long_name_or_password_asks_the_method_nothing(
+        self, user: str, password: str, error: str, parts
+    ) -> None:
+        with pytest.raises(ValueError, match=error):
+            _access(parts).sign_in("directory", user, password)
+        assert parts[0].asked == []
+
+    def test_a_guess_on_many_names_reaches_the_method_at_most_a_few_at_once(
+        self, parts
+    ) -> None:
+        import threading
+
+        from ish.application.access import MAX_CHECKING
+        from ish.application.ports.authenticator import SignInLimited
+
+        release = threading.Event()
+        arrived = threading.Semaphore(0)
+
+        class Slow:
+            def sign_in(self, user, password):
+                arrived.release()
+                release.wait(5)
+                raise SignInRefused(
+                    "The directory refused the user name or the password."
+                )
+
+        access = Access([], {"directory": Slow()}, parts[1], DAY, parts[2])
+        threads = [
+            threading.Thread(
+                target=lambda n=n: pytest.raises(
+                    SignInRefused, access.sign_in, "directory", f"user{n}", "x"
+                )
+            )
+            for n in range(MAX_CHECKING)
+        ]
+        for thread in threads:
+            thread.start()
+        for _ in range(MAX_CHECKING):
+            assert arrived.acquire(timeout=5)
+        with pytest.raises(SignInLimited, match="checks many sign-ins now"):
+            access.sign_in("directory", "another", "x")
+        release.set()
+        for thread in threads:
+            thread.join(5)

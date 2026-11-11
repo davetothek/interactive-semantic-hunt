@@ -57,3 +57,23 @@ class TestStaticToken:
             (b"wrong-token-EXAMPLE", TOKEN.encode()),
             (TOKEN.encode(), TOKEN.encode()),
         ]
+
+
+class TestAShortToken:
+    def test_a_short_token_warns_and_still_works(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            method = StaticToken("short-EXAMPLE", VARIABLE)
+        assert method.admit("short-EXAMPLE") is not None
+        assert caplog.messages == [
+            f"The token in {VARIABLE} has 13 characters. A token of fewer than 32 "
+            "can be guessed. Make one with: openssl rand -hex 32"
+        ]
+
+    def test_a_long_token_does_not_warn(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            StaticToken("t" * 32, VARIABLE)
+        assert caplog.messages == []

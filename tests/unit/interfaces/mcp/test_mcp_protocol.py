@@ -227,3 +227,16 @@ class TestNoForgedAuditLine:
         with caplog.at_level("INFO", logger="ish.audit"):
             build().handle_line(line, who="reader\nfake")
         assert self._audit(caplog) == ["reader\\x0afake calls echo"]
+
+
+class TestNoForgedLogLine:
+    def test_the_protocol_a_client_asks_for_is_escaped(self, caplog) -> None:
+        with caplog.at_level("INFO", logger="ish"):
+            call(build(), "initialize", {"protocolVersion": "x\nadmin calls delete"})
+        assert "x\\x0aadmin calls delete" in caplog.text
+        assert "x\nadmin" not in caplog.text
+
+    def test_a_notification_is_escaped(self, caplog) -> None:
+        with caplog.at_level("DEBUG", logger="ish"):
+            build().handle({"jsonrpc": "2.0", "method": "a\nforged"})
+        assert "a\\x0aforged" in caplog.text

@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import stat
 import threading
 import time
 from collections.abc import Callable
@@ -21,6 +22,11 @@ log = logging.getLogger(__name__)
 
 # What a reader of the directory may do: nothing. The file is the user's.
 FILE_MODE = 0o600
+DIRECTORY_MODE = 0o700
+
+
+class LoginFileError(OSError):
+    """Report a login file that the server refuses to read or to write."""
 
 
 class LoginFile:
@@ -35,9 +41,15 @@ class LoginFile:
         self._logins: dict[str, Login] = {}
 
     def add(self, login: Login) -> None:
-        """Keep *login*, drop each login that has expired, and write the file."""
+        """Keep *login*, drop each login that has expired, and write the file.
+
+        Raise ``LoginFileError`` when the file cannot be read, so a write
+        never drops the logins that the file holds.
+        """
         with self._lock:
             self._reload()
+            if self._stamp is None and self._path.exists():
+                raise LoginFileError(f"Cannot read {self._path}, so no login is added.")
             now = self._clock()
             current = [old for old in self._logins.values() if old.expires > now]
             current.append(login)
@@ -69,7 +81,7 @@ class LoginFile:
             return
         try:
             self._logins = {} if stamp is None else self._read()
-        except (OSError, UnicodeDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, LoginFileError) as exc:
             log.error(
                 "Cannot read %s, so it admits nobody: %s",
                 self._path,
@@ -81,6 +93,12 @@ class LoginFile:
         self._stamp = stamp
 
     def _read(self) -> dict[str, Login]:
+        status = self._path.stat()
+        if status.st_uid != os.geteuid() or status.st_mode & (
+            stat.S_IWGRP | stat.S_IWOTH
+        ):
+            # Another user who can write the file could add a login.
+            raise LoginFileError(f"Another user can write {self._path}.")
         logins: dict[str, Login] = {}
         text = self._path.read_text(encoding="utf-8")
         for number, line in enumerate(text.splitlines(), 1):
@@ -107,7 +125,7 @@ class LoginFile:
 
     def _write(self, logins: list[Login]) -> None:
         """Write *logins* to a new file, then put it in place in one step."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.parent.mkdir(mode=DIRECTORY_MODE, parents=True, exist_ok=True)
         lines = "".join(
             json.dumps(
                 {

@@ -216,6 +216,12 @@ Without it, the server does not start, and names the extra. Use an
 `ldap://` URL sends each password in plain text: set `ldap_starttls =
 true`, or the server starts with one warning.
 
+A config file in the tree that the server serves cannot set `auth`,
+`login_days`, or an `ldap_*` option, because a person who can commit to
+the tree would choose the directory that gets each password. Set them in
+`~/.config/ish/config.toml` of the user that runs the server, or in
+`ISH_*` variables. The server names a file of the tree that sets one.
+
 A server that signs users in listens on this machine only, such as
 `--http 127.0.0.1:8765`, behind a reverse proxy that holds the
 certificate. ish holds no certificate, so a password that reaches it over
@@ -235,7 +241,7 @@ sends back a login token that lasts `login_days`. Forward `/login` with
 `/mcp` in the reverse proxy.
 
 The server keeps the SHA-256 of each login token, never the token, in
-`logins.jsonl` beside its indexes, one login a line: the hash, the user,
+`~/.local/share/ish/logins.jsonl`, one login a line: the hash, the user,
 the method, and the expiry. A copy of the file opens nothing. To end a
 login, delete its line. The next request with that token gets 401. Each
 tool call writes one line to the log that names the user and the tool,

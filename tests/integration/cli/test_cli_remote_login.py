@@ -68,6 +68,8 @@ def site(tmp_path_factory) -> Iterator[Site]:
         patch.setattr(bootstrap, "build_embedder", lambda s: FakeEmbedder())
         patch.setitem(authenticator.AUTHENTICATORS, "directory", Directory.configured)
         patch.setenv(MCP_TOKEN_ENV_VAR, TOKEN)
+        patch.setenv("XDG_DATA_HOME", str(tmp_path_factory.mktemp("data")))
+        logins = bootstrap.login_file()
         access = bootstrap.build_access(settings)
         tools = server_module.IshTools(settings, tree)
         transport = HttpTransport("127.0.0.1", 0, access.admit, access)
@@ -79,7 +81,7 @@ def site(tmp_path_factory) -> Iterator[Site]:
         host, port = transport.address
         # Build the index now, through the static token.
         tools.search({"query": "watchdog"})
-    yield Site(f"http://{host}:{port}/mcp", index / bootstrap.LOGIN_FILE)
+    yield Site(f"http://{host}:{port}/mcp", logins)
     transport.stop()
     thread.join(5)
     tools.close()

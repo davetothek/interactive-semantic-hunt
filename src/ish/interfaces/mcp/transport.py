@@ -106,6 +106,11 @@ LOGIN_PATH = "/login"
 # one, and reading it would let a client fill the memory of the server.
 MAX_BODY_BYTES = 1_000_000
 
+# The most connections the server serves at once, and how long one may
+# send nothing.
+MAX_CONNECTIONS = 64
+SOCKET_SECONDS = 30
+
 
 class HttpTransport:
     """Carry MCP over Streamable HTTP, behind a bearer token.
@@ -148,7 +153,30 @@ class HttpTransport:
         """Answer requests until ``stop`` is called or the process is interrupted."""
         from http.server import ThreadingHTTPServer
 
+        open_slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
         class _Quiet(ThreadingHTTPServer):
+            # Connections the system holds before the server takes them.
+            request_queue_size = 64
+
+            def process_request(self, request: Any, client_address: Any) -> None:
+                # A client can open connections before any sign-in. Close
+                # the ones over the cap, so they hold no thread.
+                if not open_slots.acquire(blocking=False):
+                    self.shutdown_request(request)
+                    return
+                try:
+                    super().process_request(request, client_address)
+                except BaseException:
+                    open_slots.release()
+                    raise
+
+            def process_request_thread(self, request: Any, client_address: Any) -> None:
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    open_slots.release()
+
             def handle_error(self, request: Any, client_address: Any) -> None:
                 # The default prints the traceback with the text of the
                 # error, and a sign-in method can put a password in it.
@@ -180,6 +208,10 @@ class HttpTransport:
         desk = self._desk
 
         class _Request(BaseHTTPRequestHandler):
+            # A client that sends nothing for this long loses its
+            # connection, so a stalled request holds no thread for ever.
+            timeout = SOCKET_SECONDS
+
             def do_POST(self) -> None:
                 if self.path == LOGIN_PATH and desk is not None:
                     self._sign_in(desk)
@@ -226,7 +258,7 @@ class HttpTransport:
                 read until the client stops, so it is never made.
                 """
                 text = self.headers.get("Content-Length") or "0"
-                if not text.isdigit():
+                if not (text.isascii() and text.isdigit() and len(text) <= 12):
                     self._reply(400)
                     return None
                 length = int(text)

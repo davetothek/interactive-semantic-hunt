@@ -29,6 +29,10 @@ log = logging.getLogger(__name__)
 # tells nobody which user names exist.
 REFUSED = "The directory refused the user name or the password."
 
+# What a client reads when the directory cannot check the password.
+UNREACHABLE = "The directory cannot be reached. Try again later."
+FAILED = "The directory failed. The log of the server says why."
+
 # How long a directory may take to connect and to answer.
 TIMEOUT_SECONDS = 10
 
@@ -70,7 +74,10 @@ class LdapDirectory:
                 "LDAP sign-in needs python-ldap. Install the ldap extra: "
                 "pip install 'interactive-semantic-hunt[ldap]'"
             ) from exc
-        if not hasattr(ldap, "OPT_X_TLS_REQUIRE_CERT"):
+        if not all(
+            hasattr(ldap, name)
+            for name in ("OPT_X_TLS_REQUIRE_CERT", "OPT_X_TLS_NEWCTX")
+        ):
             raise ValueError(
                 "This python-ldap has no TLS, so it cannot check the certificate "
                 "of the directory. Install a python-ldap built with TLS."
@@ -131,13 +138,13 @@ class LdapDirectory:
         except ldap.INVALID_CREDENTIALS:
             raise SignInRefused(REFUSED) from None
         except (ldap.SERVER_DOWN, ldap.TIMEOUT, ldap.CONNECT_ERROR):
-            raise SignInUnavailable(
-                f"The directory at {self._host} cannot be reached."
-            ) from None
+            # A client may not be signed in yet, so its text names no
+            # host of the network. The log of the server does.
+            log.error("The directory at %s cannot be reached.", self._host)
+            raise SignInUnavailable(UNREACHABLE) from None
         except ldap.LDAPError as exc:
-            raise SignInUnavailable(
-                f"The directory at {self._host} failed: {_description(exc)}"
-            ) from None
+            log.error("The directory at %s failed: %s", self._host, _description(exc))
+            raise SignInUnavailable(FAILED) from None
         finally:
             if connection is not None:
                 _unbind(connection)

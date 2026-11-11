@@ -88,6 +88,11 @@ def open_without_redirects(request: Any, timeout: float) -> Any:
     must reach only the address the user gave, so a redirect comes back
     as an ``HTTPError`` with its status. The default handler of https
     checks the certificate of the server.
+
+    A plain http request goes to no proxy. A proxy of the environment
+    would read the token or the password in the clear, and a password
+    goes over plain http only to this machine. An https request may use
+    a proxy, which then carries the TLS of the server unread.
     """
     import urllib.request
 
@@ -95,4 +100,7 @@ def open_without_redirects(request: Any, timeout: float) -> Any:
         def redirect_request(self, req, fp, code, msg, headers, newurl):
             return None
 
-    return urllib.request.build_opener(_Stay).open(request, timeout=timeout)
+    handlers: list[Any] = [_Stay]
+    if request.type == "http":
+        handlers.append(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers).open(request, timeout=timeout)

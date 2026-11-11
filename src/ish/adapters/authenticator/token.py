@@ -1,8 +1,14 @@
 """Admit the one static token that the operator gives to every client."""
 
+import logging
 from collections.abc import Mapping
 
 from ish.application.ports.authenticator import Identity
+
+log = logging.getLogger(__name__)
+
+# A token shorter than this can be guessed by a client that tries many.
+MIN_CHARS = 32
 
 # The user a static token stands for. It names no person, because every
 # client that holds the token sends the same one.
@@ -22,6 +28,14 @@ class StaticToken:
             raise ValueError(
                 f"Set {variable} before serving MCP over HTTP. "
                 "Every request must carry it as a bearer token."
+            )
+        if len(token) < MIN_CHARS:
+            log.warning(
+                "The token in %s has %d characters. A token of fewer than %d "
+                "can be guessed. Make one with: openssl rand -hex 32",
+                variable,
+                len(token),
+                MIN_CHARS,
             )
         self._token = token.encode()
 

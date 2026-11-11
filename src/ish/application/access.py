@@ -36,6 +36,16 @@ WINDOW_SECONDS = 15 * 60
 # How often the record of failures drops what is older than the window.
 PRUNE_SECONDS = 60
 
+# The most sign-ins the method checks at once, for every user name
+# together. A guesser who tries one password on many names reaches the
+# directory no faster than this.
+MAX_CHECKING = 8
+
+# The longest user name and password a sign-in takes. A longer one would
+# be kept in the record of failures for the whole window.
+MAX_USER_CHARS = 256
+MAX_PASSWORD_CHARS = 1024
+
 
 @dataclass(frozen=True, slots=True)
 class Granted:
@@ -120,6 +130,10 @@ class Access:
             raise ValueError("Give a user name.")
         if not password:
             raise ValueError("Give a password.")
+        if len(user) > MAX_USER_CHARS:
+            raise ValueError(f"A user name has at most {MAX_USER_CHARS} characters.")
+        if len(password) > MAX_PASSWORD_CHARS:
+            raise ValueError(f"A password has at most {MAX_PASSWORD_CHARS} characters.")
         key = user.strip().lower()
         now = self._clock()
         self._start(key, user.strip(), now)
@@ -154,6 +168,8 @@ class Access:
                     f"Too many failed sign-ins for {user}. "
                     f"Try again in {minutes} minutes."
                 )
+            if sum(self._checking.values()) >= MAX_CHECKING:
+                raise SignInLimited("The server checks many sign-ins now. Try again.")
             failures = self._failures.get(key, [])
             recent = [t for t in failures if now - t < WINDOW_SECONDS]
             if len(recent) + self._checking.get(key, 0) >= MAX_FAILURES:

@@ -1622,9 +1622,10 @@ class TestBuildAccess:
         assert access.methods() == ["directory"]
         granted = access.sign_in("directory", "reader", "hunter2-EXAMPLE")
         assert access.admit(granted.token) == Identity("reader", "directory")
-        # The server keeps the logins beside its indexes.
-        assert (tmp_path / bootstrap.LOGIN_FILE).is_file()
-        assert granted.token not in (tmp_path / bootstrap.LOGIN_FILE).read_text()
+        # The server keeps the logins in the data directory, not in cache_dir.
+        assert not (tmp_path / bootstrap.LOGIN_FILE).exists()
+        assert bootstrap.login_file().is_file()
+        assert granted.token not in bootstrap.login_file().read_text()
 
 
 class TestTheTokenOfAServer:
