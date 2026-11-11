@@ -167,6 +167,16 @@ class TestAsk:
         assert about.strip() == "doc · Watchdog"
         assert where.strip() == "docs/"
 
+    def test_a_server_with_no_model_and_no_api_key_serves_the_answer(
+        self, served: Served, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        assert "ask" not in served.tool_names()
+        _model(monkeypatch, FakeModel())
+        assert run(["remote", "ask", QUESTION]) == 0
+        assert [name for name, _ in served.calls] == ["sources"]
+        assert ANSWER in capsys.readouterr().out
+
     def test_stderr_ends_with_the_table_and_names_the_server(
         self, served: Served, monkeypatch, capsys
     ) -> None:

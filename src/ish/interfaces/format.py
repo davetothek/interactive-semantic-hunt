@@ -231,8 +231,8 @@ _STAGES = (
 def answer_usage(answer: Answer) -> dict[str, object]:
     """Return what an answer cost, as the data a server replies with.
 
-    The keys are the ones the ``ask`` tool sends, so a client renders a
-    local answer and a remote one through ``format_usage`` alike.
+    The keys are the ones the ``ask`` tool sends, and the ones
+    ``format_usage`` reads.
     """
     return {
         "model": answer.model,
@@ -248,16 +248,12 @@ def answer_usage(answer: Answer) -> dict[str, object]:
     }
 
 
-def format_usage(
-    usage: Mapping[str, object], total: float | None = None, versions: str = ""
-) -> str:
+def format_usage(usage: Mapping[str, object], versions: str = "") -> str:
     """Return a table of where the seconds and tokens of an answer went.
 
     Give one row to each stage that ran: its time, and for the rerank and
-    the answer the model and its tokens. End with the total. With *total*,
-    the seconds a client waited, say how much of it the server spent, so
-    the rest is the network and the queue. A server too old to send
-    timings gets its rows with the tokens alone. Close with *versions*,
+    the answer the model and its tokens. End with the total. A stage with
+    a model and no time gets its tokens alone. Close with *versions*,
     after a blank line, when it is given.
     """
     timings = usage.get("timings")
@@ -269,22 +265,14 @@ def format_usage(
             spent = f"{_seconds(timings[stage]):.1f} s" if stage in timings else ""
             rows.append([label, spent, model, read, wrote])
     seconds = usage.get("seconds")
-    known = isinstance(seconds, (int, float))
-    if total is not None:
-        server = f"{_seconds(seconds):.1f} s on the server" if known else ""
-        rows.append(["total", f"{total:.1f} s", server, "", ""])
-    elif known:
+    if isinstance(seconds, (int, float)):
         rows.append(["total", f"{_seconds(seconds):.1f} s", "", "", ""])
     tokens = any(row[3] or row[4] for row in rows)
     header = ["stage", "time", "model" if any(r[2] for r in rows) else "", "", ""]
     if tokens:
         header[3:] = ["in", "out"]
     table = [header, *rows]
-    # The note in the total row overhangs the model column. It is the
-    # last row, so nothing to its right needs the room.
-    sized = table[:-1] if total is not None else table
     widths = [max(len(row[n]) for row in table) for n in range(5)]
-    widths[2] = max(len(row[2]) for row in sized)
     lines = [_aligned(row, widths) for row in table]
     if versions:
         lines += ["", versions]

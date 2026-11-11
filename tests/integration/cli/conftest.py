@@ -28,6 +28,14 @@ class Served:
         """Drop the calls of the tests before this one."""
         del self._running.calls[:]
 
+    def tool_names(self) -> list[str]:
+        """Return the name of each tool the server lists."""
+        _status, reply = self._running.post(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        )
+        assert reply is not None
+        return [tool["name"] for tool in reply["result"]["tools"]]
+
     @property
     def calls(self) -> list[tuple[str, dict]]:
         """Return each tool call as its name and its arguments."""
@@ -47,6 +55,7 @@ def running_server(tmp_path_factory) -> Iterator[Served]:
     docs.mkdir()
     (docs / "boot.md").write_text("# Watchdog\n\nThe watchdog resets the board.\n")
     (docs / "other.md").write_text("# Colors\n\nThe sky is blue.\n")
+    # No language model and no API key: the server answers no question.
     settings = replace(
         Settings(),
         no_cache=True,

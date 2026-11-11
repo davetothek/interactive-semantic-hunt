@@ -51,6 +51,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - `--remote URL` on a line with no command. It prints one warning that
   names `ish remote`. Use `ish remote` with `--url URL`.
 
+### Removed
+
+- The `ask` tool of `ish mcp --http`. A server over HTTP answers no
+  question and builds no language model, so it needs no model and no API
+  key. A client of an older release that calls `ask` gets "Unknown tool:
+  ask". Use `ish remote ask`, which answers with the model of the machine
+  that asks. A stdio server keeps its `ask`.
+
 ## 0.9.4 - 2026-11-10
 
 ### Added

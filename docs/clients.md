@@ -160,7 +160,7 @@ call can shrink an index that another call depends on.
 ## Serve over HTTP
 
 `ish-mcp` serves stdio to the client that starts it. For clients on other
-machines, serve the same tools over MCP Streamable HTTP instead:
+machines, serve the tools over MCP Streamable HTTP instead:
 
 ```sh
 export ISH_MCP_TOKEN="$(openssl rand -hex 32)"
@@ -171,11 +171,14 @@ Every request goes to `/mcp` and carries the token as
 `Authorization: Bearer <token>`. A request without it, or with a wrong one,
 gets 401 and runs nothing. The server refuses to start without a token. A
 bare port, such as `--http 8765`, listens on `127.0.0.1` only. Each request
-runs on its own thread, so a slow answer for one client does not hold up
+runs on its own thread, so a slow search for one client does not hold up
 another. Run it in the tree it serves, beside an `ish-serve` that keeps the
 index current.
 
-A server over HTTP offers one more tool, `sources`. It takes a `query`, and
+A server over HTTP offers `sources` in place of `ask`. It answers no
+question and builds no language model, so it needs no model and no API
+key. A client of an older release that calls `ask` gets "Unknown tool:
+ask". `sources` takes a `query`, and
 `path`, `limit`, `lang`, `under`, and `type` as `search_code` does. It
 returns JSON: `sources` holds the ranked chunks, each with its path,
 location, link, and text, and `terms` holds the meaning of each acronym the

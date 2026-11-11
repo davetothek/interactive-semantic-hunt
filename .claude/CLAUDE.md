@@ -45,7 +45,8 @@ behind a bearer token, and a REST API stays out by decision.
 
 `ish --ask` and the `ask` MCP tool answer a question from the chunks a
 search finds, with citations. A language model writes the answer, and
-only a backend that `allowed_language_models` names is ever built.
+only a backend that `allowed_language_models` names is ever built. Only
+the stdio server offers `ask`. A server over HTTP builds no model.
 
 `ish remote` searches the tree of an `ish-mcp --http` server, through
 the `RemoteIsh` session. For a question, the server returns chunks with

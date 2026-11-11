@@ -211,6 +211,30 @@ class TestEntryPoint:
         monkeypatch.setattr(HttpTransport, "serve", serve)
         assert server_module.main(["--http", "127.0.0.1:8765"]) == 0
         assert "sources" in offered
+        assert "ask" not in offered
+
+    def test_a_server_with_no_model_and_no_api_key_starts(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from ish import bootstrap
+
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("a server over HTTP must not build a model")
+
+        offered: list[str] = []
+
+        def serve(self, server) -> None:
+            reply = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            offered.extend(tool["name"] for tool in reply["result"]["tools"])
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv(TOKEN_VARIABLE, TOKEN)
+        monkeypatch.setattr(bootstrap, "build_language_model", refuse)
+        monkeypatch.setattr(bootstrap, "build_reranker", refuse)
+        monkeypatch.setattr(HttpTransport, "serve", serve)
+        assert server_module.main(["--http", "127.0.0.1:8765"]) == 0
+        assert "sources" in offered
 
     @pytest.mark.parametrize(
         ("text", "address"),
@@ -288,3 +312,39 @@ class TestSourcesOverHttp:
         }
         assert served.post(message, token=None) == (401, None)
         assert served.calls == []
+
+
+class TestNoAskOverHttp:
+    """A server over HTTP answers no question. Its clients answer."""
+
+    def test_an_old_client_that_asks_hears_the_tool_does_not_exist(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from dataclasses import replace
+
+        from ish import bootstrap
+        from ish.settings import Settings
+
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("a server over HTTP must not build a model")
+
+        monkeypatch.setattr(bootstrap, "build_language_model", refuse)
+        monkeypatch.setattr(bootstrap, "build_reranker", refuse)
+        settings = replace(Settings(), no_cache=True, git=False)
+        tools = server_module.IshTools(settings, tmp_path)
+        made = Running(tools.tools(over_http=True))
+        message = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "ask", "arguments": {"question": "why"}},
+        }
+        try:
+            status, reply = made.post(message)
+        finally:
+            made.close()
+            tools.close()
+        assert status == 200
+        assert reply is not None
+        assert reply["result"]["isError"] is True
+        assert reply["result"]["content"][0]["text"] == "Unknown tool: ask"

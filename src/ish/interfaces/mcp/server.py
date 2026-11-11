@@ -516,8 +516,10 @@ class IshTools:
     def tools(self, over_http: bool = False) -> list[Tool]:
         """Describe every tool this server offers.
 
-        With *over_http*, offer the sources tool as well. Only a client
-        on another machine needs the text of a chunk from the server.
+        With *over_http*, offer the sources tool in place of ``ask``. A
+        client on another machine reads the text of the chunks and
+        answers with a model of its own. A server over HTTP sends text
+        to each client it admits, so it builds no model for them.
         """
         offered = [
             Tool(
@@ -665,6 +667,7 @@ class IshTools:
             ),
         ]
         if over_http:
+            offered = [tool for tool in offered if tool.name != "ask"]
             offered.append(
                 Tool(
                     name="sources",

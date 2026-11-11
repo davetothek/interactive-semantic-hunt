@@ -551,24 +551,14 @@ class TestFormatUsage:
             ]
         )
 
-    def test_a_remote_answer_says_what_the_server_spent(self) -> None:
+    def test_a_stage_with_a_model_and_no_time_shows_its_tokens(self) -> None:
         from ish.interfaces.format import format_usage
 
-        lines = format_usage(USAGE, 36.04).splitlines()
-        assert lines[-1] == "total   36.0 s  34.6 s on the server"
-        # The note overhangs the model column, so the tokens stay where
-        # they are.
-        assert lines[3] == "rerank   5.1 s  claude-haiku-5-5    9,448     60"
-
-    def test_a_server_too_old_for_timings_shows_its_tokens(self) -> None:
-        from ish.interfaces.format import format_usage
-
-        old = {k: v for k, v in USAGE.items() if k not in ("timings", "seconds")}
-        assert format_usage(old, 30.0).splitlines() == [
-            "stage     time  model                  in    out",
-            "rerank          claude-haiku-5-5    9,448     60",
-            "answer          claude-sonnet-5-5  24,422  1,642",
-            "total   30.0 s",
+        untimed = {k: v for k, v in USAGE.items() if k not in ("timings", "seconds")}
+        assert format_usage(untimed).splitlines() == [
+            "stage   time  model                  in    out",
+            "rerank        claude-haiku-5-5    9,448     60",
+            "answer        claude-sonnet-5-5  24,422  1,642",
         ]
 
     def test_follow_up_searches_and_turns_are_counted(self) -> None:

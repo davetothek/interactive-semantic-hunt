@@ -1125,10 +1125,13 @@ class TestSources:
         assert self._sources(tools, query="config")["sources"]
 
     def test_only_a_server_over_http_offers_the_tool(self, tools: IshTools) -> None:
-        assert "sources" not in [t.name for t in tools.tools()]
-        offered = tools.tools(over_http=True)
-        assert [t.name for t in offered][-1] == "sources"
-        assert [t.name for t in offered][:-1] == [t.name for t in tools.tools()]
+        local = [t.name for t in tools.tools()]
+        assert "sources" not in local
+        offered = [t.name for t in tools.tools(over_http=True)]
+        assert offered == [name for name in local if name != "ask"] + ["sources"]
+
+    def test_the_server_on_stdio_keeps_its_ask(self, tools: IshTools) -> None:
+        assert "ask" in [t.name for t in tools.tools()]
 
     def test_the_tool_says_what_it_accepts(self, tools: IshTools) -> None:
         from ish.interfaces.mcp.server import MAX_SOURCES
