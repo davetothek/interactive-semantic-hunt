@@ -181,16 +181,16 @@ class TestPasswordSafety:
     def test_the_password_goes_in_the_body_and_never_in_a_url(
         self, client: Site, monkeypatch
     ) -> None:
-        import urllib.request
+        from ish.adapters.login import http as login_http
 
         sent: list = []
-        original = urllib.request.urlopen
+        original = login_http.open_without_redirects
 
-        def record(request, **kwargs):
+        def record(request, timeout):
             sent.append(request)
-            return original(request, **kwargs)
+            return original(request, timeout)
 
-        monkeypatch.setattr(urllib.request, "urlopen", record)
+        monkeypatch.setattr(login_http, "open_without_redirects", record)
         assert _login() == 0
         (post,) = [r for r in sent if r.get_method() == "POST"]
         assert json.loads(post.data)["password"] == PASSWORD
@@ -226,8 +226,18 @@ class TestPasswordSafety:
         assert "Bearer" not in everything
 
     def test_no_password_is_stored(self, client: Site, tmp_path) -> None:
+        import os
+
         assert _login() == 0
         stored = [client.index, bootstrap.token_file().parent, tmp_path]
+        # Every directory where ish keeps a file, on either side.
+        for variable in (
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_RUNTIME_DIR",
+        ):
+            stored.append(Path(os.environ[variable]))
         for root in stored:
             for path in root.rglob("*"):
                 if path.is_file():

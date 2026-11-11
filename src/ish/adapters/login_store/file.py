@@ -8,6 +8,7 @@ so the next request with that token is refused.
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -58,12 +59,26 @@ class LoginFile:
         return (status.st_ino, status.st_mtime_ns, status.st_size)
 
     def _reload(self) -> None:
-        """Read the file again when it changed since the last read."""
+        """Read the file again when it changed since the last read.
+
+        A file that cannot be read admits nobody, and is read again at
+        the next request. The logins read before it never stand in for it.
+        """
         stamp = self._stamp_of()
         if stamp == self._stamp:
             return
+        try:
+            self._logins = {} if stamp is None else self._read()
+        except (OSError, UnicodeDecodeError) as exc:
+            log.error(
+                "Cannot read %s, so it admits nobody: %s",
+                self._path,
+                type(exc).__name__,
+            )
+            self._logins = {}
+            self._stamp = None
+            return
         self._stamp = stamp
-        self._logins = {} if stamp is None else self._read()
 
     def _read(self) -> dict[str, Login]:
         logins: dict[str, Login] = {}
@@ -79,6 +94,8 @@ class LoginFile:
                     str(entry["method"]),
                     float(entry["expires"]),
                 )
+                if not math.isfinite(login.expires):
+                    raise ValueError("a login expires at a moment in time")
             except (ValueError, KeyError, TypeError):
                 # A line that the operator broke admits nobody.
                 log.warning(

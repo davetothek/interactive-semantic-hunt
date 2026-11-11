@@ -340,6 +340,18 @@ class TestLogin:
         assert asked == ["User name at docs.example.invalid: "]
         assert server.signed == [("directory", "reader", PASSWORD)]
 
+    def test_an_empty_user_name_stops_before_the_password(
+        self, server: FakeLogin, monkeypatch, caplog
+    ) -> None:
+        def refuse(prompt):
+            raise AssertionError("the password was asked for")
+
+        monkeypatch.setattr("getpass.getpass", refuse)
+        self._answers(monkeypatch, "  ")
+        assert run(["remote", "login"]) == 1
+        assert _errors(caplog) == ["Give a user name."]
+        assert server.signed == []
+
     def test_the_password_prompt_names_the_user_and_the_server(
         self, server: FakeLogin, monkeypatch
     ) -> None:

@@ -14,6 +14,7 @@ from importlib.metadata import version
 from typing import Any
 from urllib.parse import urlsplit
 
+from ish.adapters._http import REDIRECTS, open_without_redirects
 from ish.application.ports.chunk_source import ChunkSourceError
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -131,9 +132,15 @@ class RemoteClient:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            with open_without_redirects(request, self._timeout) as response:
                 body = response.read()
         except urllib.error.HTTPError as exc:
+            if exc.code in REDIRECTS:
+                raise ChunkSourceError(
+                    f"{self._url} answered with a redirect. ish follows no "
+                    "redirect, so the token goes to no other address. Give the "
+                    "URL the server answers on."
+                ) from exc
             if exc.code == 401 and self._login:
                 raise ChunkSourceError(
                     f"{self._url} refused your login. Run: ish remote login"

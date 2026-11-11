@@ -79,6 +79,24 @@ class TestSignIn:
         assert directory.options[ldap.OPT_TIMEOUT] == 10
         assert directory.options[ldap.OPT_REFERRALS] == 0
 
+    def test_the_certificate_rule_is_set_before_the_new_tls_context(
+        self, directory: Directory
+    ) -> None:
+        # python-ldap applies a TLS option to the context it makes next.
+        _method().sign_in("reader", PASSWORD)
+        ldap = sys.modules["ldap"]
+        order = list(directory.options)
+        assert order.index(ldap.OPT_X_TLS_REQUIRE_CERT) < order.index(
+            ldap.OPT_X_TLS_NEWCTX
+        )
+
+    def test_a_python_ldap_with_no_tls_is_refused(
+        self, directory: Directory, monkeypatch
+    ) -> None:
+        monkeypatch.delattr(sys.modules["ldap"], "OPT_X_TLS_REQUIRE_CERT")
+        with pytest.raises(ValueError, match="This python-ldap has no TLS"):
+            _method()
+
     def test_starttls_runs_before_the_bind(self, directory: Directory) -> None:
         _method(url="ldap://ldap.example.invalid", starttls=True).sign_in(
             "reader", PASSWORD
@@ -100,14 +118,25 @@ class TestGroup:
         directory.groups[GROUP] = {"reader"}
         assert _method(group=GROUP).sign_in("reader", PASSWORD).user == "reader"
 
-    def test_a_user_outside_the_group_gets_no_token(self, directory: Directory) -> None:
+    def test_a_user_outside_the_group_gets_the_text_of_a_wrong_password(
+        self, directory: Directory, caplog
+    ) -> None:
+        # A different text would tell a guesser that the password was right.
         directory.groups[GROUP] = {"uid=other,ou=people,dc=example,dc=invalid"}
-        with pytest.raises(SignInRefused) as refused:
-            _method(group=GROUP).sign_in("reader", PASSWORD)
-        assert str(refused.value) == (
-            "The directory accepted the password, but reader is not in the group "
-            "of this server."
-        )
+        with caplog.at_level(logging.INFO, logger="ish"):
+            with pytest.raises(SignInRefused) as refused:
+                _method(group=GROUP).sign_in("reader", PASSWORD)
+        assert str(refused.value) == REFUSED
+        assert "reader is not in the group of this server." in caplog.text
+
+    def test_the_group_search_escapes_the_user_name(self, directory: Directory) -> None:
+        directory.users["uid=r*(x),ou=people,dc=example,dc=invalid"] = PASSWORD
+        directory.groups[GROUP] = set()
+        with pytest.raises(SignInRefused):
+            _method(group=GROUP).sign_in("r*(x)", PASSWORD)
+        ((_base, _scope, query),) = directory.searches
+        assert r"(memberUid=r\2a\28x\29)" in query
+        assert "(memberUid=r*(x))" not in query
 
 
 class TestFailure:

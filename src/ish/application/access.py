@@ -33,6 +33,9 @@ TOKEN_BYTES = 32
 MAX_FAILURES = 5
 WINDOW_SECONDS = 15 * 60
 
+# How often the record of failures drops what is older than the window.
+PRUNE_SECONDS = 60
+
 
 @dataclass(frozen=True, slots=True)
 class Granted:
@@ -71,6 +74,10 @@ class Access:
         # The recent failures of each user name, and when each limit ends.
         self._failures: dict[str, list[float]] = {}
         self._limited: dict[str, float] = {}
+        # Sign-ins of each user name that the method still checks. Each
+        # one counts against the limit, so parallel guesses do not pass it.
+        self._checking: dict[str, int] = {}
+        self._pruned = 0.0
         self._lock = threading.Lock()
 
     def admit(self, bearer: str) -> Identity | None:
@@ -115,14 +122,16 @@ class Access:
             raise ValueError("Give a password.")
         key = user.strip().lower()
         now = self._clock()
-        self._check_limit(key, user.strip(), now)
+        self._start(key, user.strip(), now)
         try:
             identity = self._sign_ins[method].sign_in(user, password)
         except SignInRefused:
-            self._fail(key, now)
+            self._end(key, now, failed=True)
             raise
-        with self._lock:
-            self._failures.pop(key, None)
+        except BaseException:
+            self._end(key, now, failed=False)
+            raise
+        self._end(key, now, failed=False, cleared=True)
         token = secrets.token_urlsafe(TOKEN_BYTES)
         expires = self._clock() + self._lifetime
         self._logins.add(
@@ -130,26 +139,45 @@ class Access:
         )
         return Granted(token, identity.user, expires)
 
-    def _check_limit(self, key: str, user: str, now: float) -> None:
+    def _start(self, key: str, user: str, now: float) -> None:
+        """Count a sign-in of *key* in flight, or raise ``SignInLimited``.
+
+        A sign-in in flight counts as a failure until it ends, so many
+        guesses sent at once reach the method no more often than one at
+        a time would.
+        """
         with self._lock:
             ends = self._limited.get(key, 0.0)
-        if ends > now:
-            minutes = math.ceil((ends - now) / 60)
-            raise SignInLimited(
-                f"Too many failed sign-ins for {user}. Try again in {minutes} minutes."
-            )
+            if ends > now:
+                minutes = math.ceil((ends - now) / 60)
+                raise SignInLimited(
+                    f"Too many failed sign-ins for {user}. "
+                    f"Try again in {minutes} minutes."
+                )
+            failures = self._failures.get(key, [])
+            recent = [t for t in failures if now - t < WINDOW_SECONDS]
+            if len(recent) + self._checking.get(key, 0) >= MAX_FAILURES:
+                raise SignInLimited(
+                    f"Too many sign-ins for {user} at once. Try again in a minute."
+                )
+            self._checking[key] = self._checking.get(key, 0) + 1
 
-    def _fail(self, key: str, now: float) -> None:
-        """Count a failure of *key*, and start its limit at the last one allowed."""
+    def _end(
+        self, key: str, now: float, *, failed: bool, cleared: bool = False
+    ) -> None:
+        """End a sign-in of *key*, and count it when it *failed*."""
         with self._lock:
-            # Forget what is older than the window, so a flood of user
-            # names holds no memory for long.
-            for name in [
-                n for n, t in self._failures.items() if now - t[-1] >= WINDOW_SECONDS
-            ]:
-                del self._failures[name]
-            for name in [n for n, ends in self._limited.items() if ends <= now]:
-                del self._limited[name]
+            left = self._checking.get(key, 1) - 1
+            if left:
+                self._checking[key] = left
+            else:
+                self._checking.pop(key, None)
+            if cleared:
+                self._failures.pop(key, None)
+            if not failed:
+                return
+            if now - self._pruned >= PRUNE_SECONDS:
+                self._prune(now)
             recent = [
                 t for t in self._failures.get(key, []) if now - t < WINDOW_SECONDS
             ]
@@ -159,3 +187,13 @@ class Access:
                 self._failures.pop(key, None)
             else:
                 self._failures[key] = recent
+
+    def _prune(self, now: float) -> None:
+        """Forget the failures and the limits that the window has passed."""
+        self._pruned = now
+        for name in [
+            n for n, t in self._failures.items() if now - t[-1] >= WINDOW_SECONDS
+        ]:
+            del self._failures[name]
+        for name in [n for n, ends in self._limited.items() if ends <= now]:
+            del self._limited[name]

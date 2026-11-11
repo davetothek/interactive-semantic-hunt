@@ -11,7 +11,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
-from ish.interfaces.mcp.transport import StdioTransport, Transport
+from ish.interfaces.mcp.transport import StdioTransport, Transport, printable
 
 log = logging.getLogger(__name__)
 
@@ -149,9 +149,12 @@ class Server:
         called which tool to the audit log, and never the arguments.
         """
         name = params.get("name")
-        if who:
-            audit.info("%s calls %s", who, name)
         tool = self._tools.get(str(name))
+        if who:
+            # Name only a tool the server has. A name the client made up
+            # could hold a line break that forges a line of the log.
+            called = name if tool is not None else "an unknown tool"
+            audit.info("%s calls %s", printable(who), called)
         if tool is None:
             return _tool_error(f"Unknown tool: {name}")
 

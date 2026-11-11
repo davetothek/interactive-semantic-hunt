@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import logging
 import os
 
 import pytest
@@ -15,6 +16,9 @@ def configured_logging():
     from ish.interfaces.log import setup_logging
 
     setup_logging(verbosity=0, color=False)
+    # A server over HTTP raises the audit logger for the process. Reset it,
+    # so a test after one that started a server sees no audit line.
+    logging.getLogger("ish.audit").setLevel(logging.NOTSET)
 
 
 @pytest.fixture(autouse=True)

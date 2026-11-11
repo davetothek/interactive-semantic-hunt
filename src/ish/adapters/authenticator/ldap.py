@@ -60,12 +60,24 @@ class LdapDirectory:
             )
         try:
             import ldap
+
+            # `import ldap` loads `ldap.dn` and not `ldap.filter`, so import
+            # each function from its own module.
+            from ldap.dn import escape_dn_chars
+            from ldap.filter import escape_filter_chars
         except ModuleNotFoundError as exc:
             raise ValueError(
                 "LDAP sign-in needs python-ldap. Install the ldap extra: "
                 "pip install 'interactive-semantic-hunt[ldap]'"
             ) from exc
+        if not hasattr(ldap, "OPT_X_TLS_REQUIRE_CERT"):
+            raise ValueError(
+                "This python-ldap has no TLS, so it cannot check the certificate "
+                "of the directory. Install a python-ldap built with TLS."
+            )
         self._ldap: Any = ldap
+        self._escape_dn: Any = escape_dn_chars
+        self._escape_filter: Any = escape_filter_chars
         self._url = url
         self._host = parts.netloc
         self._user_dn = user_dn
@@ -99,7 +111,7 @@ class LdapDirectory:
         if not name or not password:
             raise SignInRefused(REFUSED)
         ldap = self._ldap
-        dn = self._user_dn.replace(USER_MARK, ldap.dn.escape_dn_chars(name))
+        dn = self._user_dn.replace(USER_MARK, self._escape_dn(name))
         connection = None
         try:
             connection = ldap.initialize(self._url)
@@ -112,10 +124,10 @@ class LdapDirectory:
                 connection.start_tls_s()
             connection.simple_bind_s(dn, password)
             if self._group and not self._member(connection, dn, name):
-                raise SignInRefused(
-                    f"The directory accepted the password, but {name} is not in "
-                    "the group of this server."
-                )
+                # The same text as a wrong password, so a refusal does not
+                # tell a guesser that the password was right.
+                log.info("%s is not in the group of this server.", printable(name))
+                raise SignInRefused(REFUSED)
         except ldap.INVALID_CREDENTIALS:
             raise SignInRefused(REFUSED) from None
         except (ldap.SERVER_DOWN, ldap.TIMEOUT, ldap.CONNECT_ERROR):
@@ -133,13 +145,18 @@ class LdapDirectory:
 
     def _member(self, connection: Any, dn: str, name: str) -> bool:
         """Return True when the group holds the user, by name or by uid."""
-        escape = self._ldap.filter.escape_filter_chars
+        escape = self._escape_filter
         query = (
             f"(|(member={escape(dn)})(uniqueMember={escape(dn)})"
             f"(memberUid={escape(name)}))"
         )
         found = connection.search_s(self._group, self._ldap.SCOPE_BASE, query, ["1.1"])
         return bool(found)
+
+
+def printable(text: str) -> str:
+    """Return *text* with each character that is not printable escaped."""
+    return "".join(c if c.isprintable() else f"\\x{ord(c):02x}" for c in text)
 
 
 def _description(exc: Exception) -> str:

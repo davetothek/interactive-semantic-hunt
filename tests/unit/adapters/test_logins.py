@@ -85,3 +85,24 @@ class TestTokenFile:
         tokens = TokenFile(tmp_path / "logins.json")
         tokens.put(URL, SAVED)
         assert tokens.get(URL) == SAVED
+
+
+class TestOneServerOneKey:
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "https://docs.example.invalid/mcp/",
+            "HTTPS://Docs.Example.Invalid/mcp",
+            "https://DOCS.example.invalid/mcp//",
+        ],
+    )
+    def test_each_spelling_finds_the_token(self, spelling: str, tmp_path) -> None:
+        tokens = TokenFile(tmp_path / "logins.json")
+        tokens.put(URL, SAVED)
+        assert tokens.get(spelling) == SAVED
+        assert tokens.remove(spelling) is True
+
+    def test_another_path_is_another_server(self, tmp_path) -> None:
+        tokens = TokenFile(tmp_path / "logins.json")
+        tokens.put(URL, SAVED)
+        assert tokens.get("https://docs.example.invalid/other/mcp") is None

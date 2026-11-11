@@ -194,3 +194,36 @@ class TestAudit:
         with caplog.at_level("INFO", logger="ish.audit"):
             call(build(), "tools/call", {"name": "echo", "arguments": {"x": "a"}})
         assert self._audit(caplog) == []
+
+
+class TestNoForgedAuditLine:
+    """A name a client sends cannot write a line of the audit log."""
+
+    def _audit(self, caplog) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.name == "ish.audit"]
+
+    def test_an_unknown_tool_is_not_named(self, caplog) -> None:
+        line = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "evil\nINJECT [INF] fake", "arguments": {}},
+            }
+        )
+        with caplog.at_level("INFO", logger="ish.audit"):
+            build().handle_line(line, who="reader")
+        assert self._audit(caplog) == ["reader calls an unknown tool"]
+
+    def test_a_user_name_with_a_line_break_is_escaped(self, caplog) -> None:
+        line = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "echo", "arguments": {}},
+            }
+        )
+        with caplog.at_level("INFO", logger="ish.audit"):
+            build().handle_line(line, who="reader\nfake")
+        assert self._audit(caplog) == ["reader\\x0afake calls echo"]

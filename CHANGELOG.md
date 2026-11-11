@@ -41,14 +41,21 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   of `ish remote` sends it when `ISH_MCP_TOKEN` is not set. A password goes
   only over https, or to a server on this machine.
 - `ldap` in `auth` signs users in against an LDAP directory, with
-  `ldap_url`, `ldap_user_dn`, `ldap_group`, and `ldap_starttls`. It needs
+  `ldap_url`, `ldap_user_dn`, and `ldap_starttls`. With `ldap_group`, only
+  a member of that group gets a login token. A directory has 10 s to
+  answer. It needs
   the `ldap` extra, which installs python-ldap. The user name is escaped
   before it reaches the directory, and an empty password never binds. A
   plain `ldap://` URL with no StartTLS starts with one warning.
 - A server that signs users in listens on this machine only, behind a
   reverse proxy that holds the certificate, and refuses to start on
   another address. Five failed sign-ins for one user name in 15 minutes
-  stop more attempts for 15 minutes, and the directory is not asked.
+  stop more attempts for 15 minutes, and the directory is not asked. A
+  sign-in still in flight counts, so guesses sent at once do not pass the
+  limit. The server answers 429 while it holds.
+- A command that sends a token or a password follows no redirect, so the
+  token goes only to the address you gave. A server error names the type
+  of the error in its log, and never its text.
 - A server keeps the SHA-256 of each login token, never the token, in
   `logins.jsonl` beside its indexes. The operator ends a login by deleting
   its line. Each tool call writes one line that names the user and the

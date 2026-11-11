@@ -11,6 +11,7 @@ import ipaddress
 import json
 from urllib.parse import urlsplit, urlunsplit
 
+from ish.adapters._http import REDIRECTS, open_without_redirects
 from ish.adapters._logins import Saved, TokenFile, TokenFileError
 from ish.application.ports.login import LoginError, SignedIn
 
@@ -32,11 +33,13 @@ def login_url(url: str) -> str:
         raise LoginError(
             "The URL of the server is not an http or https URL with no user name."
         )
-    if not parts.path.endswith(MCP_PATH):
+    path = parts.path.rstrip("/")
+    if not path.endswith(MCP_PATH):
+        given = urlunsplit((parts.scheme, parts.netloc, path, "", ""))
         raise LoginError(
-            f"The URL of the server ends in {MCP_PATH}. Give {url}{MCP_PATH}?"
+            f"The URL of the server ends in {MCP_PATH}. Give {given}{MCP_PATH}?"
         )
-    path = parts.path.removesuffix(MCP_PATH) + LOGIN_PATH
+    path = path.removesuffix(MCP_PATH) + LOGIN_PATH
     return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
@@ -70,7 +73,15 @@ class HttpLogin:
         self._timeout = timeout
 
     def methods(self) -> list[str]:
-        """Return the sign-in methods the server lists. Send no password."""
+        """Return the sign-in methods the server lists. Send no password.
+
+        Read the token file first, so a file that ish refuses stops the
+        sign-in before a password is asked for.
+        """
+        try:
+            self._tokens.get(self._url)
+        except (OSError, TokenFileError) as exc:
+            raise LoginError(str(exc)) from exc
         reply = self._send(None)
         methods = reply.get("methods")
         if not isinstance(methods, list):
@@ -129,9 +140,15 @@ class HttpLogin:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+            with open_without_redirects(request, self._timeout) as response:
                 text = response.read()
         except urllib.error.HTTPError as exc:
+            if exc.code in REDIRECTS:
+                raise LoginError(
+                    f"{self.host} answered with a redirect. ish follows no "
+                    "redirect, so the password goes to no other address. Give "
+                    "the URL the server answers on."
+                ) from exc
             if exc.code == 404:
                 raise LoginError(
                     f"{self.host} has no sign-in. Update ish on the server, or use "

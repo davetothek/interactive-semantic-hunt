@@ -16,6 +16,7 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 # Read and write for the user, and nothing for anyone else.
 FILE_MODE = 0o600
@@ -35,6 +36,24 @@ class Saved:
     expires: float
 
 
+def key_of(url: str) -> str:
+    """Return the key of *url* in the file.
+
+    Write the scheme and the host in lower case, and drop a slash at the
+    end, so one server has one token however its URL is written.
+    """
+    parts = urlsplit(url)
+    return urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            parts.path.rstrip("/"),
+            parts.query,
+            "",
+        )
+    )
+
+
 class TokenFile:
     """Keep one login token for each server URL in one file."""
 
@@ -47,7 +66,7 @@ class TokenFile:
         Raise ``TokenFileError`` when another user can read the file, or
         when it does not parse.
         """
-        entry = self._read().get(url)
+        entry = self._read().get(key_of(url))
         if not isinstance(entry, dict):
             return None
         try:
@@ -60,7 +79,7 @@ class TokenFile:
     def put(self, url: str, saved: Saved) -> None:
         """Keep *saved* as the token of *url*, in place of one kept before."""
         entries = self._read()
-        entries[url] = {
+        entries[key_of(url)] = {
             "token": saved.token,
             "user": saved.user,
             "expires": saved.expires,
@@ -70,9 +89,10 @@ class TokenFile:
     def remove(self, url: str) -> bool:
         """Delete the token of *url*. Return False when none was kept."""
         entries = self._read()
-        if url not in entries:
+        key = key_of(url)
+        if key not in entries:
             return False
-        del entries[url]
+        del entries[key]
         self._write(entries)
         return True
 

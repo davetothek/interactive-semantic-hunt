@@ -330,7 +330,10 @@ def login(settings: Settings, method: str = "", user: str = "") -> int:
         log.error("%s", problem)
         return 1
     try:
-        name = user or input(f"User name at {desk.host}: ").strip()
+        name = user.strip() or input(f"User name at {desk.host}: ").strip()
+        if not name:
+            log.error("Give a user name.")
+            return 1
         password = getpass.getpass(f"Password of {name} at {desk.host}: ")
     except (EOFError, KeyboardInterrupt):
         sys.stderr.write("\nish: no sign-in\n")

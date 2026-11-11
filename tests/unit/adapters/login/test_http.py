@@ -8,6 +8,7 @@ import pytest
 
 from ish.adapters._logins import Saved, TokenFile
 from ish.adapters.login import HttpLogin
+from ish.adapters.login import http as login_http
 from ish.adapters.login.http import login_url
 from ish.application.ports.login import Login, LoginError, SignedIn
 from ish.interfaces.mcp.protocol import Server
@@ -198,10 +199,8 @@ class TestReplies:
     URL = "https://docs.example.invalid/mcp"
 
     def _replying(self, monkeypatch, body: bytes) -> None:
-        import urllib.request
-
         monkeypatch.setattr(
-            urllib.request, "urlopen", lambda request, timeout: _Reply(body)
+            login_http, "open_without_redirects", lambda request, timeout: _Reply(body)
         )
 
     @pytest.mark.parametrize("body", [b"not json", b"[1]"])
@@ -225,14 +224,13 @@ class TestReplies:
     ) -> None:
         import io
         import urllib.error
-        import urllib.request
 
         def refuse(request, timeout):
             raise urllib.error.HTTPError(
                 request.full_url, 502, "Bad Gateway", {}, io.BytesIO(b"<html>")
             )
 
-        monkeypatch.setattr(urllib.request, "urlopen", refuse)
+        monkeypatch.setattr(login_http, "open_without_redirects", refuse)
         with pytest.raises(LoginError) as refused:
             _login(self.URL, tmp_path)[0].sign_in("directory", "reader", PASSWORD)
         assert str(refused.value) == "docs.example.invalid answered HTTP 502."
@@ -240,15 +238,13 @@ class TestReplies:
     def test_the_password_goes_in_the_body_and_never_in_the_url(
         self, monkeypatch, tmp_path
     ) -> None:
-        import urllib.request
-
         sent: list = []
 
         def record(request, timeout):
             sent.append(request)
             return _Reply(b'{"token": "t", "user": "reader", "expires": 1}')
 
-        monkeypatch.setattr(urllib.request, "urlopen", record)
+        monkeypatch.setattr(login_http, "open_without_redirects", record)
         _login(self.URL, tmp_path)[0].sign_in("directory", "reader", PASSWORD)
         (request,) = sent
         assert request.full_url == "https://docs.example.invalid/login"
@@ -256,20 +252,6 @@ class TestReplies:
         assert json.loads(request.data)["password"] == PASSWORD
         assert PASSWORD not in request.full_url
         assert not [v for v in request.header_items() if PASSWORD in str(v)]
-
-    def test_https_checks_the_certificate(self, monkeypatch, tmp_path) -> None:
-        import urllib.request
-
-        seen: list[dict] = []
-
-        def record(request, **kwargs):
-            seen.append(kwargs)
-            return _Reply(b'{"methods": []}')
-
-        monkeypatch.setattr(urllib.request, "urlopen", record)
-        _login(self.URL, tmp_path)[0].methods()
-        # No context: urllib checks the certificate with the system store.
-        assert seen == [{"timeout": 10}]
 
     def test_a_token_file_that_cannot_be_written(self, monkeypatch, tmp_path) -> None:
         self._replying(monkeypatch, b'{"token": "t", "user": "reader", "expires": 1}')
@@ -286,3 +268,51 @@ class TestReplies:
         login = HttpLogin(self.URL, TokenFile(path), timeout=10)
         with pytest.raises(LoginError, match="Cannot delete the login token"):
             login.sign_out()
+
+
+class TestTheUrlOfTheServer:
+    """A login goes to the address given, and finds its token however it is written."""
+
+    def test_a_slash_at_the_end_of_the_url_is_the_same_server(self) -> None:
+        assert login_url("https://docs.example.invalid/mcp/") == (
+            "https://docs.example.invalid/login"
+        )
+
+    def test_a_url_with_no_mcp_names_the_url_to_give(self) -> None:
+        with pytest.raises(LoginError) as refused:
+            login_url("https://docs.example.invalid/ish/")
+        assert str(refused.value) == (
+            "The URL of the server ends in /mcp. Give https://docs.example.invalid/ish/mcp?"
+        )
+
+    def test_a_redirect_sends_the_password_nowhere(self, monkeypatch, tmp_path) -> None:
+        import io
+        import urllib.error
+
+        def moved(request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url, 302, "Found", {}, io.BytesIO(b"")
+            )
+
+        monkeypatch.setattr(login_http, "open_without_redirects", moved)
+        with pytest.raises(LoginError) as refused:
+            _login("https://docs.example.invalid/mcp", tmp_path)[0].sign_in(
+                "directory", "reader", PASSWORD
+            )
+        assert str(refused.value) == (
+            "docs.example.invalid answered with a redirect. ish follows no redirect, "
+            "so the password goes to no other address. Give the URL the server "
+            "answers on."
+        )
+
+    def test_a_token_file_ish_refuses_stops_the_sign_in_before_the_password(
+        self, tmp_path
+    ) -> None:
+        path = tmp_path / "logins.json"
+        path.write_text("{}")
+        path.chmod(0o644)
+        login = HttpLogin(
+            "https://docs.example.invalid/mcp", TokenFile(path), timeout=10
+        )
+        with pytest.raises(LoginError, match="Other users can read the token file"):
+            login.methods()

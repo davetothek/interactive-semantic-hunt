@@ -12,6 +12,7 @@ To add a transport, write a class with a ``serve(server)`` method beside
 
 import json
 import logging
+import sys
 import threading
 from collections.abc import Callable
 from typing import Any, Protocol, TextIO, runtime_checkable
@@ -147,9 +148,16 @@ class HttpTransport:
         """Answer requests until ``stop`` is called or the process is interrupted."""
         from http.server import ThreadingHTTPServer
 
-        self._httpd = ThreadingHTTPServer(
-            (self._host, self._port), self._handler_for(server)
-        )
+        class _Quiet(ThreadingHTTPServer):
+            def handle_error(self, request: Any, client_address: Any) -> None:
+                # The default prints the traceback with the text of the
+                # error, and a sign-in method can put a password in it.
+                # Name the type of the error alone, at every verbosity.
+                failure = sys.exc_info()[0]
+                name = failure.__name__ if failure else "an error"
+                log.error("A request from %s failed with %s.", client_address[0], name)
+
+        self._httpd = _Quiet((self._host, self._port), self._handler_for(server))
         self._httpd.daemon_threads = True
         host, port = self._httpd.server_address[:2]
         self.address = (str(host), int(port))
@@ -182,7 +190,14 @@ class HttpTransport:
                 scheme, _, bearer = (self.headers.get("Authorization") or "").partition(
                     " "
                 )
-                identity = admit(bearer) if scheme == "Bearer" else None
+                try:
+                    identity = admit(bearer) if scheme == "Bearer" else None
+                except Exception as exc:
+                    log.error(
+                        "The check of a token failed with %s.", type(exc).__name__
+                    )
+                    self._json(500, {"error": SERVER_FAILED})
+                    return
                 if identity is None:
                     self._reply(401, headers={"WWW-Authenticate": "Bearer"})
                     return
@@ -204,8 +219,17 @@ class HttpTransport:
                 self._reply(405, headers={"Allow": "POST"})
 
             def _body(self) -> bytes | None:
-                """Return the body of the request, or reply 413 and None."""
-                length = int(self.headers.get("Content-Length") or 0)
+                """Return the body of the request, or reply and return None.
+
+                Reply 400 for a length that is not a count, and 413 for one
+                above ``MAX_BODY_BYTES``. A read of a negative length would
+                read until the client stops, so it is never made.
+                """
+                text = self.headers.get("Content-Length") or "0"
+                if not text.isdigit():
+                    self._reply(400)
+                    return None
+                length = int(text)
                 if length > MAX_BODY_BYTES:
                     self._reply(413)
                     return None
@@ -242,7 +266,21 @@ class HttpTransport:
                 except SignInLimited as exc:
                     self._json(429, {"error": str(exc)})
                     return
-                log.info("Signed %s in, until %s", granted.user, _when(granted.expires))
+                except Exception as exc:
+                    # The text of an error the method did not expect can
+                    # hold the password. Name its type alone.
+                    log.error(
+                        "A sign-in with %s failed with %s.",
+                        printable(asked["method"]),
+                        type(exc).__name__,
+                    )
+                    self._json(500, {"error": SERVER_FAILED})
+                    return
+                log.info(
+                    "Signed %s in, until %s",
+                    printable(granted.user),
+                    _when(granted.expires),
+                )
                 self._json(
                     200,
                     {
@@ -271,6 +309,20 @@ class HttpTransport:
                 log.debug("%s %s", self.address_string(), format % args)
 
         return _Request
+
+
+# What a client reads when the server failed. The log of the server
+# names the type of the error, and never its text.
+SERVER_FAILED = "The server failed. Its log names the type of the error."
+
+
+def printable(text: str) -> str:
+    """Return *text* with each character that is not printable escaped.
+
+    A name a client sends goes into a log line. A line break in it would
+    write a second line that looks like the server wrote it.
+    """
+    return "".join(c if c.isprintable() else f"\\x{ord(c):02x}" for c in text)
 
 
 # What a POST to the sign-in path must hold.

@@ -251,3 +251,66 @@ class TestLimit:
         self._fail(access, user="third")
         assert set(access._failures) == {"third"}
         assert access._limited == {}
+
+
+class TestManySignInsAtOnce:
+    """Guesses sent in parallel reach the method no more often than in turn."""
+
+    def test_only_the_limit_reaches_the_method(self, parts) -> None:
+        import threading
+
+        from ish.application.access import MAX_FAILURES
+        from ish.application.ports.authenticator import SignInLimited
+
+        release = threading.Event()
+        arrived = threading.Semaphore(0)
+        reached: list[str] = []
+
+        class Slow:
+            def sign_in(self, user, password):
+                reached.append(user)
+                arrived.release()
+                release.wait(5)
+                raise SignInRefused(
+                    "The directory refused the user name or the password."
+                )
+
+        access = Access([], {"directory": Slow()}, parts[1], DAY, parts[2])
+        outcomes: list[str] = []
+
+        def guess() -> None:
+            try:
+                access.sign_in("directory", USER, "wrong-EXAMPLE")
+            except SignInRefused:
+                outcomes.append("refused")
+            except SignInLimited as exc:
+                outcomes.append(str(exc))
+
+        threads = [threading.Thread(target=guess) for _ in range(MAX_FAILURES)]
+        for thread in threads:
+            thread.start()
+        for _ in range(MAX_FAILURES):
+            assert arrived.acquire(timeout=5)
+        with pytest.raises(SignInLimited) as limited:
+            access.sign_in("directory", USER, PASSWORD)
+        assert str(limited.value) == (
+            "Too many sign-ins for reader at once. Try again in a minute."
+        )
+        release.set()
+        for thread in threads:
+            thread.join(5)
+        assert len(reached) == MAX_FAILURES
+        assert outcomes == ["refused"] * MAX_FAILURES
+        with pytest.raises(SignInLimited, match="Try again in 15 minutes."):
+            access.sign_in("directory", USER, PASSWORD)
+
+    def test_a_sign_in_that_fails_another_way_ends_its_count(self, parts) -> None:
+        class Broken:
+            def sign_in(self, user, password):
+                raise RuntimeError("the method broke")
+
+        access = Access([], {"directory": Broken()}, parts[1], DAY, parts[2])
+        for _ in range(8):
+            with pytest.raises(RuntimeError):
+                access.sign_in("directory", USER, PASSWORD)
+        assert access._checking == {}

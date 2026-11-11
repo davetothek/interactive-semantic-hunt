@@ -4,6 +4,8 @@ import json
 import logging
 import stat
 
+import pytest
+
 from ish.adapters.login_store import LoginFile
 from ish.application.ports.login_store import Login, LoginStore
 
@@ -104,3 +106,47 @@ class TestLoginFile:
         LoginFile(path, Clock()).add(_login("d1"))
         assert LoginFile(path).find("d1") is not None
         assert not (tmp_path / f".logins.jsonl.{os.getpid()}.part").exists()
+
+
+class TestAFileThatCannotBeReadAdmitsNobody:
+    """A broken file never leaves the logins read before it in force."""
+
+    def test_bytes_that_are_not_text_admit_nobody_until_the_file_is_mended(
+        self, tmp_path, caplog
+    ) -> None:
+        path = tmp_path / "logins.jsonl"
+        store = LoginFile(path, Clock())
+        store.add(_login("d1"))
+        assert store.find("d1") is not None
+        good = path.read_text()
+        path.write_bytes(b"\xff\xfe\n")
+        with caplog.at_level(logging.ERROR):
+            assert store.find("d1") is None
+            assert store.find("d1") is None
+        assert caplog.messages[0] == (
+            f"Cannot read {path}, so it admits nobody: UnicodeDecodeError"
+        )
+        path.write_text(good)
+        assert store.find("d1") is not None
+
+    def test_a_revoked_login_stays_revoked_after_a_broken_write(self, tmp_path) -> None:
+        path = tmp_path / "logins.jsonl"
+        store = LoginFile(path, Clock())
+        store.add(_login("d1"))
+        store.find("d1")
+        path.write_bytes(b"\xff")
+        store.find("d1")
+        path.write_text("")
+        assert store.find("d1") is None
+
+    @pytest.mark.parametrize("expires", ["NaN", "Infinity", "-Infinity"])
+    def test_a_login_with_no_moment_of_expiry_admits_nobody(
+        self, expires: str, tmp_path
+    ) -> None:
+        path = tmp_path / "logins.jsonl"
+        path.write_text(
+            '{"digest": "d1", "user": "reader", "method": "ldap", "expires": '
+            + expires
+            + "}\n"
+        )
+        assert LoginFile(path).find("d1") is None

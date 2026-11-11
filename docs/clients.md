@@ -222,8 +222,11 @@ the network would cross the network in plain text. The server refuses to
 start on another address.
 
 Five failed sign-ins for one user name in 15 minutes stop more attempts
-for that name for 15 minutes. The server asks the directory nothing in
-that time.
+for that name for 15 minutes. A sign-in still in flight counts, so
+guesses sent at once do not pass the limit. The server answers 429 and
+asks the directory nothing in that time. A user outside `ldap_group`
+gets the same refusal as a wrong password, and the log of the server
+says why. The directory has 10 s to answer.
 
 The server lists the methods at `/login`, beside `/mcp`, with no token.
 `ish remote login` posts a user name and a password there, and the server

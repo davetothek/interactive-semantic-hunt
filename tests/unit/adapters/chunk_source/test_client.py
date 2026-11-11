@@ -176,7 +176,8 @@ class TestBadReplies:
                 return body
 
         monkeypatch.setattr(
-            "urllib.request.urlopen", lambda request, timeout: Response()
+            "ish.adapters.chunk_source._client.open_without_redirects",
+            lambda request, timeout: Response(),
         )
         return RemoteClient("https://example.invalid/mcp", TOKEN, MCP_TOKEN_ENV_VAR)
 
@@ -192,3 +193,26 @@ class TestBadReplies:
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"message": "bad"}})
         with pytest.raises(ChunkSourceError, match="refused initialize: bad"):
             self._replying(monkeypatch, body.encode()).call("echo", {})
+
+
+class TestNoRedirect:
+    def test_a_redirect_sends_the_token_nowhere(self, monkeypatch) -> None:
+        import io
+        import urllib.error
+
+        def moved(request, timeout):
+            raise urllib.error.HTTPError(
+                request.full_url, 308, "Moved", {}, io.BytesIO(b"")
+            )
+
+        monkeypatch.setattr(
+            "ish.adapters.chunk_source._client.open_without_redirects", moved
+        )
+        client = RemoteClient("https://example.invalid/mcp", TOKEN, MCP_TOKEN_ENV_VAR)
+        with pytest.raises(ChunkSourceError) as refused:
+            client.call("echo", {})
+        assert str(refused.value) == (
+            "https://example.invalid/mcp answered with a redirect. ish follows no "
+            "redirect, so the token goes to no other address. Give the URL the "
+            "server answers on."
+        )

@@ -612,3 +612,112 @@ class TestAudit:
         assert [r.getMessage() for r in caplog.records if r.name == "ish.audit"] == [
             "token calls hello"
         ]
+
+
+class TestNoTracebackHoldsAPassword:
+    """An error the server did not expect names its type, and never its text."""
+
+    @pytest.fixture()
+    def served(self) -> Iterator[tuple[str, list]]:
+        from ish.application.ports.authenticator import Identity
+
+        class Broken(Desk):
+            def sign_in(self, method, user, password):
+                raise RuntimeError(f"the directory choked on {password}")
+
+        def admit(bearer: str):
+            if bearer == "boom-EXAMPLE":
+                raise RuntimeError(f"the store choked on {bearer}")
+            return Identity("token", "token") if bearer == TOKEN else None
+
+        class Crashing:
+            def handle_line(self, line: str, who: str = ""):
+                raise RuntimeError(f"the handler choked on {line}")
+
+        transport = HttpTransport("127.0.0.1", 0, admit, Broken())
+        thread = threading.Thread(
+            target=transport.serve, args=(Crashing(),), daemon=True
+        )
+        thread.start()
+        assert transport.ready.wait(5)
+        assert transport.address is not None
+        host, port = transport.address
+        yield f"http://{host}:{port}", []
+        transport.stop()
+        thread.join(5)
+
+    def _post(self, url: str, path: str, body: bytes, token: str = "") -> int:
+        request = urllib.request.Request(f"{url}{path}", data=body, method="POST")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status
+        except urllib.error.HTTPError as exc:
+            return exc.code
+        except (urllib.error.URLError, OSError):
+            # The server closed the connection with no reply.
+            return 0
+
+    def test_a_sign_in_method_that_fails_shows_no_password(
+        self, served, caplog, capfd
+    ) -> None:
+        url, _ = served
+        body = json.dumps(
+            {"method": "directory", "user": "reader", "password": PASSWORD}
+        )
+        with caplog.at_level(logging.DEBUG, logger="ish"):
+            assert self._post(url, "/login", body.encode()) == 500
+        assert "A sign-in with directory failed with RuntimeError." in caplog.text
+        assert PASSWORD not in caplog.text + capfd.readouterr().err
+
+    def test_a_check_of_a_token_that_fails_shows_no_token(
+        self, served, caplog, capfd
+    ) -> None:
+        url, _ = served
+        with caplog.at_level(logging.DEBUG, logger="ish"):
+            assert self._post(url, "/mcp", b"{}", token="boom-EXAMPLE") == 500
+        assert "The check of a token failed with RuntimeError." in caplog.text
+        assert "boom-EXAMPLE" not in caplog.text + capfd.readouterr().err
+
+    def test_a_request_that_fails_after_the_check_shows_no_text(
+        self, served, caplog, capfd
+    ) -> None:
+        url, _ = served
+        with caplog.at_level(logging.DEBUG, logger="ish"):
+            self._post(
+                url, "/mcp", b'{"secret": "' + PASSWORD.encode() + b'"}', token=TOKEN
+            )
+        assert "A request from 127.0.0.1 failed with RuntimeError." in caplog.text
+        shown = caplog.text + capfd.readouterr().err
+        assert PASSWORD not in shown
+        assert "Traceback" not in shown
+
+
+class TestABodyLengthThatIsNoCount:
+    """`/login` needs no token, so a length that is not a count stops there."""
+
+    @pytest.mark.parametrize("length", ["-1", "abc", "1e3"])
+    def test_it_is_400_and_nothing_is_read(self, length: str) -> None:
+        import http.client
+
+        desk = Desk()
+        transport = HttpTransport("127.0.0.1", 0, ADMIT, desk)
+        thread = threading.Thread(
+            target=transport.serve, args=(Server("t", "0", []),), daemon=True
+        )
+        thread.start()
+        try:
+            assert transport.ready.wait(5)
+            assert transport.address is not None
+            host, port = transport.address
+            connection = http.client.HTTPConnection(host, port, timeout=10)
+            connection.putrequest("POST", "/login")
+            connection.putheader("Content-Length", length)
+            connection.endheaders()
+            assert connection.getresponse().status == 400
+            connection.close()
+        finally:
+            transport.stop()
+            thread.join(5)
+        assert desk.asked == []

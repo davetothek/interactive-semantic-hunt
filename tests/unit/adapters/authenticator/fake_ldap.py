@@ -121,11 +121,21 @@ def module(directory: Directory) -> types.ModuleType:
         return Connection(directory)
 
     made.initialize = initialize
-    made.dn = types.SimpleNamespace(escape_dn_chars=escape_dn_chars)
-    made.filter = types.SimpleNamespace(escape_filter_chars=escape_filter_chars)
     return made
 
 
 def install(monkeypatch: pytest.MonkeyPatch, directory: Directory) -> None:
-    """Put the stand-in in place of python-ldap for one test."""
+    """Put the stand-in in place of python-ldap for one test.
+
+    As in python-ldap, the two escape functions live in modules of their
+    own, which `import ldap` does not make attributes of `ldap`. An
+    adapter that reaches them through `ldap.filter` fails here as it
+    would on a real install.
+    """
+    dn = types.ModuleType("ldap.dn")
+    dn.escape_dn_chars = escape_dn_chars
+    found = types.ModuleType("ldap.filter")
+    found.escape_filter_chars = escape_filter_chars
     monkeypatch.setitem(sys.modules, "ldap", module(directory))
+    monkeypatch.setitem(sys.modules, "ldap.dn", dn)
+    monkeypatch.setitem(sys.modules, "ldap.filter", found)
