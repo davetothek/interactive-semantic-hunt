@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from ish.application.glossary import Glossary
+from ish.application.glossary import Glossary, acronyms
 from ish.application.ports.language_model import (
     SEARCHES_A_TURN,
     Block,
@@ -40,9 +40,6 @@ CHUNKS_A_SEARCH = 5
 # Acronyms an answer names at most. A register table can hold dozens of
 # names, and a reader wants the terms, not a second table.
 MAX_TERMS = 20
-
-# An acronym as an answer writes it: a capital, then capitals or digits.
-_ACRONYM = re.compile(r"(?<![\w-])[A-Z][A-Z0-9&/-]{1,9}(?![\w-])")
 
 # Characters of chunk text one question may send. About 15,000 tokens at
 # the four characters a token that English text averages.
@@ -346,7 +343,7 @@ class AnswerQuestion:
         """
         words = " ".join(_words(reply))
         named = {t.term: t for t in _terms(reply.terms, texts, words)}
-        for short in dict.fromkeys(_ACRONYM.findall(words)):
+        for short in acronyms(words):
             if short in named or len(named) >= MAX_TERMS:
                 continue
             found = self._glossary.lookup(short, kept)

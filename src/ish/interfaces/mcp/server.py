@@ -392,6 +392,52 @@ class IshTools:
         )
         return json.dumps(reply, ensure_ascii=False)
 
+    def sources(self, arguments: Mapping[str, Any]) -> str:
+        """Return the chunks a search finds with the text of each, as JSON.
+
+        A client that writes the answer with a model of its own reads
+        this in place of ``ask``. Each chunk carries what a citation
+        needs and its text. Each term carries the meaning of an acronym
+        the texts use, and the chunk that spells it out.
+        """
+        query = str(arguments.get("query") or "").strip()
+        if not query:
+            raise ValueError("The 'query' argument is required.")
+        root = self._resolve(arguments.get("path"))
+        limit = _limit(arguments.get("limit"), self._settings.limit)
+        session = self._session_for(root)
+        self._keep_current(root, session)
+        found = session.sources(query, limit, **self._narrowing(arguments))
+
+        def described(chunk: Chunk) -> dict[str, Any]:
+            return {
+                "path": str(display_path(chunk.path, root)),
+                "type": session.kind_of(chunk),
+                "location": chunk.location.to_dict(),
+                "kind": chunk.kind,
+                "symbol": chunk.symbol,
+                "language": chunk.language,
+                "url": session.link(chunk),
+            }
+
+        return json.dumps(
+            {
+                "sources": [
+                    described(entry.chunk) | {"score": entry.score, "text": entry.text}
+                    for entry in found.chunks
+                ],
+                "terms": [
+                    {
+                        "term": term.short,
+                        "meaning": term.meaning,
+                        "source": described(term.chunk),
+                    }
+                    for term in found.terms
+                ],
+            },
+            ensure_ascii=False,
+        )
+
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
         root = self._resolve(arguments.get("path"))
@@ -467,9 +513,13 @@ class IshTools:
             {"text": session.complete(query), "candidates": session.candidates(query)}
         )
 
-    def tools(self) -> list[Tool]:
-        """Describe every tool this server offers."""
-        return [
+    def tools(self, over_http: bool = False) -> list[Tool]:
+        """Describe every tool this server offers.
+
+        With *over_http*, offer the sources tool as well. Only a client
+        on another machine needs the text of a chunk from the server.
+        """
+        offered = [
             Tool(
                 name="search_code",
                 description=(
@@ -614,6 +664,44 @@ class IshTools:
                 handler=self.complete_filter,
             ),
         ]
+        if over_http:
+            offered.append(
+                Tool(
+                    name="sources",
+                    description=(
+                        "Return the chunks a search finds with the text of "
+                        "each, for a client that writes the answer with a "
+                        "model of its own. Returns JSON: 'sources' lists the "
+                        "ranked chunks, each with its path, type, location, "
+                        "kind, symbol, language, score, link, and text, and "
+                        "'terms' gives the meaning of each acronym the texts "
+                        "use, with the chunk that spells it out. The text is "
+                        "empty for a chunk the server cannot read."
+                    ),
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "What to look for, in plain language.",
+                            },
+                            "path": _PATH_PROPERTY,
+                            "limit": {
+                                "type": "integer",
+                                "description": "How many chunks to return.",
+                                "minimum": 1,
+                                "maximum": MAX_SOURCES,
+                            },
+                            "lang": _QUERY_PROPERTIES["lang"],
+                            "under": _QUERY_PROPERTIES["under"],
+                            "type": _QUERY_PROPERTIES["type"],
+                        },
+                        "required": ["query"],
+                    },
+                    handler=self.sources,
+                )
+            )
+        return offered
 
 
 # The most follow-up turns one call may ask for. Each turn is one more
@@ -634,6 +722,27 @@ def _turns(value: Any) -> int | None:
         raise ValueError("'ask_turns' must be a whole number.")
     if not 0 <= value <= MAX_ASK_TURNS:
         raise ValueError(f"'ask_turns' must be from 0 to {MAX_ASK_TURNS}.")
+    return value
+
+
+# The most chunks one call of the sources tool may return. Each chunk
+# travels with its text, up to the cap a parser sets, so the bound keeps
+# one reply to a few megabytes.
+MAX_SOURCES = 200
+
+
+def _limit(value: Any, default: int) -> int:
+    """Return the chunks a sources call asked for, or *default* for none.
+
+    Raise ``ValueError`` for a value that is not a count from 1 to
+    ``MAX_SOURCES``, so the call fails rather than a bound being lifted.
+    """
+    if value is None:
+        return min(default, MAX_SOURCES)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("'limit' must be a whole number.")
+    if not 1 <= value <= MAX_SOURCES:
+        raise ValueError(f"'limit' must be from 1 to {MAX_SOURCES}.")
     return value
 
 
@@ -696,7 +805,9 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
             return 1
 
     tools = IshTools(settings, root)
-    server = Server(SERVER_NAME, installed_version(), tools.tools())
+    server = Server(
+        SERVER_NAME, installed_version(), tools.tools(over_http=bool(args.http))
+    )
     try:
         tools.warm_reader()
         if args.http:

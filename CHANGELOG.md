@@ -15,6 +15,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   takes `--brief`. Each command takes every option, and `--help`.
 - `ish mcp`, `ish serve`, and `ish complete` start what `ish-mcp`,
   `ish-serve`, and `ish-complete` start. The three old names stay.
+- A `sources` tool on a server over HTTP. It returns the chunks a search
+  finds with the text of each, and the meaning of each acronym the texts
+  use. A client reads it to write an answer with a model of its own. The
+  tool runs no language model. A stdio server does not list it.
 
 ### Changed
 

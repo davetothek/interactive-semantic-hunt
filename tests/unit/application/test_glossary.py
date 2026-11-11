@@ -8,12 +8,23 @@ from pathlib import Path
 
 import pytest
 
-from ish.application.glossary import Glossary, definitions, long_form
+from ish.application.glossary import Glossary, acronyms, definitions, long_form
 from ish.domain.chunk import Chunk
 
 
 def chunk(path: str) -> Chunk:
     return Chunk(Path(path), "t", "section", "asciidoc", None, 1, 2)
+
+
+class TestAcronyms:
+    """An acronym a text uses is a word of its own, named once."""
+
+    def test_each_is_named_once_in_the_order_of_first_use(self) -> None:
+        assert acronyms("SHT follows AE, and AE follows R&D.") == ["SHT", "AE", "R&D"]
+
+    @pytest.mark.parametrize("text", ["the block", "xAE1", "pre-AE", "AE-post", "A"])
+    def test_a_part_of_a_longer_word_is_not_an_acronym(self, text: str) -> None:
+        assert acronyms(text) == []
 
 
 class TestLongForm:

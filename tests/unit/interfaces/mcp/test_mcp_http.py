@@ -197,6 +197,21 @@ class TestEntryPoint:
         assert server_module.main(["--http", "0.0.0.0:8765"]) == 0
         assert served == [("0.0.0.0", 8765)]
 
+    def test_a_server_over_http_offers_the_sources_tool(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        offered: list[str] = []
+
+        def serve(self, server) -> None:
+            reply = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            offered.extend(tool["name"] for tool in reply["result"]["tools"])
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(TOKEN_VARIABLE, TOKEN)
+        monkeypatch.setattr(HttpTransport, "serve", serve)
+        assert server_module.main(["--http", "127.0.0.1:8765"]) == 0
+        assert "sources" in offered
+
     @pytest.mark.parametrize(
         ("text", "address"),
         [("127.0.0.1:8765", ("127.0.0.1", 8765)), ("8765", ("127.0.0.1", 8765))],
@@ -213,3 +228,63 @@ class TestEntryPoint:
         monkeypatch.setenv(TOKEN_VARIABLE, TOKEN)
         assert server_module.main(["--http", "nowhere"]) == 1
         assert "--http" in caplog.text
+
+
+class TestSourcesOverHttp:
+    """A client on another machine reads the text of a chunk and a term."""
+
+    class Embedder:
+        model_name = "fake"
+
+        def embed_documents(self, texts):
+            return [[float(len(text)), 1.0] for text in texts]
+
+        def embed_query(self, text):
+            return [float(len(text)), 1.0]
+
+    @pytest.fixture()
+    def served(self, tmp_path, tmp_path_factory, monkeypatch) -> Iterator[Running]:
+        from dataclasses import replace
+
+        from ish import bootstrap
+        from ish.settings import Settings
+
+        (tmp_path / "exposure.md").write_text(
+            "# Exposure\n\nThe Auto Exposure (AE) block runs before the gain.\n"
+        )
+        monkeypatch.setattr(bootstrap, "build_embedder", lambda s: self.Embedder())
+        settings = replace(
+            Settings(),
+            no_cache=True,
+            git=False,
+            cache_dir=str(tmp_path_factory.mktemp("idx")),
+        )
+        tools = server_module.IshTools(settings, tmp_path)
+        made = Running(tools.tools(over_http=True))
+        yield made
+        made.close()
+        tools.close()
+
+    def test_the_reply_holds_the_text_of_a_chunk_and_a_term(
+        self, served: Running
+    ) -> None:
+        from ish.interfaces.mcp.client import RemoteClient
+
+        client = RemoteClient(f"{served.url}/mcp", TOKEN, timeout=10)
+        reply = json.loads(client.call("sources", {"query": "exposure", "limit": 5}))
+        (source,) = reply["sources"]
+        assert source["path"] == "exposure.md"
+        assert "The Auto Exposure (AE) block runs before the gain." in source["text"]
+        (term,) = reply["terms"]
+        assert (term["term"], term["meaning"]) == ("AE", "Auto Exposure")
+        assert term["source"]["path"] == "exposure.md"
+
+    def test_a_call_without_the_token_reads_nothing(self, served: Running) -> None:
+        message = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "sources", "arguments": {"query": "exposure"}},
+        }
+        assert served.post(message, token=None) == (401, None)
+        assert served.calls == []

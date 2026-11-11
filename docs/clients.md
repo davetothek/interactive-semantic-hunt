@@ -175,6 +175,14 @@ runs on its own thread, so a slow answer for one client does not hold up
 another. Run it in the tree it serves, beside an `ish-serve` that keeps the
 index current.
 
+A server over HTTP offers one more tool, `sources`. It takes a `query`, and
+`path`, `limit`, `lang`, `under`, and `type` as `search_code` does. It
+returns JSON: `sources` holds the ranked chunks, each with its path,
+location, link, and text, and `terms` holds the meaning of each acronym the
+texts use, with the chunk that spells it out. The tool runs no language
+model. A client reads it to write an answer with a model of its own. One
+call returns at most 200 chunks.
+
 Point a client at it:
 
 ```json

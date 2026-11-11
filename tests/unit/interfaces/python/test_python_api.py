@@ -589,6 +589,59 @@ class TestAskBrief:
         assert built == [True, False]
 
 
+class TestSources:
+    """Ish.sources searches the way Ish.search does, and reads each chunk."""
+
+    def test_each_chunk_carries_its_text_in_rank_order(
+        self, project: Path, offline
+    ) -> None:
+        with _ish(project) as ish:
+            ranked = [chunk for chunk, _ in ish.search("configure")]
+            found = ish.sources("configure")
+        assert [entry.chunk for entry in found.chunks] == ranked
+        texts = {entry.chunk.path.name: entry.text for entry in found.chunks}
+        assert "def parse_config():" in texts["app.py"]
+        assert "How to configure it." in texts["guide.md"]
+
+    def test_no_language_model_is_built(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        def refuse(settings, **_):
+            raise AssertionError("sources must not build a language model")
+
+        monkeypatch.setattr(bootstrap, "build_language_model", refuse)
+        monkeypatch.setattr(bootstrap, "build_reranker", refuse)
+        with _ish(project) as ish:
+            assert ish.sources("configure").chunks
+
+    def test_the_limit_and_the_filters_narrow_the_chunks(
+        self, project: Path, offline
+    ) -> None:
+        with _ish(project) as ish:
+            assert len(ish.sources("configure", 1).chunks) == 1
+            docs = ish.sources("configure", type=["doc"])
+            typed = ish.sources("lang:python configure")
+        assert [entry.chunk.path.name for entry in docs.chunks] == ["guide.md"]
+        assert {entry.chunk.language for entry in typed.chunks} == {"python"}
+
+    def test_a_term_takes_its_meaning_from_another_file_of_the_tree(
+        self, project: Path, offline
+    ) -> None:
+        (project / "docs" / "terms.md").write_text(
+            "# Terms\n\n| AGC | Automatic Gain Control |\n"
+        )
+        (project / "src" / "gain.py").write_text(
+            'def gain():\n    """Run the AGC loop."""\n'
+        )
+        with _ish(project) as ish:
+            ish.index()
+            ish.warm_reader()
+            found = ish.sources("gain loop", lang=["python"])
+        assert [(t.short, t.meaning, t.chunk.path.name) for t in found.terms] == [
+            ("AGC", "Automatic Gain Control", "terms.md")
+        ]
+
+
 class TestWarmReader:
     """A server parses its files before the first question, once.
 

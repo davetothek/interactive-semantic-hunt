@@ -31,6 +31,9 @@ _CELL = re.compile(rf"^\|\s*({_SHORT})\s*$")
 _NEXT_CELL = re.compile(r"^\|\s*([^|\n]{3,120}?)\s*$")
 _DEFINED = re.compile(rf"^({_SHORT})::\s*(\S.{{2,120}})?$")
 
+# An acronym as a text uses it: one that stands as a word of its own.
+_USED = re.compile(rf"(?<![\w-]){_SHORT}(?![\w-])")
+
 # Where a meaning ends and an explanation of it starts.
 _STOP = re.compile(r"[.;] | - | – ")
 
@@ -102,6 +105,11 @@ def _clean(meaning: str) -> str:
     """
     words = " ".join(_MARKUP.sub("", meaning).split())
     return _STOP.split(words, maxsplit=1)[0].strip(" .,;:")
+
+
+def acronyms(text: str) -> list[str]:
+    """Return each acronym that *text* uses, once, in the order of first use."""
+    return list(dict.fromkeys(_USED.findall(text)))
 
 
 def definitions(text: str) -> list[tuple[str, str]]:

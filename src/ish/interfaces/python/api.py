@@ -33,6 +33,7 @@ from ish.application.ports.language_model import LanguageModel
 from ish.application.ports.link import LinkResolver
 from ish.application.progress import ProgressCallback
 from ish.application.search import Search
+from ish.application.sources import Sources, read_sources
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.interfaces import completion, heartbeat
@@ -315,6 +316,26 @@ class Ish:
             **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)
+
+    def sources(
+        self,
+        query: str,
+        limit: int | None = None,
+        *,
+        lang: Sequence[str] = (),
+        under: str = "",
+        type: Sequence[str] = (),
+    ) -> Sources:
+        """Return what a search of *query* finds, with the text of each chunk.
+
+        Search the way ``search`` does, filters included. Read each chunk
+        with the reader answers share, and return the meaning of each
+        acronym the texts use that the tree spells out. A client with a
+        model of its own writes an answer from the result, so no model is
+        built here.
+        """
+        matches = self.search(query, limit, lang=lang, under=under, type=type)
+        return read_sources(matches, self._reader_for_answers(), self._glossary)
 
     def _reader_for_answers(self) -> Callable[[Chunk], str | None]:
         """Return the reader answers share, and build it on the first call.
