@@ -29,6 +29,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   server and its version.
 - `--url`, then `ISH_REMOTE`, then `remote` in a config file names the
   server of `ish remote`. Its token is in `ISH_MCP_TOKEN`.
+- `ish remote mcp` serves `search_code` and `ask` on stdio for the tree
+  of a server, as `ish remote search` and `ish remote ask` do. An agent or
+  an editor gets the tree of the server, and the language model of this
+  machine writes each answer. `--url` names the server, as for the other
+  commands of `ish remote`. A call takes no `path`. The reply of `ask`
+  names the host and the version of the server.
 
 ### Changed
 

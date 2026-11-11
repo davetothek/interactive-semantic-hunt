@@ -213,6 +213,12 @@ class TestEntryPoint:
         assert "sources" in offered
         assert "ask" not in offered
 
+    def test_ish_mcp_has_no_option_for_a_server(self, capsys) -> None:
+        # `ish remote mcp` reads a server. `ish mcp` is the local tree.
+        with pytest.raises(SystemExit):
+            server_module.main(["--remote", "https://docs.example.invalid/mcp"])
+        assert "unrecognized arguments: --remote" in capsys.readouterr().err
+
     def test_a_server_with_no_model_and_no_api_key_starts(
         self, monkeypatch, tmp_path
     ) -> None:

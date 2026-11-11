@@ -189,6 +189,22 @@ class TestWhatACommandImports:
         apart = ("ish.interfaces.cli.remote", "ish.adapters.chunk_source")
         assert not [name for name in loaded if name.startswith(apart)]
 
+    def test_a_local_mcp_server_imports_no_remote_client(self) -> None:
+        loaded = _loaded(
+            "import io, os, sys\n"
+            "os.environ['ISH_REMOTE'] = 'http://127.0.0.1:9/mcp'\n"
+            "sys.stdin = io.StringIO('')\n"
+            "from ish.interfaces.cli import run\n"
+            "run(['mcp'])"
+        )
+        assert "ish.interfaces.mcp.server" in loaded
+        apart = (
+            "ish.interfaces.mcp.remote",
+            "ish.interfaces.python.remote",
+            "ish.adapters.chunk_source",
+        )
+        assert not [name for name in loaded if name.startswith(apart)]
+
     def test_ish_remote_imports_no_server_and_no_picker(self) -> None:
         loaded = _loaded(
             "import io, contextlib\n"

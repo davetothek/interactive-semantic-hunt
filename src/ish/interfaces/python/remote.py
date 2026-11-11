@@ -63,17 +63,19 @@ class RemoteIsh:
         lang: Sequence[str] = (),
         under: str = "",
         type: Sequence[str] = (),
+        shape: str = "",
     ) -> str:
         """Return the results of the server as lines, best first.
 
         The server reads ``lang:``, ``under:``, and ``type:`` out of
-        *query*, and writes each path from the top of its tree. Return an
-        empty text when nothing matches.
+        *query*, and writes each path from the top of its tree. Write
+        each line in *shape*, or in ``format`` when no shape is given.
+        Return an empty text when nothing matches.
         """
         return self._source.search(
             query,
             limit if limit is not None else self.settings.limit,
-            self.settings.format,
+            shape or self.settings.format,
             lang=lang,
             under=under,
             type=type,

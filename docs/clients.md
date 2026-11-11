@@ -205,3 +205,32 @@ certificate when the token crosses a network you do not trust.
 
 `ish remote search` and `ish remote ask` read such a server. See
 [Ask a server](usage.md#ask-a-server).
+
+### Give an agent the tree of a server
+
+`ish remote mcp` serves `search_code` and `ask` on stdio for the tree of a
+server. The server searches and returns chunks, and the language model of
+this machine writes each answer, with the login of this machine. `--url`,
+`ISH_REMOTE`, or `remote` in a config file names the server, as for the
+other commands of `ish remote`:
+
+```json
+{
+  "mcpServers": {
+    "docs": {
+      "command": "ish",
+      "args": ["remote", "mcp", "--url", "https://docs.example.com/mcp"],
+      "env": { "ISH_MCP_TOKEN": "${ISH_MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+The two tools take the arguments of the local tools, except `path`: the
+server searches its own tree, so a call with a `path` gets an error. Use
+`under` to narrow a search. Each call brings its own query and filters, so
+the line of `ish remote mcp` takes neither. `--limit`, `--format`, and
+`--ask-turns` on the line set the default of each call. The reply of `ask` names the host and the
+version of the server in `server`. The other tools stay with a local tree.
+Choose the model on this machine, as for a local answer. See
+[Answer questions](configuration.md#answer-questions).

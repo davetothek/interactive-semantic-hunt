@@ -15,11 +15,12 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
+from ish.application.answer import Answer
 from ish.application.categories import TYPES
 from ish.application.progress import Progress
 from ish.domain.chunk import Chunk
@@ -150,15 +151,6 @@ class IshTools:
         if not path.exists():
             raise ValueError(f"Path does not exist: {path}")
         return path
-
-    @staticmethod
-    def _narrowing(arguments: Mapping[str, Any]) -> dict[str, Any]:
-        """Return the query-scope filters a call passed, as keyword arguments."""
-        return {
-            "lang": tuple(str(item) for item in arguments.get("lang") or ()),
-            "under": str(arguments.get("under") or ""),
-            "type": tuple(str(item) for item in arguments.get("type") or ()),
-        }
 
     def _keep_current(self, root: Path, session: Ish) -> None:
         """Keep the index for *root* current behind the questions.
@@ -318,7 +310,7 @@ class IshTools:
         self._keep_current(root, session)
         # The session reads `lang:cpp type:doc` out of the query itself,
         # so an editor can pass the line as typed.
-        results = session.search(query, limit, **self._narrowing(arguments))
+        results = session.search(query, limit, **narrowing_of(arguments))
         if not results:
             return f"{NO_RESULTS} {query!r} under {root}."
 
@@ -348,47 +340,11 @@ class IshTools:
         answer = session.ask(
             question,
             brief=brief,
-            turns=_turns(arguments.get("ask_turns")),
-            **self._narrowing(arguments),
+            turns=turns_of(arguments.get("ask_turns")),
+            **narrowing_of(arguments),
         )
-
-        def described(chunk: Chunk, number: int | None = None) -> dict[str, Any]:
-            entry: dict[str, Any] = {} if number is None else {"n": number}
-            entry |= {
-                "path": str(display_path(chunk.path, root)),
-                "type": session.kind_of(chunk),
-                "location": chunk.location.to_dict(),
-                "kind": chunk.kind,
-                "symbol": symbol_of(chunk),
-                "url": session.link(chunk),
-            }
-            return entry
-
-        # What the answer cost: the models, their tokens, and the seconds
-        # of each stage, so a client can show where the time went.
-        reply: dict[str, Any] = {
-            "covered": answer.covered,
-            "dropped": answer.dropped,
-            **answer_usage(answer),
-        }
-        if brief:
-            reply["answer"] = format_brief(answer)
-            return json.dumps(reply, ensure_ascii=False)
-        if answer.covered:
-            text, cited = number_citations(answer)
-            layout, _ = layout_data(answer)
-            terms, cited = terms_data(answer, cited)
-            reply["answer"] = text
-            reply["layout"] = layout
-            reply["terms"] = terms
-            reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
-        else:
-            reply["answer"] = NOT_COVERED_TEXT
-            reply["sources"] = [described(c) for c in answer.sources]
-        # The text `ish --ask` prints, so a client in a terminal shows
-        # the answer the way a local run does.
-        reply["markdown"] = format_answer(
-            answer, question, session.link, base=root, kind_of=session.kind_of
+        reply = answer_data(
+            answer, question, brief, session.link, session.kind_of, base=root
         )
         return json.dumps(reply, ensure_ascii=False)
 
@@ -407,7 +363,7 @@ class IshTools:
         limit = _limit(arguments.get("limit"), self._settings.limit)
         session = self._session_for(root)
         self._keep_current(root, session)
-        found = session.sources(query, limit, **self._narrowing(arguments))
+        found = session.sources(query, limit, **narrowing_of(arguments))
 
         def described(chunk: Chunk) -> dict[str, Any]:
             return {
@@ -441,7 +397,7 @@ class IshTools:
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
         root = self._resolve(arguments.get("path"))
-        chunks = self._session_for(root).scan(**self._narrowing(arguments))
+        chunks = self._session_for(root).scan(**narrowing_of(arguments))
         if not chunks:
             return f"No source files found under {root}."
         shape = str(arguments.get("format") or self._settings.format)
@@ -522,79 +478,8 @@ class IshTools:
         to each client it admits, so it builds no model for them.
         """
         offered = [
-            Tool(
-                name="search_code",
-                description=(
-                    "Search a codebase by meaning rather than by literal text. "
-                    "Returns ranked chunks (functions, classes, methods, and "
-                    "sections) with their file, line range, and score. Use it "
-                    "for questions such as 'where is authentication handled' "
-                    "or 'what computes the ranking', where the wording of the "
-                    "question will not appear in the code."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "What to look for, in plain language.",
-                        },
-                        "path": _PATH_PROPERTY,
-                        **_QUERY_PROPERTIES,
-                    },
-                    "required": ["query"],
-                },
-                handler=self.search,
-            ),
-            Tool(
-                name="ask",
-                description=(
-                    "Answer a question from the documents and code under a "
-                    "path, with a citation for each claim. Returns JSON: the "
-                    "answer with [n] markers, its layout (a short answer, "
-                    "sections of prose, steps, or tables, and what the "
-                    "documents leave open), and per citation the path, the "
-                    "type, the location, and a link that opens the source, and "
-                    "the whole answer as Markdown, and what it cost: the "
-                    "models, their tokens, and the seconds of each stage in "
-                    "'timings'. When the "
-                    "documents do not answer the question, 'covered' is "
-                    "false and 'sources' lists the closest chunks. Use it "
-                    "for questions such as 'how is the watchdog configured'."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "The question, in plain language.",
-                        },
-                        "path": _PATH_PROPERTY,
-                        "brief": {
-                            "type": "boolean",
-                            "description": (
-                                "Answer in a sentence or two with no citations. "
-                                "Ask again without it for the sources."
-                            ),
-                        },
-                        "ask_turns": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": MAX_ASK_TURNS,
-                            "description": (
-                                "Follow-up searches the model may ask for "
-                                "before it answers. Leave it out for the "
-                                "server's own setting."
-                            ),
-                        },
-                        "lang": _QUERY_PROPERTIES["lang"],
-                        "under": _QUERY_PROPERTIES["under"],
-                        "type": _QUERY_PROPERTIES["type"],
-                    },
-                    "required": ["question"],
-                },
-                handler=self.ask,
-            ),
+            search_tool(self.search),
+            ask_tool(self.ask),
             Tool(
                 name="list_chunks",
                 description=(
@@ -707,13 +592,161 @@ class IshTools:
         return offered
 
 
+def search_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``search_code``, which *handler* answers."""
+    return Tool(
+        name="search_code",
+        description=(
+            "Search a codebase by meaning rather than by literal text. "
+            "Returns ranked chunks (functions, classes, methods, and "
+            "sections) with their file, line range, and score. Use it "
+            "for questions such as 'where is authentication handled' "
+            "or 'what computes the ranking', where the wording of the "
+            "question will not appear in the code."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to look for, in plain language.",
+                },
+                "path": _PATH_PROPERTY,
+                **_QUERY_PROPERTIES,
+            },
+            "required": ["query"],
+        },
+        handler=handler,
+    )
+
+
+def ask_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``ask``, which *handler* answers."""
+    return Tool(
+        name="ask",
+        description=(
+            "Answer a question from the documents and code under a "
+            "path, with a citation for each claim. Returns JSON: the "
+            "answer with [n] markers, its layout (a short answer, "
+            "sections of prose, steps, or tables, and what the "
+            "documents leave open), and per citation the path, the "
+            "type, the location, and a link that opens the source, and "
+            "the whole answer as Markdown, and what it cost: the "
+            "models, their tokens, and the seconds of each stage in "
+            "'timings'. When the "
+            "documents do not answer the question, 'covered' is "
+            "false and 'sources' lists the closest chunks. Use it "
+            "for questions such as 'how is the watchdog configured'."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question, in plain language.",
+                },
+                "path": _PATH_PROPERTY,
+                "brief": {
+                    "type": "boolean",
+                    "description": (
+                        "Answer in a sentence or two with no citations. "
+                        "Ask again without it for the sources."
+                    ),
+                },
+                "ask_turns": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_ASK_TURNS,
+                    "description": (
+                        "Follow-up searches the model may ask for "
+                        "before it answers. Leave it out for the "
+                        "server's own setting."
+                    ),
+                },
+                "lang": _QUERY_PROPERTIES["lang"],
+                "under": _QUERY_PROPERTIES["under"],
+                "type": _QUERY_PROPERTIES["type"],
+            },
+            "required": ["question"],
+        },
+        handler=handler,
+    )
+
+
+def narrowing_of(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the query-scope filters a call passed, as keyword arguments."""
+    return {
+        "lang": tuple(str(item) for item in arguments.get("lang") or ()),
+        "under": str(arguments.get("under") or ""),
+        "type": tuple(str(item) for item in arguments.get("type") or ()),
+    }
+
+
+def answer_data(
+    answer: Answer,
+    question: str,
+    brief: bool,
+    link: Callable[[Chunk], str],
+    kind_of: Callable[[Chunk], str],
+    *,
+    base: Path | None = None,
+) -> dict[str, Any]:
+    """Return the reply of ``ask`` for *answer*, as data for JSON.
+
+    Give the answer with numbered citations, and for each citation the
+    path from *base*, the location as data, and a link. A question the
+    documents do not cover gets the closest sources in place of an
+    answer.
+    """
+
+    def described(chunk: Chunk, number: int | None = None) -> dict[str, Any]:
+        entry: dict[str, Any] = {} if number is None else {"n": number}
+        entry |= {
+            "path": str(display_path(chunk.path, base)),
+            "type": kind_of(chunk),
+            "location": chunk.location.to_dict(),
+            "kind": chunk.kind,
+            "symbol": symbol_of(chunk),
+            "url": link(chunk),
+        }
+        return entry
+
+    # What the answer cost: the models, their tokens, and the seconds
+    # of each stage, so a client can show where the time went.
+    reply: dict[str, Any] = {
+        "covered": answer.covered,
+        "dropped": answer.dropped,
+        **answer_usage(answer),
+    }
+    if brief:
+        reply["answer"] = format_brief(answer)
+        return reply
+    if answer.covered:
+        text, cited = number_citations(answer)
+        layout, _ = layout_data(answer)
+        terms, cited = terms_data(answer, cited)
+        reply["answer"] = text
+        reply["layout"] = layout
+        reply["terms"] = terms
+        reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
+    else:
+        reply["answer"] = NOT_COVERED_TEXT
+        reply["sources"] = [described(c) for c in answer.sources]
+    # The text `ish --ask` prints, so a client in a terminal shows
+    # the answer the way a local run does.
+    reply["markdown"] = format_answer(
+        answer, question, link, base=base, kind_of=kind_of
+    )
+    return reply
+
+
 # The most follow-up turns one call may ask for. Each turn is one more
 # call to the model, which a client pays for in seconds and the server in
 # tokens.
 MAX_ASK_TURNS = 5
 
 
-def _turns(value: Any) -> int | None:
+def turns_of(value: Any) -> int | None:
     """Return the turns a call asked for, or None for the server's setting.
 
     Raise ``ValueError`` for a value that is not a count from 0 to

@@ -2,9 +2,10 @@
 
 ``ish remote search QUERY`` prints the results of the server. ``ish
 remote ask QUESTION`` gets chunks from the server and answers with the
-language model of this machine. The server runs no model. Only a line
-that starts with ``remote`` reaches this module, so a search of a local
-tree does not import it.
+language model of this machine. The server runs no model. ``ish remote
+mcp`` serves ``search_code`` and ``ask`` on stdio the same way, for an
+agent or an editor. Only a line that starts with ``remote`` reaches this
+module, so a search of a local tree does not import it.
 """
 
 import argparse
@@ -30,7 +31,8 @@ log = logging.getLogger("ish.cli")
 
 SEARCH = "search"
 ASK = "ask"
-COMMANDS = (SEARCH, ASK)
+MCP = "mcp"
+COMMANDS = (SEARCH, ASK, MCP)
 
 # What each command reads from the line, as its usage names it.
 _TEXT = {SEARCH: "query", ASK: "question"}
@@ -57,7 +59,9 @@ OPTIONS = (
 )
 
 _USAGE = (
-    "%(prog)s search QUERY [options]\n       %(prog)s ask QUESTION [--brief] [options]"
+    "%(prog)s search QUERY [options]\n"
+    "       %(prog)s ask QUESTION [--brief] [options]\n"
+    "       %(prog)s mcp [options]"
 )
 
 _DESCRIPTION = (
@@ -66,12 +70,14 @@ _DESCRIPTION = (
     "  search QUERY    Print the results of the server.\n"
     "  ask QUESTION    Answer from the chunks of the server, with the\n"
     "                  language model of this machine.\n"
+    "  mcp             Serve search_code and ask on stdio, the same way,\n"
+    "                  for an agent or an editor.\n"
     "\n"
     f"--url, {REMOTE_ENV_VAR}, or `remote` in a config file names the server,\n"
     "in that order. The server searches its own tree, so the line takes no path."
 )
 
-_USE = "Use: ish remote search QUERY, or ish remote ask QUESTION"
+_USE = "Use: ish remote search QUERY, ish remote ask QUESTION, or ish remote mcp"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,6 +121,8 @@ def _problem(args: argparse.Namespace, settings: Settings) -> str:
         return f"{args.command!r} is not a command of ish remote. {_USE}"
     if not settings.remote:
         return no_server
+    if args.command == MCP:
+        return _mcp_problem(args)
     text = _TEXT[args.command]
     if not args.words or not args.words[0].strip():
         return f"ish remote {args.command} needs a {text}."
@@ -125,6 +133,24 @@ def _problem(args: argparse.Namespace, settings: Settings) -> str:
         )
     if args.brief and args.command != ASK:
         return "--brief is an option of ish remote ask."
+    return ""
+
+
+def _mcp_problem(args: argparse.Namespace) -> str:
+    """Return what is wrong with a line of ``ish remote mcp``, or an empty text.
+
+    Each call of a tool brings its own text and its own filters, so the
+    line takes neither.
+    """
+    if args.words:
+        return "ish remote mcp takes no query. Each call of a tool brings its own."
+    if args.brief:
+        return "--brief is an option of ish remote ask."
+    if args.lang or args.under or args.type:
+        return (
+            "ish remote mcp takes no --lang, --under, or --type. "
+            "Each call of a tool brings its own."
+        )
     return ""
 
 
@@ -206,6 +232,29 @@ def ask(
     return 0 if answer.covered else 2
 
 
+def mcp(settings: Settings) -> int:
+    """Serve ``search_code`` and ``ask`` on stdio for the tree of the server.
+
+    Import the server here, so a search of a server loads none of it.
+    Keep stdout for the protocol. Return an exit code.
+    """
+    from ish.interfaces.mcp.protocol import Server
+    from ish.interfaces.mcp.remote import RemoteTools
+    from ish.interfaces.mcp.server import SERVER_NAME, installed_version
+
+    try:
+        tools = RemoteTools(settings)
+    except Exception as exc:
+        return _failed(exc)
+    log.info("Serving the tree of %s", tools.host)
+    server = Server(SERVER_NAME, installed_version(), tools.tools())
+    try:
+        server.serve(sys.stdin, sys.stdout)
+    except KeyboardInterrupt:
+        log.info("Interrupted")
+    return 0
+
+
 def _failed(exc: Exception) -> int:
     """Report *exc* in one line, and return the exit code of a failure."""
     log.error("%s", exc)
@@ -241,6 +290,8 @@ def main(argv: list[str] | None = None) -> int:
         "under": args.under or "",
         "type": tuple(args.type or ()),
     }
+    if args.command == MCP:
+        return mcp(settings)
     if args.command == ASK:
         return ask(settings, args.words[0], brief=args.brief, **narrowing)
     return search(settings, args.words[0], **narrowing)

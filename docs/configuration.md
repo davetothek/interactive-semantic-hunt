@@ -163,7 +163,7 @@ these three options, because they decide where the text of a document goes.
 
 | Backend | Where the text goes | Citations | Use it for |
 |---|---|---|---|
-| `anthropic` | The Anthropic Messages API, `api.anthropic.com` only. The key comes from `ANTHROPIC_API_KEY` | Native | A shared server |
+| `anthropic` | The Anthropic Messages API, `api.anthropic.com` only. The key comes from `ANTHROPIC_API_KEY` | Native | A shared machine, or a key of a team |
 | `ollama` | A generation model on the local daemon. A host that is not this machine is refused | From a JSON schema | Text that must stay on the machine |
 | `claude-cli` | The Claude Code CLI, on the account it is logged in to, with every tool and settings file off | From a JSON schema | One person on their own machine |
 
@@ -218,7 +218,7 @@ resolved. A file with large includes takes seconds to parse. ish keeps
 the last `ask_files` files parsed, 32 by default, so a second question
 about the same files reads none again.
 
-A server that answers from one tree can keep the whole tree. With
+A server that serves one tree can keep the whole tree. With
 `ask_warm`, `ish-mcp` parses the files of its tree on a thread when it
 starts, up to `ask_files`, so the first questions read no file either. The
 same pass collects what the acronyms of the tree stand for, which the

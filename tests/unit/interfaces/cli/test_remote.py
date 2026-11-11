@@ -1,9 +1,13 @@
 """Test the line of `ish remote`: its commands, its options, and its errors."""
 
+import io
+import json
 import logging
 
 import pytest
 
+from ish import bootstrap
+from ish.application.ports.chunk_source import ChunkSourceError
 from ish.interfaces.cli import run
 from ish.interfaces.cli.remote import OPTIONS, build_parser
 from ish.settings import CONFIG_FILENAME, REMOTE_ENV_VAR
@@ -11,7 +15,7 @@ from ish.settings import CONFIG_FILENAME, REMOTE_ENV_VAR
 # A server nothing listens on. A line that is refused never reaches for it.
 NOWHERE = "http://127.0.0.1:9/mcp"
 
-USE = "Use: ish remote search QUERY, or ish remote ask QUESTION"
+USE = "Use: ish remote search QUERY, ish remote ask QUESTION, or ish remote mcp"
 NO_SERVER = "No server is set. Give --url URL, or set ISH_REMOTE."
 
 
@@ -123,6 +127,7 @@ class TestTheOptions:
         text = capsys.readouterr().out
         assert text.startswith("usage: ish remote search QUERY [options]\n")
         assert "ish remote ask QUESTION [--brief] [options]" in text
+        assert "ish remote mcp [options]" in text
 
     def test_url_names_the_server(self) -> None:
         args = build_parser().parse_intermixed_args(["search", "q", "--url", NOWHERE])
@@ -149,3 +154,113 @@ class TestTheOptions:
     def test_lang_takes_a_name_this_machine_does_not_know(self) -> None:
         args = build_parser().parse_intermixed_args(["search", "q", "--lang", "ada"])
         assert args.lang == ["ada"]
+
+
+LIST = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+
+class Served:
+    """A chunk source that a test of `ish remote mcp` may build and not call."""
+
+    host = "docs.example.invalid"
+    version = "1.2.3"
+
+
+class TestMcp:
+    """`ish remote mcp` serves two tools on stdio for the tree of a server."""
+
+    @pytest.fixture()
+    def built(self, tmp_path, monkeypatch) -> list[str]:
+        seen: list[str] = []
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            bootstrap,
+            "build_chunk_source",
+            lambda settings: seen.append(settings.remote) or Served(),
+        )
+        return seen
+
+    def _serve(self, monkeypatch, argv: list[str], *lines: dict) -> tuple[int, list]:
+        stdout = io.StringIO()
+        text = "".join(f"{json.dumps(line)}\n" for line in lines)
+        monkeypatch.setattr("sys.stdin", io.StringIO(text))
+        monkeypatch.setattr("sys.stdout", stdout)
+        code = run(argv)
+        return code, [json.loads(line) for line in stdout.getvalue().splitlines()]
+
+    def test_url_names_the_server_and_two_tools_are_served(
+        self, built: list[str], monkeypatch
+    ) -> None:
+        code, replies = self._serve(
+            monkeypatch, ["remote", "mcp", "--url", NOWHERE], LIST
+        )
+        assert code == 0
+        ((reply),) = replies
+        names = [tool["name"] for tool in reply["result"]["tools"]]
+        assert names == ["search_code", "ask"]
+        assert built == [NOWHERE]
+
+    def test_ish_remote_names_the_server(self, built: list[str], monkeypatch) -> None:
+        monkeypatch.setenv(REMOTE_ENV_VAR, NOWHERE)
+        assert self._serve(monkeypatch, ["remote", "mcp"])[0] == 0
+        assert built == [NOWHERE]
+
+    def test_no_server_shows_the_option_and_the_variable(
+        self, built: list[str], caplog
+    ) -> None:
+        assert run(["remote", "mcp"]) == 1
+        assert _errors(caplog) == [NO_SERVER]
+        assert built == []
+
+    @pytest.mark.parametrize(
+        ("extra", "error"),
+        [
+            (
+                ["watchdog"],
+                "ish remote mcp takes no query. Each call of a tool brings its own.",
+            ),
+            (["--brief"], "--brief is an option of ish remote ask."),
+            (
+                ["--under", "docs"],
+                "ish remote mcp takes no --lang, --under, or --type. "
+                "Each call of a tool brings its own.",
+            ),
+            (
+                ["--lang", "markdown"],
+                "ish remote mcp takes no --lang, --under, or --type. "
+                "Each call of a tool brings its own.",
+            ),
+            (
+                ["--type", "doc"],
+                "ish remote mcp takes no --lang, --under, or --type. "
+                "Each call of a tool brings its own.",
+            ),
+        ],
+    )
+    def test_the_line_takes_no_text_and_no_filter(
+        self, extra: list[str], error: str, built: list[str], caplog
+    ) -> None:
+        assert run(["remote", "mcp", "--url", NOWHERE, *extra]) == 1
+        assert _errors(caplog) == [error]
+        assert built == []
+
+    def test_a_client_error_at_start_is_one_line(
+        self, tmp_path, monkeypatch, capsys, caplog
+    ) -> None:
+        def refuse(settings):
+            raise ChunkSourceError("Set ISH_MCP_TOKEN to the token of the server.")
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(bootstrap, "build_chunk_source", refuse)
+        assert run(["remote", "mcp", "--url", NOWHERE]) == 1
+        assert _errors(caplog) == ["Set ISH_MCP_TOKEN to the token of the server."]
+        assert capsys.readouterr().out == ""
+
+    def test_ctrl_c_stops_the_server(self, built: list[str], monkeypatch) -> None:
+        from ish.interfaces.mcp.protocol import Server
+
+        def interrupted(self, stream_in, stream_out):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(Server, "serve", interrupted)
+        assert run(["remote", "mcp", "--url", NOWHERE]) == 0

@@ -46,12 +46,13 @@ behind a bearer token, and a REST API stays out by decision.
 `ish --ask` and the `ask` MCP tool answer a question from the chunks a
 search finds, with citations. A language model writes the answer, and
 only a backend that `allowed_language_models` names is ever built. Only
-the stdio server offers `ask`. A server over HTTP builds no model.
+the stdio server offers `ask`.
 
 `ish remote` searches the tree of an `ish-mcp --http` server, through
 the `RemoteIsh` session. For a question, the server returns chunks with
 their text and runs no model. The model of the machine that asks writes
-the answer, under the same allowlist.
+the answer, under the same allowlist. `ish remote mcp` serves
+`search_code` and `ask` on stdio the same way, for an agent or an editor.
 
 ## Architecture
 
@@ -133,6 +134,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Interface | `src/ish/interfaces/mcp/protocol.py` | MCP JSON-RPC dispatch |
 | Interface | `src/ish/interfaces/mcp/transport.py` | MCP framing: stdio, and HTTP behind a token |
 | Interface | `src/ish/interfaces/mcp/server.py` | MCP tools (`ish-mcp`) |
+| Interface | `src/ish/interfaces/mcp/remote.py` | `search_code` and `ask` on stdio for the tree of a server (`ish remote mcp`) |
 
 Languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`. Backends: `ollama` (default), `llama.cpp`, `st`.
 Language models: `anthropic`, `ollama`, `claude-cli`, none by default.
