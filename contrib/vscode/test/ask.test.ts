@@ -11,7 +11,7 @@ function script(body: string, signal?: AbortSignal) {
 }
 
 test("the question follows the flag and the separator", () => {
-  assert.deepEqual(askArgs("-v is what", "/tree"), ["--ask", "--", "-v is what", "/tree"]);
+  assert.deepEqual(askArgs("-v is what", "/tree"), ["ask", "--", "-v is what", "/tree"]);
 });
 
 test("an answer is the text on stdout", () => {
@@ -75,7 +75,7 @@ test("a run receives its arguments and its directory", async () => {
     ["-e", "console.log(JSON.stringify([process.argv.slice(1), process.cwd()]))", "--", ...askArgs("-q", "/tree")],
     __dirname,
   );
-  assert.deepEqual(JSON.parse(outcome.stdout), [["--ask", "--", "-q", "/tree"], __dirname]);
+  assert.deepEqual(JSON.parse(outcome.stdout), [["ask", "--", "-q", "/tree"], __dirname]);
 });
 
 test("a command that does not exist says so and does not reject", async () => {

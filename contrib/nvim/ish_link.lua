@@ -1,6 +1,6 @@
 -- Open the link under the cursor in a buffer, at the lines it names.
 --
--- An answer of `ish --ask` lists each source as a link with its lines in
+-- An answer of `ish ask` lists each source as a link with its lines in
 -- the fragment, such as `file:///src/app.py#L12-27`, or with `link_base`
 -- set on the server, `https://docs.example.com/tree/app.py#L12-27`. The
 -- prose cites a source with a marker such as `[^1]`, and the opener

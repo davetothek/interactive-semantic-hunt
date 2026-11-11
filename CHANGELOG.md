@@ -75,8 +75,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - A line without the word `remote` reads the tree on this machine, also
   when `ISH_REMOTE` or a config file names a server. `ish --ask` with
   such a server answers here and prints a warning that names
-  `ish remote ask`. An editor client asks through `ish --ask`, so it
-  answers from the local tree.
+  `ish remote ask`.
+- The Neovim and VS Code clients ask through `ish ask`, and answer from
+  the local tree. An agent or an editor reads a server through `ish
+  remote mcp`.
 - A config file in a tree, at or above the working directory, does not
   name a server. ish ignores its `remote`, and `ish remote` prints a
   warning that names the file. A tree that named the server would choose where your token

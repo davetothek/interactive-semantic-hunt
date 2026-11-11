@@ -43,7 +43,7 @@ nothing itself. `Ish` is the session the other three are built on. Nothing
 beyond these is built. `ish-mcp --http` serves the MCP tools over HTTP
 behind a bearer token, and a REST API stays out by decision.
 
-`ish --ask` and the `ask` MCP tool answer a question from the chunks a
+`ish ask` and the `ask` MCP tool answer a question from the chunks a
 search finds, with citations. A language model writes the answer, and
 only a backend that `allowed_language_models` names is ever built. Only
 the stdio server offers `ask`.

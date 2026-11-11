@@ -121,5 +121,5 @@ finishes a filter word. Nothing else is added.
 
 - The picker never waits on the main loop. Return a function to fzf-lua, not
   a table.
-- A question from an editor runs `ish --ask`, in Neovim and in VS Code. It
+- A question from an editor runs `ish ask`, in Neovim and in VS Code. It
   answers from the local tree, as the resident server does.

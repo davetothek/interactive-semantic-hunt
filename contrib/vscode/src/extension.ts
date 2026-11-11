@@ -8,7 +8,7 @@
 // exactly as they are from the command line, the picker, and Neovim.
 //
 // A question is the one thing that does not go to the server. It runs
-// `ish --ask`, which answers from the tree on this machine with the
+// `ish ask`, which answers from the tree on this machine with the
 // language model of the settings. The answer opens as a Markdown
 // document beside the editor.
 

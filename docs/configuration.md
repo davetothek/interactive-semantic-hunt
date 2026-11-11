@@ -149,7 +149,7 @@ it from the model card, so there only the cap follows.
 
 ## Answer questions
 
-`ish --ask` and the `ask` MCP tool send the text of the chunks a search
+`ish ask` and the `ask` MCP tool send the text of the chunks a search
 finds to a language model. Nothing is sent until the configuration names a
 backend and allows it:
 
@@ -197,7 +197,7 @@ up to that many turns. It reads the first sources, and when they fall short
 or name a term worth finding, it sends up to three new queries. ish runs
 them with the same filters, adds the best chunks it has not read, and asks
 again. The model still sees only what ish sends, so this works the same on
-a tree of documents with no code at all. `ish --ask` lists the follow-up
+a tree of documents with no code at all. `ish ask` lists the follow-up
 searches below the sources.
 
 ```toml

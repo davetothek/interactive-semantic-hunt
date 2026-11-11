@@ -76,7 +76,7 @@ map('n', '<leader>fa', function() require('utils.ish_ask').ask() end,
 ```
 
 It asks for the question and opens the split at once, with the seconds it
-has waited. When `ish --ask` returns, the split holds the answer as
+has waited. When `ish ask` returns, the split holds the answer as
 Markdown. The command line answers from the tree on this machine, so the
 language model and the filter words in the question are the ones a shell
 uses. It needs `ish` on PATH. A call can give the question, the tree, and more flags:
@@ -103,7 +103,7 @@ ask.link_keys = { 'gf', '<CR>' }
 from a QuickPick. Press `Ctrl+Alt+I` and type. The highlighted chunk shows
 in the editor beside the picker, Enter opens it with its lines selected, and
 Tab finishes a filter word. While the index refreshes, the status bar shows
-`ish ███░░░░░ 38%`. `ish: Ask a question` runs `ish --ask` and opens the
+`ish ███░░░░░ 38%`. `ish: Ask a question` runs `ish ask` and opens the
 answer as a Markdown document beside the editor. It needs `ish-mcp` on PATH,
 and `ish` for a question, like the Neovim client, and
 [its README](https://github.com/davetothek/interactive-semantic-hunt/blob/main/contrib/vscode/README.md) says how to build, install, and
@@ -182,9 +182,10 @@ question and builds no language model, so it needs no model and no API
 key. A client of an older release that calls `ask` gets "Unknown tool:
 ask". `sources` takes a `query`, and
 `path`, `limit`, `lang`, `under`, and `type` as `search_code` does. It
-returns JSON: `sources` holds the ranked chunks, each with its path,
-location, link, and text, and `terms` holds the meaning of each acronym the
-texts use, with the chunk that spells it out. The tool runs no language
+returns JSON: `sources` holds the ranked chunks, each with its `path`,
+`type`, `location`, `kind`, `symbol`, `language`, `score`, `url`, and
+`text`, and `terms` holds the meaning of each acronym the texts use, with
+the chunk that spells it out. The tool runs no language
 model. A client reads it to write an answer with a model of its own. One
 call returns at most 200 chunks.
 

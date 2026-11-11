@@ -66,6 +66,16 @@ nvim $(ish -i src/)
 
 Type to search, `up`/`down` to move, `enter` to choose, `escape` to quit.
 
+Answer a question from the chunks a search finds, with each claim cited to
+its source. A language model writes the answer, and only one that you
+allow in the configuration gets any text:
+
+```sh
+ish ask "how does the release branch get its version" docs/
+```
+
+See [answer questions](https://davetothek.github.io/interactive-semantic-hunt/configuration/#answer-questions).
+
 The first search of a tree builds its index. Later searches parse only the
 files that changed and embed only text they have not seen.
 
@@ -92,7 +102,8 @@ Press Tab to finish a filter word: `ty` becomes `type:`, `lang:cp` becomes
 | Neovim | `contrib/nvim/ish.lua`, an fzf-lua picker | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-neovim) |
 | VS Code | `contrib/vscode/`, a QuickPick on `Ctrl+Alt+I` | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-vs-code) |
 | Python | `from ish.interfaces.python.api import Ish` | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-python) |
-| an agent | `ish-mcp`, a Model Context Protocol server | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-an-agent) |
+| an agent | `ish mcp`, a Model Context Protocol server | [clients](https://davetothek.github.io/interactive-semantic-hunt/clients/#use-from-an-agent) |
+| a server | `ish remote search`, `ish remote ask`, and `ish remote mcp` read the tree of an `ish mcp --http` server. `ish remote login` signs in | [ask a server](https://davetothek.github.io/interactive-semantic-hunt/usage/#ask-a-server) |
 
 To keep the index of a large tree current in the background, run
 `ish-serve /path/to/tree`. Every client then reads the index and refreshes
@@ -114,6 +125,10 @@ exclude = ["/vendor/", "/generated/", "_pb2\\.py$"]
 
 Keep generated code out of the index. It is large, nobody searches it by
 meaning, and embedding costs about one chunk per second.
+
+A file in a tree cannot set `remote`, the server of `ish remote`, because a
+tree you cloned would choose where your token goes. Set it in
+`~/.config/ish/config.toml`.
 
 ## Documentation
 

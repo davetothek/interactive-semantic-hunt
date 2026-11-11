@@ -8,7 +8,7 @@ server that ships with [interactive-semantic-hunt](https://pypi.org/project/inte
 It is the same shape as the Neovim client in `contrib/nvim/`: one
 resident server per workspace folder, started on the first search and
 reused after, so a query costs a round trip and no process start.
-Nothing here searches on its own. A question runs `ish --ask`, the
+Nothing here searches on its own. A question runs `ish ask`, the
 command line of the same package.
 
 When `ish-serve` keeps the workspace folder current, or a folder above

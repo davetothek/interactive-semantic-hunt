@@ -1,6 +1,6 @@
 // Ask a question through the command line, and read what came back.
 //
-// `ish --ask` writes the answer as Markdown on stdout, with each source
+// `ish ask` writes the answer as Markdown on stdout, with each source
 // as a link. Running the command line keeps one set of settings: the
 // language model and the filters are the ones a shell uses, so an
 // answer here is the answer there. It answers from the tree on this
@@ -33,7 +33,7 @@ export type Answer = { markdown: string } | { reason: string };
  * read as a flag.
  */
 export function askArgs(question: string, root: string): string[] {
-  return ["--ask", "--", question, root];
+  return ["ask", "--", question, root];
 }
 
 /**

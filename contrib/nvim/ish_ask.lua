@@ -1,7 +1,7 @@
 -- lua/utils/ish_ask.lua
 -- Ask ish a question, and read the answer in a split.
 --
--- The answer comes from `ish --ask`, which writes Markdown on stdout
+-- The answer comes from `ish ask`, which writes Markdown on stdout
 -- with each source as a link. Running the command line keeps one set of
 -- settings: the language model and the filters are the ones a shell
 -- uses, so an answer here is the answer there.
@@ -41,7 +41,7 @@ end
 -- question follows `--`, so one that starts with a hyphen is not read
 -- as a flag.
 local function command(question, opts)
-  local parts = { 'ish', '--ask' }
+  local parts = { 'ish', 'ask' }
   vim.list_extend(parts, opts.args or {})
   vim.list_extend(parts, { '--', question, opts.cwd or root() })
   return parts

@@ -88,10 +88,10 @@ nvim $(ish -i src/)
 
 ## Ask a question
 
-`--ask` answers the query as a question, from the chunks a search finds:
+`ish ask` answers a question from the chunks a search finds:
 
 ```sh
-ish --ask "how does the release branch get its version" docs/
+ish ask "how does the release branch get its version" docs/
 ```
 
 ish prints Markdown a person reads from the top down: a short answer, a
@@ -127,7 +127,7 @@ source is a link that opens the file at its lines:
 It reads well in a terminal, and an editor shows it as a document:
 
 ```sh
-ish --ask "how does the release branch get its version" docs/ | nvim -c 'set ft=markdown' -
+ish ask "how does the release branch get its version" docs/ | nvim -c 'set ft=markdown' -
 ```
 
 In Neovim, `gx` on a link opens the source. With `link_base` set, the
@@ -184,7 +184,7 @@ and nothing else, and ish prints it as plain text with no citations, which
 suits a script or a shell prompt:
 
 ```sh
-ish --brief "how long is the watchdog period while streaming" docs/
+ish ask --brief "how long is the watchdog period while streaming" docs/
 ```
 
 Ask again without `--brief` for the sources. A brief answer costs about a
@@ -289,7 +289,7 @@ builds a language model and sends no text anywhere.
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
 | `--color WHEN` | Color the logs, the timing table, and a rendered answer: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
-| `--render`, `--no-render` | Render the answer of `--ask` on a terminal. A pipe still gets the Markdown |
+| `--render`, `--no-render` | Render the answer of `ish ask` on a terminal. A pipe still gets the Markdown |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
 | `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
@@ -309,8 +309,8 @@ builds a language model and sends no text anywhere.
 | `--sweep` | Delete the vectors no index of the path's repository references, and stop |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
-| `--ask` | Answer the query as a question, with the sources it cites |
-| `--brief` | Answer the query in a sentence or two, with no sources |
+| `--brief` | With `ish ask`, answer in a sentence or two, with no sources |
+| `--ask`, `--brief` with no command | The spelling of `ish ask` and `ish ask --brief` before the commands. They work for one release and print a warning |
 | `--language-model NAME` | Language model backend that writes answers: `anthropic`, `ollama`, `claude-cli` |
 | `--answer-model MODEL` | Model that backend runs. Required, there is no default |
 | `--allowed-language-models NAME ...` | Backends that may receive text. Empty allows none |
