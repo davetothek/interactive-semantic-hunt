@@ -11,7 +11,6 @@ that process writes, and passes a request for a refresh on to it.
 
 import json
 import logging
-import os
 import sys
 import threading
 import time
@@ -833,9 +832,8 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
 
     if args.http:
         try:
-            transport = HttpTransport(
-                *_address(args.http), os.environ.get(TOKEN_VARIABLE, "")
-            )
+            address = _address(args.http)
+            transport = HttpTransport(*address, bootstrap.build_admission(settings))
         except ValueError as exc:
             log.error("%s", exc)
             return 1

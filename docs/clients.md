@@ -169,7 +169,9 @@ ish-mcp --http 0.0.0.0:8765
 
 Every request goes to `/mcp` and carries the token as
 `Authorization: Bearer <token>`. A request without it, or with a wrong one,
-gets 401 and runs nothing. The server refuses to start without a token. A
+gets 401 and runs nothing. The server refuses to start without a token.
+`auth` in the config of the server names the ways it admits a request.
+`token`, the default, admits the token in `ISH_MCP_TOKEN`. A
 bare port, such as `--http 8765`, listens on `127.0.0.1` only. Each request
 runs on its own thread, so a slow search for one client does not hold up
 another. Run it in the tree it serves, beside an `ish-serve` that keeps the
@@ -211,7 +213,7 @@ certificate when the token crosses a network you do not trust.
 `ish remote mcp` serves `search_code` and `ask` on stdio for the tree of a
 server. The server searches and returns chunks, and the language model of
 this machine writes each answer, with the login of this machine. `--url`,
-`ISH_REMOTE`, or `remote` in a config file names the server, as for the
+`ISH_REMOTE`, or `remote` in your user config file names the server, as for the
 other commands of `ish remote`:
 
 ```json

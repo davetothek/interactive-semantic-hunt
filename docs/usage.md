@@ -193,8 +193,8 @@ third of the output tokens and half the time.
 ### Ask a server
 
 `ish remote` reads an `ish mcp --http` server, not a tree on this machine.
-Name the server with `--url`, with `ISH_REMOTE`, or with `remote` in the
-config file, in that order, and put its token in `ISH_MCP_TOKEN`:
+Name the server with `--url`, with `ISH_REMOTE`, or with `remote` in your
+user config file, in that order, and put its token in `ISH_MCP_TOKEN`:
 
 ```sh
 export ISH_REMOTE="https://docs.example.com/mcp"
@@ -203,6 +203,11 @@ ish remote search "watchdog period"
 ish remote ask "how is the watchdog configured"
 ish remote ask --brief "how long is the watchdog period"
 ```
+
+A config file in a tree does not name a server. ish ignores its `remote`,
+and `ish remote` prints a warning that names the file, because a tree you
+cloned would choose where your token goes. A file you name with `--config` may name
+one.
 
 The token is the one secret, and it goes in the environment. ish refuses
 a URL that holds a user name or a password, because the URL names the

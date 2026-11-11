@@ -25,7 +25,14 @@ from ish.interfaces.format import (
 )
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.remote import RemoteIsh
-from ish.settings import CONFIG_OPTION, REMOTE_ENV_VAR, Settings, load_settings
+from ish.settings import (
+    CONFIG_OPTION,
+    REMOTE_ENV_VAR,
+    Settings,
+    load_settings,
+    tree_files_naming_a_server,
+    user_config_path,
+)
 
 log = logging.getLogger("ish.cli")
 
@@ -73,8 +80,9 @@ _DESCRIPTION = (
     "  mcp             Serve search_code and ask on stdio, the same way,\n"
     "                  for an agent or an editor.\n"
     "\n"
-    f"--url, {REMOTE_ENV_VAR}, or `remote` in a config file names the server,\n"
-    "in that order. The server searches its own tree, so the line takes no path."
+    f"--url, {REMOTE_ENV_VAR}, or `remote` in the user config file names the\n"
+    "server, in that order. A config file in a tree names no server. The\n"
+    "server searches its own tree, so the line takes no path."
 )
 
 _USE = "Use: ish remote search QUERY, ish remote ask QUESTION, or ish remote mcp"
@@ -278,6 +286,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ish: {exc}", file=sys.stderr)
         return 1
     setup_logging(verbosity=settings.verbosity, color=resolve_color(settings.color))
+    # A tree that named the server would choose where the token goes.
+    for path in tree_files_naming_a_server(Path.cwd(), config=args.config):
+        log.warning(
+            "Ignore remote in %s. A file in a tree does not name a server. "
+            "Give --url, set %s, or set remote in %s.",
+            path,
+            REMOTE_ENV_VAR,
+            user_config_path(),
+        )
 
     problem = _problem(args, settings)
     if problem:

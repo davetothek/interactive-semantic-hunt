@@ -15,6 +15,7 @@ from ish.settings import (
     MCP_TOKEN_ENV_VAR,
     REMOTE_ENV_VAR,
     Settings,
+    user_config_path,
 )
 from tests.integration.cli.conftest import Served
 from tests.integration.cli.test_cli_ask import FakeModel, _model
@@ -31,6 +32,13 @@ FIRST = "[1.00] docs/boot.md:1-3  document  Watchdog"
 
 def _errors(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+
+
+def _user_config(text: str) -> None:
+    """Write the config file of the user, which the test isolates."""
+    path = user_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
 
 
 def _names_the_server(served: Served) -> str:
@@ -128,20 +136,70 @@ class TestWhichServer:
         assert run(["remote", "search", "watchdog", "--url", served.url]) == 0
         assert capsys.readouterr().out.splitlines()[0] == FIRST
 
-    def test_the_environment_wins_over_a_config_file(
-        self, served: Served, tmp_path, capsys
+    def test_the_environment_wins_over_the_user_config_file(
+        self, served: Served, capsys
     ) -> None:
-        (tmp_path / CONFIG_FILENAME).write_text(f'remote = "{NOWHERE}"\n')
+        _user_config(f'remote = "{NOWHERE}"\n')
         assert run(["remote", "search", "watchdog"]) == 0
         assert capsys.readouterr().out.splitlines()[0] == FIRST
 
-    def test_a_config_file_names_the_server(
+    def test_the_user_config_file_names_the_server(
+        self, served: Served, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.delenv(REMOTE_ENV_VAR)
+        _user_config(f'remote = "{served.url}"\n')
+        assert run(["remote", "search", "watchdog"]) == 0
+        assert capsys.readouterr().out.splitlines()[0] == FIRST
+
+    def test_a_named_config_file_names_the_server(
         self, served: Served, tmp_path, monkeypatch, capsys
     ) -> None:
         monkeypatch.delenv(REMOTE_ENV_VAR)
-        (tmp_path / CONFIG_FILENAME).write_text(f'remote = "{served.url}"\n')
-        assert run(["remote", "search", "watchdog"]) == 0
+        named = tmp_path / "docs.toml"
+        named.write_text(f'remote = "{served.url}"\n')
+        assert run(["remote", "search", "watchdog", "--config", str(named)]) == 0
         assert capsys.readouterr().out.splitlines()[0] == FIRST
+
+
+class TestAFileInATreeNamesNoServer:
+    """A tree that names the server would choose where the token goes."""
+
+    def test_the_file_is_named_and_no_request_is_sent(
+        self, served: Served, tmp_path, monkeypatch, caplog
+    ) -> None:
+        monkeypatch.delenv(REMOTE_ENV_VAR)
+        project = tmp_path / CONFIG_FILENAME
+        project.write_text(f'remote = "{served.url}"\n')
+        assert run(["remote", "search", "watchdog"]) == 1
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert warnings == [
+            f"Ignore remote in {project}. A file in a tree does not name a server. "
+            f"Give --url, set {REMOTE_ENV_VAR}, or set remote in {user_config_path()}."
+        ]
+        assert _errors(caplog) == [
+            "No server is set. Give --url URL, or set ISH_REMOTE."
+        ]
+        assert served.calls == []
+
+    def test_a_file_above_the_tree_names_no_server_either(
+        self, served: Served, tmp_path, monkeypatch, caplog
+    ) -> None:
+        monkeypatch.delenv(REMOTE_ENV_VAR)
+        (tmp_path / CONFIG_FILENAME).write_text(f'remote = "{served.url}"\n')
+        below = tmp_path / "docs"
+        below.mkdir()
+        monkeypatch.chdir(below)
+        assert run(["remote", "search", "watchdog"]) == 1
+        assert served.calls == []
+
+    def test_the_other_options_of_the_file_still_apply(
+        self, served: Served, tmp_path, capsys
+    ) -> None:
+        (tmp_path / CONFIG_FILENAME).write_text(f'remote = "{NOWHERE}"\nlimit = 1\n')
+        assert run(["remote", "search", "watchdog"]) == 0
+        assert capsys.readouterr().out.splitlines() == [FIRST]
 
 
 class TestAsk:

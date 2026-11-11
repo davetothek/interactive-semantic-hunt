@@ -27,8 +27,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   model. `--brief` gives the short answer, and `--ask-turns N` lets the
   model search the server again. The last line of stderr names the
   server and its version.
-- `--url`, then `ISH_REMOTE`, then `remote` in a config file names the
-  server of `ish remote`. Its token is in `ISH_MCP_TOKEN`.
+- `--url`, then `ISH_REMOTE`, then `remote` in the user config file names
+  the server of `ish remote`. Its token is in `ISH_MCP_TOKEN`.
+- `auth` names the ways a server over HTTP admits a request. `token`, the
+  default, admits the token in `ISH_MCP_TOKEN`, as before. An empty `auth`
+  stops the server with an error that names it.
 - `ish remote mcp` serves `search_code` and `ask` on stdio for the tree
   of a server, as `ish remote search` and `ish remote ask` do. An agent or
   an editor gets the tree of the server, and the language model of this
@@ -46,6 +49,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   such a server answers here and prints a warning that names
   `ish remote ask`. An editor client asks through `ish --ask`, so it
   answers from the local tree.
+- A config file in a tree, at or above the working directory, does not
+  name a server. ish ignores its `remote`, and `ish remote` prints a
+  warning that names the file. A tree that named the server would choose where your token
+  goes. Set `remote` in the user config file, or in a file you name with
+  `--config`.
 - `--remote URL` with `--ask` or `--brief` gets chunks from the server,
   and the language model of this machine writes the answer. This machine
   needs a `language_model` for it.

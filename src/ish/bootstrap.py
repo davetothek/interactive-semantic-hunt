@@ -15,7 +15,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.language_model import LANGUAGE_MODELS
@@ -52,6 +52,10 @@ from ish.application.scan import Scan
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
 from ish.settings import MCP_TOKEN_ENV_VAR, Settings
+
+if TYPE_CHECKING:
+    # For the type checker alone. A local search loads no authentication code.
+    from ish.application.ports import authenticator
 
 log = logging.getLogger(__name__)
 
@@ -283,6 +287,47 @@ def build_prompts(settings: Settings) -> Prompts:
     """Read the instructions, from ``prompt_dir`` where it holds a file."""
     directory = Path(settings.prompt_dir).expanduser() if settings.prompt_dir else None
     return load_prompts(directory)
+
+
+def build_admission(
+    settings: Settings,
+) -> Callable[[str], "authenticator.Identity | None"]:
+    """Construct the check a server over HTTP runs on each bearer token.
+
+    Build each method that ``auth`` names, and return a function that
+    asks them in turn and returns the first identity. Import the methods
+    here, so a run that serves no HTTP loads none of them. Raise
+    ``ValueError`` when ``auth`` names no method or an unknown one, and
+    when a method lacks a value it needs.
+    """
+    from ish.adapters.authenticator import AUTHENTICATORS
+    from ish.application.ports.authenticator import Authenticator
+
+    if not settings.auth:
+        raise ValueError(
+            "Set auth to the ways the server admits a request, "
+            'such as auth = ["token"].'
+        )
+    unknown = [name for name in settings.auth if name not in AUTHENTICATORS]
+    if unknown:
+        valid = ", ".join(sorted(AUTHENTICATORS))
+        raise ValueError(f"Unknown auth method {unknown[0]!r}. Valid methods: {valid}")
+    # What the methods may read. Each one reads only its own keys.
+    options = {
+        "token": os.environ.get(MCP_TOKEN_ENV_VAR, ""),
+        "token_variable": MCP_TOKEN_ENV_VAR,
+    }
+    built = [AUTHENTICATORS[name](options) for name in dict.fromkeys(settings.auth)]
+    methods = [method for method in built if isinstance(method, Authenticator)]
+
+    def admit(bearer: str) -> "authenticator.Identity | None":
+        for method in methods:
+            identity = method.admit(bearer)
+            if identity is not None:
+                return identity
+        return None
+
+    return admit
 
 
 def build_chunk_source(settings: Settings) -> ChunkSource:

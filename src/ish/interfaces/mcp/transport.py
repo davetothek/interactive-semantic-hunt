@@ -13,8 +13,10 @@ To add a transport, write a class with a ``serve(server)`` method beside
 import json
 import logging
 import threading
+from collections.abc import Callable
 from typing import Any, Protocol, TextIO, runtime_checkable
 
+from ish.application.ports.authenticator import Identity
 from ish.settings import MCP_TOKEN_ENV_VAR
 
 log = logging.getLogger(__name__)
@@ -69,7 +71,7 @@ MAX_BODY_BYTES = 1_000_000
 
 
 class HttpTransport:
-    """Carry MCP over Streamable HTTP, behind one shared bearer token.
+    """Carry MCP over Streamable HTTP, behind a bearer token.
 
     A client posts one JSON-RPC message to ``/mcp`` and reads the reply
     in the response body. A notification gets 202 and no body. Every
@@ -77,24 +79,18 @@ class HttpTransport:
     GET is refused. Each request runs on its own thread, so a slow
     answer for one client does not hold up another.
 
-    A request without the token, or with a wrong one, gets 401 and runs
-    nothing.
+    A request without a bearer token, or with one that *admit* does not
+    know, gets 401 and runs nothing. The transport knows no method of
+    authentication. It asks *admit* about each token.
     """
 
-    def __init__(self, host: str, port: int, token: str) -> None:
-        """Listen on *host* and *port*, and accept *token* only.
-
-        Raise ``ValueError`` without a token. A server on a network with
-        no token would answer anyone who can reach it.
-        """
-        if not token:
-            raise ValueError(
-                f"Set {TOKEN_VARIABLE} before serving MCP over HTTP. "
-                "Every request must carry it as a bearer token."
-            )
+    def __init__(
+        self, host: str, port: int, admit: Callable[[str], Identity | None]
+    ) -> None:
+        """Listen on *host* and *port*, and run a request *admit* admits."""
         self._host = host
         self._port = port
-        self._expected = f"Bearer {token}".encode()
+        self._admit = admit
         self._httpd: Any = None
         self.address: tuple[str, int] | None = None
         # Set once the socket is bound, so a caller that asked for port 0
@@ -124,18 +120,19 @@ class HttpTransport:
             self._httpd.shutdown()
 
     def _handler_for(self, server: Handler) -> type:
-        import hmac
         from http.server import BaseHTTPRequestHandler
 
-        expected = self._expected
+        admit = self._admit
 
         class _Request(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
                 if self.path != MCP_PATH:
                     self._reply(404)
                     return
-                given = (self.headers.get("Authorization") or "").encode()
-                if not hmac.compare_digest(given, expected):
+                scheme, _, bearer = (self.headers.get("Authorization") or "").partition(
+                    " "
+                )
+                if scheme != "Bearer" or admit(bearer) is None:
                     self._reply(401, headers={"WWW-Authenticate": "Bearer"})
                     return
                 length = int(self.headers.get("Content-Length") or 0)

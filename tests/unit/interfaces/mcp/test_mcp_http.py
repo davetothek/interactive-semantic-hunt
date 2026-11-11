@@ -8,6 +8,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from ish.adapters.authenticator.token import StaticToken
 from ish.interfaces.mcp import server as server_module
 from ish.interfaces.mcp.protocol import Server, Tool
 from ish.interfaces.mcp.transport import (
@@ -19,12 +20,15 @@ from ish.interfaces.mcp.transport import (
 
 TOKEN = "test-token-EXAMPLE"
 
+# The check a server runs on each request, with the static token alone.
+ADMIT = StaticToken(TOKEN, TOKEN_VARIABLE).admit
+
 
 class Running:
     """A server on a free port, served from a thread."""
 
     def __init__(self, tools: list[Tool]) -> None:
-        self.transport = HttpTransport("127.0.0.1", 0, TOKEN)
+        self.transport = HttpTransport("127.0.0.1", 0, ADMIT)
         self.calls: list[str] = []
         server = Server("test", "0", tools)
         original = server.handle_line
@@ -96,9 +100,43 @@ class TestAuth:
         assert running.post(_call("hello"), token=token)[0] == 401
         assert running.calls == []
 
-    def test_no_token_configured_refuses_to_start(self) -> None:
-        with pytest.raises(ValueError, match=TOKEN_VARIABLE):
-            HttpTransport("127.0.0.1", 0, "")
+    @pytest.mark.parametrize("header", [f"Basic {TOKEN}", f"bearer {TOKEN}", TOKEN])
+    def test_the_token_counts_only_as_a_bearer_token(
+        self, running: Running, header: str
+    ) -> None:
+        request = urllib.request.Request(
+            f"{running.url}/mcp", data=json.dumps(_call("hello")).encode()
+        )
+        request.add_header("Authorization", header)
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            urllib.request.urlopen(request, timeout=10)
+        assert refused.value.code == 401
+        assert running.calls == []
+
+    def test_the_transport_asks_with_the_token_alone(self) -> None:
+        asked: list[str] = []
+
+        def admit(bearer: str):
+            asked.append(bearer)
+            return None
+
+        transport = HttpTransport("127.0.0.1", 0, admit)
+        thread = threading.Thread(target=transport.serve, args=(Server("t", "0", []),))
+        thread.start()
+        try:
+            assert transport.ready.wait(5)
+            assert transport.address is not None
+            host, port = transport.address
+            request = urllib.request.Request(
+                f"http://{host}:{port}/mcp", data=b"{}", method="POST"
+            )
+            request.add_header("Authorization", f"Bearer {TOKEN}")
+            with pytest.raises(urllib.error.HTTPError):
+                urllib.request.urlopen(request, timeout=10)
+        finally:
+            transport.stop()
+            thread.join(5)
+        assert asked == [TOKEN]
 
 
 class TestFraming:
@@ -143,10 +181,10 @@ class TestFraming:
         assert body is not None and body["error"]["code"] == -32700
 
     def test_it_is_a_transport(self) -> None:
-        assert isinstance(HttpTransport("127.0.0.1", 0, TOKEN), Transport)
+        assert isinstance(HttpTransport("127.0.0.1", 0, ADMIT), Transport)
 
     def test_stop_before_serve_does_nothing(self) -> None:
-        HttpTransport("127.0.0.1", 0, TOKEN).stop()
+        HttpTransport("127.0.0.1", 0, ADMIT).stop()
 
 
 class TestConcurrency:

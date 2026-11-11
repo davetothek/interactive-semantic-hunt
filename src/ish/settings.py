@@ -74,7 +74,18 @@ EMBEDDING = "embedding"
 STORAGE = "where the index lives"
 MAINTENANCE = "maintenance"
 PICKER = "interactive picker (-i)"
-SECTIONS = (SEARCH, ANSWERS, OUTPUT, INDEXED, EMBEDDING, STORAGE, MAINTENANCE, PICKER)
+SERVER = "server over HTTP (ish mcp --http)"
+SECTIONS = (
+    SEARCH,
+    ANSWERS,
+    OUTPUT,
+    INDEXED,
+    EMBEDDING,
+    STORAGE,
+    MAINTENANCE,
+    PICKER,
+    SERVER,
+)
 
 
 def _opt(
@@ -352,7 +363,8 @@ class Settings:
         default="",
         metadata=_opt(
             ANSWERS,
-            "URL of the MCP server that `ish remote` searches. Also: ISH_REMOTE",
+            "URL of the MCP server that `ish remote` searches. Also: ISH_REMOTE. "
+            "A config file in a tree cannot set it.",
             metavar="URL",
         ),
     )
@@ -474,6 +486,16 @@ class Settings:
             action="store_true",
         ),
     )
+    auth: tuple[str, ...] = field(
+        default=("token",),
+        metadata=_opt(
+            SERVER,
+            "Ways the server admits a request. token admits the token in "
+            "ISH_MCP_TOKEN.",
+            nargs="+",
+            metavar="METHOD",
+        ),
+    )
 
 
 def option_names() -> tuple[str, ...]:
@@ -570,6 +592,11 @@ def _options_in(path: Path, raw: dict[str, Any]) -> Mapping[str, Any]:
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
+    """Read the options of one config file, and warn for an unknown key."""
+    return _accept(str(path), _file_options(path))
+
+
+def _file_options(path: Path) -> Mapping[str, Any]:
     """Read one config file. Return an empty mapping when it is absent.
 
     Treat anything that is not a file as absent, so a directory of that
@@ -589,7 +616,47 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise ConfigError(f"Cannot parse {path}: {exc}") from exc
 
     log.debug("Read config from %s", path)
-    return _accept(str(path), _options_in(path, raw))
+    return _options_in(path, raw)
+
+
+# Options that a file in a tree may not set. A tree that names the
+# server of `ish remote` chooses where the token of the user goes.
+NOT_FROM_A_TREE = ("remote",)
+
+
+def _from_a_tree(path: Path) -> dict[str, Any]:
+    """Read the project config file *path*, without what a tree may not set.
+
+    Drop each such option with no word. Only a command that reads a
+    server names the file, through ``tree_files_naming_a_server``, so a
+    local command prints what it printed before.
+    """
+    options = _read_toml(path)
+    for name in NOT_FROM_A_TREE:
+        options.pop(name, None)
+    return options
+
+
+def tree_files_naming_a_server(
+    start: Path,
+    *,
+    config: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[Path]:
+    """Return each project config file at or above *start* that sets ``remote``.
+
+    The loader ignores ``remote`` in each one. Return nothing when
+    *config* or ``ISH_CONFIG`` names a file, because the loader then
+    reads no project file.
+    """
+    environ = environ if environ is not None else os.environ
+    if config or environ.get(CONFIG_ENV_VAR):
+        return []
+    return [
+        path
+        for path in project_configs(start)
+        if any(name in _file_options(path) for name in NOT_FROM_A_TREE)
+    ]
 
 
 def _read_named(path: Path) -> dict[str, Any]:
@@ -695,7 +762,7 @@ def load_settings(
     else:
         # Outermost first, so the nearest file wins key by key.
         for project in project_configs(start):
-            settings = replace(settings, **_read_toml(project))
+            settings = replace(settings, **_from_a_tree(project))
 
     settings = replace(settings, **_from_env(environ))
 

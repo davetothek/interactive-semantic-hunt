@@ -1535,3 +1535,60 @@ class TestReader:
             doc = tmp_path / f"d{n}.adoc"
             doc.write_text(f"= D{n}\ntext {n}\n")
             assert read(self._chunk(doc, 1, 2)) == f"= D{n}\ntext {n}\n"
+
+
+class TestBuildAdmission:
+    """The check a server over HTTP runs on each bearer token."""
+
+    TOKEN = "test-token-EXAMPLE"
+
+    @pytest.fixture(autouse=True)
+    def token(self, monkeypatch) -> None:
+        monkeypatch.setenv(MCP_TOKEN_ENV_VAR, self.TOKEN)
+
+    def test_the_default_admits_the_static_token(self) -> None:
+        from ish.application.ports.authenticator import Identity
+
+        admit = bootstrap.build_admission(Settings())
+        assert admit(self.TOKEN) == Identity("token", "token")
+        assert admit("wrong-token-EXAMPLE") is None
+
+    def test_no_method_names_the_setting(self) -> None:
+        with pytest.raises(ValueError, match="Set auth to the ways the server admits"):
+            bootstrap.build_admission(replace(Settings(), auth=()))
+
+    def test_an_unknown_method_names_the_valid_ones(self) -> None:
+        with pytest.raises(ValueError) as refused:
+            bootstrap.build_admission(replace(Settings(), auth=("token", "magic")))
+        assert str(refused.value) == "Unknown auth method 'magic'. Valid methods: token"
+
+    def test_no_token_names_the_variable(self, monkeypatch) -> None:
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR)
+        with pytest.raises(ValueError, match=MCP_TOKEN_ENV_VAR):
+            bootstrap.build_admission(Settings())
+
+    def test_each_method_is_asked_in_turn(self, monkeypatch) -> None:
+        from ish.adapters import authenticator
+        from ish.application.ports.authenticator import Identity
+
+        built: list[str] = []
+
+        class Login:
+            @classmethod
+            def configured(cls, options):
+                built.append("login")
+                return cls()
+
+            def admit(self, bearer):
+                return (
+                    Identity("reader", "login") if bearer == "login-EXAMPLE" else None
+                )
+
+        monkeypatch.setitem(authenticator.AUTHENTICATORS, "login", Login.configured)
+        settings = replace(Settings(), auth=("token", "login", "login"))
+        admit = bootstrap.build_admission(settings)
+        assert admit(self.TOKEN) == Identity("token", "token")
+        assert admit("login-EXAMPLE") == Identity("reader", "login")
+        assert admit("wrong-token-EXAMPLE") is None
+        # A method named twice is built once.
+        assert built == ["login"]

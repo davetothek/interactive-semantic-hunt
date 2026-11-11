@@ -9,10 +9,14 @@ paths:
 
 ## bootstrap.py
 
-- This is the composition root. It selects from the three registries,
-  `PARSERS` in `adapters/parser`, `EMBEDDERS` in `adapters/embedder`, and
-  `LANGUAGE_MODELS` in `adapters/language_model`, and wires adapters into use
-  cases. It does not hold a registry itself.
+- This is the composition root. It selects from the four registries,
+  `PARSERS` in `adapters/parser`, `EMBEDDERS` in `adapters/embedder`,
+  `LANGUAGE_MODELS` in `adapters/language_model`, and `AUTHENTICATORS` in
+  `adapters/authenticator`, and wires adapters into use cases. It does not
+  hold a registry itself.
+- `build_admission()` is the one place that reads the values of the
+  authentication methods. It imports their registry inside the function,
+  so a local search loads no authentication code.
 - `build_language_model()` builds a backend only when
   `allowed_language_models` names it. No default, no fallback. A search
   never calls it: `Ish` builds the model on the first question.
@@ -43,6 +47,11 @@ paths:
   upward) < ISH_* env < CLI flags`.
 - A named config file stands in the project file's place. `load_settings()`
   then does not search upward. The user file below it still applies.
+- A project file cannot set an option in `NOT_FROM_A_TREE`. The loader
+  drops it with no word, so a local command prints what it printed
+  before, and `ish remote` names the file through
+  `tree_files_naming_a_server()`. `remote` is one, because a tree would
+  choose where the token of the user goes.
 - A config file beside a subtree adds to the one above it. Each file settles
   only the keys it names.
 - An unknown key warns and is skipped. A malformed or unreadable file raises

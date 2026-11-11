@@ -63,7 +63,7 @@ def _run_ask(args: CliArgs) -> int:
         log.error("%s needs a question.", "ish ask" if args.command else "--ask")
         return 1
     # Only `--remote URL` on a line with no command asks a server. A URL
-    # from the environment or a config file is for `ish remote`.
+    # from the environment or the user config file is for `ish remote`.
     if _names_a_server(args):
         from ish.interfaces.cli import remote
 

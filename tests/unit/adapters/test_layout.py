@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable
 
 import pytest
 
+from ish.adapters.authenticator import AUTHENTICATORS
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.language_model import LANGUAGE_MODELS
 from ish.adapters.parser import PARSERS
@@ -20,6 +21,7 @@ REGISTRIES: dict[str, Iterable[Callable]] = {
     "ish.adapters.parser": [language.build for language in PARSERS.values()],
     "ish.adapters.embedder": EMBEDDERS.values(),
     "ish.adapters.language_model": LANGUAGE_MODELS.values(),
+    "ish.adapters.authenticator": AUTHENTICATORS.values(),
 }
 
 

@@ -66,7 +66,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Domain | `src/ish/domain/chunk.py` | `Chunk`, one named region of a file |
 | Domain | `src/ish/domain/match.py` | `Match`, a chunk with its score |
 | Domain | `src/ish/domain/location.py` | `Location`, where a chunk sits: lines, pages, slides, cells, sections |
-| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the three registries |
+| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the four registries |
 | Composition | `src/ish/settings.py` | Option set — one source of truth for CLI flags and TOML keys |
 | Composition | `src/ish/runtime.py` | The directory where the processes of one user share files while they run |
 | Port | `src/ish/application/ports/parser.py` | `Parser` Protocol and `ParseError` |
@@ -75,6 +75,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Port | `src/ish/application/ports/language_model.py` | `LanguageModel` Protocol, `Source`, `Reply` |
 | Port | `src/ish/application/ports/link.py` | `LinkResolver` Protocol |
 | Port | `src/ish/application/ports/chunk_source.py` | `ChunkSource` Protocol and `ChunkSourceError` |
+| Port | `src/ish/application/ports/authenticator.py` | `Authenticator` Protocol and `Identity` |
 | Application | `src/ish/application/scan.py` | Scan use case: discover, accept, parse |
 | Application | `src/ish/application/index.py` | Index use case: staleness, orphans, embedding |
 | Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
@@ -109,6 +110,8 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
 | Adapter | `src/ish/adapters/language_model/_prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
+| Adapter | `src/ish/adapters/authenticator/__init__.py` | `AUTHENTICATORS` — every way a server admits a request, and the recipe for adding one |
+| Adapter | `src/ish/adapters/authenticator/token.py` | The static token of the operator |
 | Adapter | `src/ish/adapters/chunk_source/mcp.py` | Chunks from the index of an ish server, over MCP |
 | Adapter | `src/ish/adapters/chunk_source/_client.py` | One tool call to an MCP server over HTTP, and the ways it fails |
 | Adapter | `src/ish/adapters/vector_store/sqlite/` | Persistent vector store (default): `store.py`, its tables in `_schema.py`, its matrix file in `_matrix.py` |

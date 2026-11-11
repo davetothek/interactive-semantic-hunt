@@ -79,8 +79,10 @@ finishes a filter word. Nothing else is added.
   and the client refreshes itself again. Editor clients know nothing of
   the status file.
 - `ish-mcp` serves stdio by default. `ish-mcp --http HOST:PORT` serves the
-  same tools over MCP Streamable HTTP at `/mcp`, behind the bearer token in
-  `ISH_MCP_TOKEN`, and refuses to start without one. Over HTTP it offers
+  same tools over MCP Streamable HTTP at `/mcp`. Each request carries a
+  bearer token that a method of `auth` admits, through the admit function
+  of `bootstrap.build_admission()`. The transport knows no method. Over
+  HTTP it offers
   `sources` in place of `ask`. It returns chunks with their text, and the
   server builds no language model. A transport in
   `interfaces/mcp/transport.py` frames messages and nothing else, so a new

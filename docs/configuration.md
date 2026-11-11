@@ -2,8 +2,11 @@
 
 Every command-line option is also a key in the config file, under the same
 name. The one exception is `--config` itself: a file cannot name where to
-find itself. Put project settings in `.ish/config.toml` at the root of your
-repository:
+find itself. A config file in a tree cannot set `remote`, the server of `ish
+remote`, because a tree you cloned would choose where your token goes. Set
+it in the user config file, `~/.config/ish/config.toml`, or in a file you
+name with `--config`. Put project settings in `.ish/config.toml` at the root
+of your repository:
 
 ```toml
 embedder = "ollama"

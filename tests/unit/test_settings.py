@@ -19,6 +19,8 @@ from ish.settings import (
     load_settings,
     option_names,
     project_configs,
+    tree_files_naming_a_server,
+    user_config_path,
 )
 
 # The command line carries a few names that are not options: the two
@@ -444,3 +446,76 @@ class TestToolTable:
         _write(tmp_path / CONFIG_FILENAME, "tool = 'black'\n")
         with pytest.raises(ConfigError, match="'tool' is not a table"):
             load_settings(start=tmp_path, environ={})
+
+
+class TestAFileInATreeNamesNoServer:
+    """A tree that names the server of `ish remote` chooses where the token goes."""
+
+    URL = "https://docs.example.invalid/mcp"
+
+    def test_a_project_file_does_not_set_remote(self, tmp_path, caplog) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\nlimit = 9\n')
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.remote == ""
+        # The other options of the file still apply.
+        assert settings.limit == 9
+        # A local command prints what it printed before. `ish remote` names
+        # the file, through `tree_files_naming_a_server`.
+        assert caplog.messages == []
+
+    def test_each_file_that_names_a_server_is_listed(self, tmp_path) -> None:
+        outer = _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\n')
+        below = tmp_path / "docs"
+        _write(below / CONFIG_FILENAME, "limit = 3\n")
+        assert tree_files_naming_a_server(below, environ={}) == [outer]
+
+    def test_no_file_is_listed_when_a_config_file_is_named(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\n')
+        named = str(tmp_path / "docs.toml")
+        assert tree_files_naming_a_server(tmp_path, config=named, environ={}) == []
+        environ = {"ISH_CONFIG": named}
+        assert tree_files_naming_a_server(tmp_path, environ=environ) == []
+
+    def test_an_unknown_key_warns_once_on_a_line_of_ish_remote(
+        self, tmp_path, caplog
+    ) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\nnope = 1\n')
+        with caplog.at_level("WARNING"):
+            tree_files_naming_a_server(tmp_path, environ={})
+        assert caplog.messages == []
+
+    def test_the_user_config_file_sets_remote(self, tmp_path, caplog) -> None:
+        _write(user_config_path(), f'remote = "{self.URL}"\n')
+        with caplog.at_level("WARNING"):
+            assert load_settings(start=tmp_path, environ={}).remote == self.URL
+        assert caplog.messages == []
+
+    def test_a_named_config_file_sets_remote(self, tmp_path) -> None:
+        named = tmp_path / "docs.toml"
+        _write(named, f'remote = "{self.URL}"\n')
+        settings = load_settings({"config": str(named)}, start=tmp_path, environ={})
+        assert settings.remote == self.URL
+
+    def test_the_environment_and_the_line_set_remote(self, tmp_path) -> None:
+        environ = {"ISH_REMOTE": self.URL}
+        assert load_settings(start=tmp_path, environ=environ).remote == self.URL
+        line = load_settings({"remote": self.URL}, start=tmp_path, environ={})
+        assert line.remote == self.URL
+
+    def test_a_project_file_above_the_tree_does_not_set_it_either(
+        self, tmp_path
+    ) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\n')
+        below = tmp_path / "docs"
+        below.mkdir()
+        assert load_settings(start=below, environ={}).remote == ""
+
+
+class TestAuth:
+    def test_the_default_is_the_static_token(self, tmp_path) -> None:
+        assert load_settings(start=tmp_path, environ={}).auth == ("token",)
+
+    def test_the_environment_names_the_methods(self, tmp_path) -> None:
+        settings = load_settings(start=tmp_path, environ={"ISH_AUTH": "token,ldap"})
+        assert settings.auth == ("token", "ldap")
