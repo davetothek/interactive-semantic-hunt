@@ -6,6 +6,7 @@ and ``ish.toml`` always accept the same option set.
 
 import argparse
 import os
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -13,6 +14,52 @@ from typing import Any
 
 from ish import bootstrap
 from ish.settings import CONFIG_OPTION, SECTIONS, Settings, load_settings
+
+# The commands of the search program. One of them as the first word says
+# what the run does. A line with no command is a search, or a listing when
+# it has no query.
+SEARCH = "search"
+ASK = "ask"
+PICK = "pick"
+COMMANDS = (SEARCH, ASK, PICK)
+
+_USAGE = {
+    "": "%(prog)s [options] [query] [path]\n       %(prog)s command ...",
+    SEARCH: "%(prog)s [options] query [path]",
+    ASK: "%(prog)s [options] question [path]",
+    PICK: "%(prog)s [options] [path]",
+}
+
+_DESCRIPTION = {
+    "": (
+        "Search code and documents by meaning, or list what they hold.\n"
+        "A command as the first word does one thing:\n"
+        "\n"
+        "  search QUERY [PATH]   Search, also for a query that names a command.\n"
+        "  ask QUESTION [PATH]   Answer a question, with the sources it cites.\n"
+        "  pick [PATH]           Open the interactive picker.\n"
+        "  mcp                   Serve the tools over MCP. Also: ish-mcp\n"
+        "  serve [TREE]          Keep the indexes of a tree current. Also: ish-serve\n"
+        "  complete TEXT [PATH]  Finish a filter word. Also: ish-complete\n"
+        "\n"
+        "`ish command --help` shows what a command accepts."
+    ),
+    SEARCH: (
+        "Search code and documents by meaning. The first word is the query,\n"
+        "also when it is the name of a command or is written as a path."
+    ),
+    ASK: (
+        "Answer a question from the code and documents, in Markdown, with the\n"
+        "sources it cites."
+    ),
+    PICK: "Open the interactive picker, and print the chunk it selects.",
+}
+
+_EPILOG = (
+    "Every option in the sections above can also be set in a config file:\n"
+    "~/.config/ish/config.toml, or .ish/config.toml in a tree, with the name\n"
+    "written in snake_case."
+)
 
 # Options whose accepted values come from a registry rather than a literal.
 _DYNAMIC_CHOICES = {
@@ -79,52 +126,59 @@ def add_settings_options(parser: argparse.ArgumentParser) -> None:
         group.add_argument(*flags, dest=f.name, default=None, help=help_text, **kwargs)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Return the parser for the whole command line.
+def build_parser(command: str = "") -> argparse.ArgumentParser:
+    """Return the parser for the whole command line of *command*.
 
     Keep every flag here, so one reader sees what the command accepts
-    and a test can hold the parser to the option set.
+    and a test can hold the parser to the option set. The line with no
+    command also takes the flags that ``ask`` and ``pick`` replace.
     """
     parser = argparse.ArgumentParser(
-        prog="ish",
-        usage="%(prog)s [options] [query] [path]",
-        description=(
-            "Search code and documents by meaning, ask them a question, or "
-            "list what they hold."
-        ),
-        epilog=(
-            "Every option in the sections above can also be set in a config "
-            "file: ~/.config/ish/config.toml, or .ish/config.toml in a tree, "
-            "with the name written in snake_case."
-        ),
+        prog=f"ish {command}" if command else "ish",
+        usage=_USAGE[command],
+        description=_DESCRIPTION[command],
+        epilog=_EPILOG,
+        # Keep the lines of the command table. The help of each option
+        # still wraps to the width of the terminal.
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
-        "query",
-        nargs="?",
-        default="",
-        help="Semantic search query. Leave empty to scan and output all chunks.",
-    )
+    if command == SEARCH:
+        parser.add_argument("query", help="Semantic search query.")
+    elif command == ASK:
+        parser.add_argument("query", metavar="question", help="The question.")
+        parser.add_argument(
+            "--brief",
+            action="store_true",
+            help="Answer in a sentence or two, with no sources.",
+        )
+    elif not command:
+        parser.add_argument(
+            "query",
+            nargs="?",
+            default="",
+            help="Semantic search query. Leave empty to scan and output all chunks.",
+        )
+        parser.add_argument(
+            "-i",
+            "--interactive",
+            action="store_true",
+            help="Run the interactive TUI, as `ish pick` does.",
+        )
+        parser.add_argument(
+            "--ask",
+            action="store_true",
+            help="Answer the query as a question. `ish ask` replaces this flag.",
+        )
+        parser.add_argument(
+            "--brief",
+            action="store_true",
+            help="Answer in a sentence or two. `ish ask --brief` replaces this flag.",
+        )
     parser.add_argument(
         "path",
         nargs="?",
         default=".",
         help="Root path to scan (default: current directory).",
-    )
-    parser.add_argument(
-        "-i",
-        "--interactive",
-        action="store_true",
-        help="Run the interactive TUI.",
-    )
-    parser.add_argument(
-        "--ask",
-        action="store_true",
-        help="Answer the query as a question, in Markdown, with the sources it cites.",
-    )
-    parser.add_argument(
-        "--brief",
-        action="store_true",
-        help="Answer the query as a question in a sentence or two, with no sources.",
     )
     # Not one of the settings, and deliberately so: a config file cannot
     # hold the path to itself. See CONFIG_OPTION in ish.settings.
@@ -165,7 +219,7 @@ class _VersionAction(argparse.Action):
         values: str | Sequence[Any] | None,
         option_string: str | None = None,
     ) -> None:
-        print(f"{parser.prog} {installed_version()}")
+        print(f"ish {installed_version()}")
         parser.exit()
 
 
@@ -189,24 +243,34 @@ class CliArgs:
     settings: Settings
     ask: bool = False
     brief: bool = False
+    # The command the line starts with, or nothing for a line with none.
+    command: str = ""
     # The flags as given, so a tree below can resolve its own
     # configuration and still let a flag override it.
     overrides: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_args(cls, argv: list[str] | None = None) -> "CliArgs":
-        """Parse command-line arguments and return a typed data class."""
-        args = build_parser().parse_args(argv)
+        """Parse command-line arguments and return a typed data class.
+
+        Read the first word as a command when it is one. The words after
+        it are the arguments of that command.
+        """
+        words = list(sys.argv[1:] if argv is None else argv)
+        command = words[0] if words and words[0] in COMMANDS else ""
+        args = build_parser(command).parse_args(words[1:] if command else words)
 
         # Positional resolution: `ish src/` binds "src/" to `query`, so move
         # a value to `path` when it is written as a path and exists on disk.
         # A bare word such as `ish log` stays a query even when a directory
-        # of that name exists.
-        query_val = args.query
+        # of that name exists. A command names its positionals, so nothing
+        # moves there.
+        query_val = getattr(args, "query", "")
         path_val = args.path
 
         if (
-            query_val
+            not command
+            and query_val
             and path_val == "."
             and _is_path_syntax(query_val)
             and Path(query_val).exists()
@@ -226,12 +290,14 @@ class CliArgs:
         overrides[CONFIG_OPTION] = args.config
         path = Path(path_val).resolve()
 
+        brief = getattr(args, "brief", False)
         return cls(
             path=path,
             query=query_val,
-            interactive=args.interactive,
-            ask=args.ask or args.brief,
-            brief=args.brief,
+            interactive=command == PICK or getattr(args, "interactive", False),
+            ask=command == ASK or brief or getattr(args, "ask", False),
+            brief=brief,
+            command=command,
             settings=load_settings(overrides, start=_search_root(path)),
             overrides=overrides,
         )

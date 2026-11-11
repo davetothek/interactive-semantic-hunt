@@ -113,7 +113,8 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Interface | `src/ish/interfaces/daemon.py` | `ish-serve`, the one process that fills an index |
 | Interface | `src/ish/interfaces/completion.py` | Finish a filter word |
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
-| Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
+| Interface | `src/ish/interfaces/cli/__init__.py` | `ish` entry point: hand the line to the program its first word names |
+| Interface | `src/ish/interfaces/cli/main.py` | The search program: search, ask, pick, list |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/cli/terminal.py` | An answer rendered for a terminal, and the grey of the timing table |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |

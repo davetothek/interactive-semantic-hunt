@@ -8,6 +8,27 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- Commands. `ish search QUERY [PATH]` searches, `ish ask QUESTION [PATH]`
+  answers a question, and `ish pick [PATH]` opens the picker. `ish ask`
+  takes `--brief`. Each command takes every option, and `--help`.
+- `ish mcp`, `ish serve`, and `ish complete` start what `ish-mcp`,
+  `ish-serve`, and `ish-complete` start. The three old names stay.
+
+### Changed
+
+- The first word of a command line is a command when it is `search`,
+  `ask`, `pick`, `mcp`, `serve`, or `complete`. To search for one of
+  these words, use `ish search WORD` or `ish -- WORD`.
+- `ish ask` always answers on this machine. Only `ish --ask` follows the
+  `remote` option to a server.
+
+### Deprecated
+
+- `--ask` and `--brief` on a line with no command. They work as before
+  and print one warning that names `ish ask`. `-i` stays.
+
 ## 0.9.4 - 2026-11-10
 
 ### Added

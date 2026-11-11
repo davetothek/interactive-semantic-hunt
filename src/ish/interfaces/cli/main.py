@@ -1,6 +1,8 @@
-"""CLI entry point for ish.
+"""The search program of ish: search, answer, pick, and list.
 
 Parse arguments, delegate wiring to the bootstrap module, format output.
+``ish.interfaces.cli.run`` is the entry point, and hands a line here
+unless it names a program of its own.
 """
 
 import json
@@ -60,9 +62,11 @@ def _run_ask(args: CliArgs) -> int:
     terminal. Return 130 on Ctrl-C, with no traceback.
     """
     if not args.query:
-        log.error("--ask needs a question.")
+        log.error("%s needs a question.", "ish ask" if args.command else "--ask")
         return 1
-    if args.settings.remote:
+    # The `ask` command answers on this machine. Only the flag follows
+    # `remote` to a server.
+    if args.settings.remote and not args.command:
         return _run_remote_ask(args)
     line = ProgressLine()
     ticker = Ticker()
@@ -273,8 +277,24 @@ def _run_sweep(args: CliArgs) -> int:
     return 0
 
 
+def _warn_of_replaced_flag(args: CliArgs) -> None:
+    """Name the command that replaces ``--ask`` or ``--brief``, in one line.
+
+    Say nothing for a question that goes to a server. No command replaces
+    that one.
+    """
+    if args.command or not args.ask or args.settings.remote:
+        return
+    flag, use = (
+        ("--brief", "ish ask QUESTION --brief")
+        if args.brief
+        else ("--ask", "ish ask QUESTION")
+    )
+    log.warning("%s goes away in a later release. Use: %s", flag, use)
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Run ish from the command line. Return an exit code.
+    """Run the search program from the command line. Return an exit code.
 
     Accept *argv* for testability. Default to ``sys.argv[1:]``.
     """
@@ -288,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(
         verbosity=args.settings.verbosity, color=resolve_color(args.settings.color)
     )
+    _warn_of_replaced_flag(args)
 
     if args.settings.forget:
         return _run_forget(args)

@@ -647,11 +647,11 @@ def installed_version() -> str:
         return "unknown"
 
 
-def _parse(argv: list[str] | None):
+def _parse(argv: list[str] | None, prog: str):
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="ish-mcp",
+        prog=prog,
         description="Serve the ish tools over MCP, on stdio unless told otherwise.",
     )
     parser.add_argument(
@@ -673,12 +673,13 @@ def _address(text: str) -> tuple[str, int]:
     return host or "127.0.0.1", int(port)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
     """Run the MCP server on stdio, or over HTTP with ``--http``.
 
-    Return an exit code.
+    Return an exit code. *prog* is the name the usage line shows, because
+    ``ish mcp`` starts this server as well.
     """
-    args = _parse(argv)
+    args = _parse(argv, prog)
     root = Path.cwd()
     settings = load_settings(start=root)
 

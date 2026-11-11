@@ -202,16 +202,17 @@ class TestAsk:
         assert main(["--ask", "anything", str(project), *FLAGS]) == 1
         assert "within 5 s" in caplog.text
 
-    def test_a_plain_query_still_searches(
-        self, project: Path, monkeypatch, capsys
+    @pytest.mark.parametrize("line", [[*FLAGS, "--", "ask"], ["search", *FLAGS, "ask"]])
+    def test_the_word_ask_can_still_be_a_query(
+        self, line: list[str], project: Path, monkeypatch, capsys
     ) -> None:
-        """Without --ask the word "ask" is a query, as it always was."""
+        """The first word "ask" is a command. Two forms search for it."""
 
         def refuse(settings, **_):
             raise AssertionError("a search built a language model")
 
         monkeypatch.setattr(bootstrap, "build_language_model", refuse)
-        assert main(["ask", str(project), *FLAGS]) == 0
+        assert main([*line, str(project)]) == 0
         assert "docs/" in capsys.readouterr().out
 
 

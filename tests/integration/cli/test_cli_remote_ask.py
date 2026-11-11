@@ -74,6 +74,13 @@ class TestRemoteAsk:
         assert capsys.readouterr().out == MARKDOWN + "\n"
         assert made.calls == [{"question": QUESTION, "brief": False}]
 
+    def test_the_flag_gets_no_warning_while_no_command_replaces_it(
+        self, server: tuple[Server, str], caplog
+    ) -> None:
+        _made, url = server
+        assert main(["--ask", QUESTION, "--remote", url]) == 0
+        assert "goes away" not in caplog.text
+
     def test_stderr_says_what_the_server_spent(
         self, server: tuple[Server, str], capsys
     ) -> None:

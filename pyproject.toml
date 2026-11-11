@@ -63,7 +63,7 @@ docs = [
 ]
 
 [project.scripts]
-ish = "ish.interfaces.cli.main:main"
+ish = "ish.interfaces.cli:run"
 ish-mcp = "ish.interfaces.mcp.server:main"
 ish-serve = "ish.interfaces.daemon:main"
 ish-complete = "ish.interfaces.cli.complete:main"
