@@ -265,6 +265,15 @@ uv run python scripts/evaluate_ask.py questions.yaml TREE \
   --prompt-dir ./prompts-b
 ```
 
+To score `ish remote ask`, give `--remote URL` in place of the tree. The
+server searches, and the model of this machine answers:
+
+```sh
+uv run python scripts/evaluate_ask.py questions.yaml \
+  --remote https://ish.example.com/mcp \
+  --language-model claude-cli --answer-model claude-haiku-5-5
+```
+
 `link_base` publishes the links of an answer under a base URL. With
 `link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164
 of `spec/a.adoc` under the tree links to
