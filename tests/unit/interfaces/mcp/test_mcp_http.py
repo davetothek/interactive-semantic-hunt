@@ -263,6 +263,56 @@ class TestEntryPoint:
         assert server_module.main(["--http", "127.0.0.1:8765"]) == 0
         assert audit.level == logging.INFO
 
+    @pytest.mark.parametrize(
+        "listen", ["127.0.0.1:8765", "8765", "localhost:8765", "[::1]:8765"]
+    )
+    def test_a_server_that_signs_users_in_listens_on_this_machine(
+        self, listen: str, monkeypatch, tmp_path
+    ) -> None:
+        self._with_a_sign_in(monkeypatch, tmp_path)
+        monkeypatch.setattr(HttpTransport, "serve", lambda self, server: None)
+        assert server_module.main(["--http", listen]) == 0
+
+    @pytest.mark.parametrize("listen", ["0.0.0.0:8765", "10.0.0.7:8765", "docs:8765"])
+    def test_a_server_that_signs_users_in_does_not_listen_on_a_network(
+        self, listen: str, monkeypatch, tmp_path, caplog
+    ) -> None:
+        self._with_a_sign_in(monkeypatch, tmp_path)
+        assert server_module.main(["--http", listen]) == 1
+        assert caplog.messages[-1] == (
+            "A server that signs users in with directory listens on this machine "
+            "only, behind a reverse proxy that holds the certificate. "
+            "Give --http 127.0.0.1:PORT."
+        )
+
+    def test_a_server_with_the_static_token_alone_may_listen_on_a_network(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(TOKEN_VARIABLE, TOKEN)
+        monkeypatch.setattr(HttpTransport, "serve", lambda self, server: None)
+        assert server_module.main(["--http", "0.0.0.0:8765"]) == 0
+
+    def _with_a_sign_in(self, monkeypatch, tmp_path) -> None:
+        from ish.adapters import authenticator
+        from ish.application.ports.authenticator import Identity
+
+        class Directory:
+            @classmethod
+            def configured(cls, options):
+                return cls()
+
+            def sign_in(self, user, password):
+                return Identity(user, "directory")
+
+        monkeypatch.setitem(
+            authenticator.AUTHENTICATORS, "directory", Directory.configured
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(TOKEN_VARIABLE, TOKEN)
+        monkeypatch.setenv("ISH_AUTH", "token,directory")
+        monkeypatch.setenv("ISH_CACHE_DIR", str(tmp_path / "idx"))
+
     def test_ish_mcp_has_no_option_for_a_server(self, capsys) -> None:
         # `ish remote mcp` reads a server. `ish mcp` is the local tree.
         with pytest.raises(SystemExit):
@@ -430,6 +480,10 @@ class Desk:
             raise ValueError("Give a user name.")
         if password == "down-EXAMPLE":
             raise SignInUnavailable("The directory cannot be reached.")
+        if password == "often-EXAMPLE":
+            from ish.application.ports.authenticator import SignInLimited
+
+            raise SignInLimited("Too many failed sign-ins for reader.")
         if password != PASSWORD:
             raise SignInRefused("The directory refused the user name or the password.")
         return Granted("login-token-EXAMPLE", user, 2_000_000_000.0)
@@ -491,6 +545,13 @@ class TestSignInPath:
         assert self._sign_in(url, password="down-EXAMPLE") == (
             503,
             {"error": "The directory cannot be reached."},
+        )
+
+    def test_a_user_over_the_limit_is_429(self, desk) -> None:
+        url, _ = desk
+        assert self._sign_in(url, password="often-EXAMPLE") == (
+            429,
+            {"error": "Too many failed sign-ins for reader."},
         )
 
     def test_a_request_the_desk_cannot_take_is_400(self, desk) -> None:

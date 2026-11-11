@@ -18,6 +18,7 @@ from typing import Any, Protocol, TextIO, runtime_checkable
 
 from ish.application.ports.authenticator import (
     Identity,
+    SignInLimited,
     SignInRefused,
     SignInUnavailable,
 )
@@ -237,6 +238,9 @@ class HttpTransport:
                     return
                 except SignInUnavailable as exc:
                     self._json(503, {"error": str(exc)})
+                    return
+                except SignInLimited as exc:
+                    self._json(429, {"error": str(exc)})
                     return
                 log.info("Signed %s in, until %s", granted.user, _when(granted.expires))
                 self._json(

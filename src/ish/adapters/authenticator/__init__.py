@@ -30,8 +30,10 @@ To add a method to ish:
 
 from collections.abc import Callable, Mapping
 
+from ish.adapters.authenticator.ldap import LdapDirectory
 from ish.adapters.authenticator.token import StaticToken
 
 AUTHENTICATORS: dict[str, Callable[[Mapping[str, str]], object]] = {
     "token": StaticToken.configured,
+    "ldap": LdapDirectory.configured,
 }

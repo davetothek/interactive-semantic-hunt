@@ -108,6 +108,8 @@ finishes a filter word. Nothing else is added.
 - `ish remote login` asks for the password with no echo, only after
   `password_problem()` allows it, and keeps no password. A command of
   `ish remote` sends `ISH_MCP_TOKEN`, or else the login token of the URL.
+- A server with a sign-in method listens on a loopback address only.
+  `server.main` refuses another before it serves.
 - Each tool call over HTTP writes one line to the `ish.audit` logger: the
   user and the tool, never the arguments. `ish mcp --http` shows it at
   every verbosity.

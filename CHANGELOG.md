@@ -40,6 +40,15 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `~/.config/ish/logins.json`, which only you can read, and every command
   of `ish remote` sends it when `ISH_MCP_TOKEN` is not set. A password goes
   only over https, or to a server on this machine.
+- `ldap` in `auth` signs users in against an LDAP directory, with
+  `ldap_url`, `ldap_user_dn`, `ldap_group`, and `ldap_starttls`. It needs
+  the `ldap` extra, which installs python-ldap. The user name is escaped
+  before it reaches the directory, and an empty password never binds. A
+  plain `ldap://` URL with no StartTLS starts with one warning.
+- A server that signs users in listens on this machine only, behind a
+  reverse proxy that holds the certificate, and refuses to start on
+  another address. Five failed sign-ins for one user name in 15 minutes
+  stop more attempts for 15 minutes, and the directory is not asked.
 - A server keeps the SHA-256 of each login token, never the token, in
   `logins.jsonl` beside its indexes. The operator ends a login by deleting
   its line. Each tool call writes one line that names the user and the

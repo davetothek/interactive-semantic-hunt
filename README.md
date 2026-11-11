@@ -17,7 +17,8 @@ pip install interactive-semantic-hunt
 Nothing in that install compiles: the default backend reaches Ollama over
 HTTP with the standard library. A backend that runs the model in this
 process is an extra — `[llama]` for llama.cpp, `[st]` for
-sentence-transformers.
+sentence-transformers. A server that signs users in to an LDAP directory
+needs `[ldap]`.
 
 The default embedding backend is Ollama, which keeps the model resident so no
 run pays a model load. Start it once and pull the embedding model:

@@ -1563,7 +1563,9 @@ class TestBuildAccess:
     def test_an_unknown_method_names_the_valid_ones(self) -> None:
         with pytest.raises(ValueError) as refused:
             bootstrap.build_access(replace(Settings(), auth=("token", "magic")))
-        assert str(refused.value) == "Unknown auth method 'magic'. Valid methods: token"
+        assert str(refused.value) == (
+            "Unknown auth method 'magic'. Valid methods: ldap, token"
+        )
 
     def test_no_token_names_the_variable(self, monkeypatch) -> None:
         monkeypatch.delenv(MCP_TOKEN_ENV_VAR)

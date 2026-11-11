@@ -495,6 +495,38 @@ class Settings:
             metavar="DAYS",
         ),
     )
+    ldap_url: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "URL of the LDAP directory that ldap in auth signs users in to.",
+            metavar="URL",
+        ),
+    )
+    ldap_user_dn: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Name a user binds as, with {user} for the user name.",
+            metavar="DN",
+        ),
+    )
+    ldap_group: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Give a login token only to a member of this LDAP group.",
+            metavar="DN",
+        ),
+    )
+    ldap_starttls: bool = field(
+        default=False,
+        metadata=_opt(
+            SERVER,
+            "Start TLS on a plain ldap:// URL before the password goes out.",
+            action="store_true",
+        ),
+    )
     auth: tuple[str, ...] = field(
         default=("token",),
         metadata=_opt(

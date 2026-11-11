@@ -196,7 +196,34 @@ token for everyone. Name a sign-in method in `auth`, beside `token`:
 ```toml
 auth = ["token", "ldap"]
 login_days = 30
+ldap_url = "ldaps://ldap.example.com"
+ldap_user_dn = "uid={user},ou=people,dc=example,dc=com"
+ldap_group = "cn=ish,ou=groups,dc=example,dc=com"
 ```
+
+`ldap` binds to the directory as the user, with the name that
+`ldap_user_dn` makes from the user name, and the password. The server
+escapes the user name first. With `ldap_group`, only a member of the group
+gets a login token. It needs the `ldap` extra, which installs python-ldap:
+
+```sh
+pip install 'interactive-semantic-hunt[ldap]'
+```
+
+Without it, the server does not start, and names the extra. Use an
+`ldaps://` URL, which checks the certificate of the directory. A plain
+`ldap://` URL sends each password in plain text: set `ldap_starttls =
+true`, or the server starts with one warning.
+
+A server that signs users in listens on this machine only, such as
+`--http 127.0.0.1:8765`, behind a reverse proxy that holds the
+certificate. ish holds no certificate, so a password that reaches it over
+the network would cross the network in plain text. The server refuses to
+start on another address.
+
+Five failed sign-ins for one user name in 15 minutes stop more attempts
+for that name for 15 minutes. The server asks the directory nothing in
+that time.
 
 The server lists the methods at `/login`, beside `/mcp`, with no token.
 `ish remote login` posts a user name and a password there, and the server

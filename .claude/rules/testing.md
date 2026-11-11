@@ -26,6 +26,10 @@ paths:
   reason as root. Run the suite as an unprivileged user, through `/check`.
 - Test the TUI with Textual's pilot against a mounted DOM. Assert what ran,
   not how many times it ran. Debounce timing is not deterministic.
+- Each password safety rule has a test of its own name in
+  `tests/integration/cli/test_password_safety.py`, which fails when the
+  rule breaks. A test of a sign-in uses the stand-in for python-ldap in
+  `tests/unit/adapters/authenticator/fake_ldap.py`, never a real directory.
 - Never skip, disable, or quarantine a test to get green.
 - A test that sleeps is a test that flakes. Fake the clock or record the
   call.

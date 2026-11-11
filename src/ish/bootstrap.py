@@ -328,6 +328,10 @@ def build_access(settings: Settings) -> "Access":
     options = {
         "token": os.environ.get(MCP_TOKEN_ENV_VAR, ""),
         "token_variable": MCP_TOKEN_ENV_VAR,
+        "ldap_url": settings.ldap_url,
+        "ldap_user_dn": settings.ldap_user_dn,
+        "ldap_group": settings.ldap_group,
+        "ldap_starttls": "true" if settings.ldap_starttls else "",
     }
     methods = {
         name: AUTHENTICATORS[name](options) for name in dict.fromkeys(settings.auth)

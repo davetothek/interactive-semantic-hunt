@@ -809,6 +809,29 @@ def _parse(argv: list[str] | None, prog: str):
     return parser.parse_args(argv)
 
 
+def _refuse_a_password_from_the_network(host: str, methods: list[str]) -> None:
+    """Raise ``ValueError`` when a server that signs users in listens on a network.
+
+    ish holds no certificate. A password reaches a server that signs
+    users in through a reverse proxy on this machine that holds one, so
+    the server listens on the loopback address only.
+    """
+    import ipaddress
+
+    if not methods or host == "localhost":
+        return
+    try:
+        if ipaddress.ip_address(host.strip("[]")).is_loopback:
+            return
+    except ValueError:
+        pass
+    raise ValueError(
+        f"A server that signs users in with {', '.join(methods)} listens on this "
+        "machine only, behind a reverse proxy that holds the certificate. "
+        "Give --http 127.0.0.1:PORT."
+    )
+
+
 def _address(text: str) -> tuple[str, int]:
     """Split HOST:PORT, and read a bare PORT as one on the loopback address."""
     host, _, port = text.rpartition(":")
@@ -834,6 +857,7 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
         try:
             address = _address(args.http)
             access = bootstrap.build_access(settings)
+            _refuse_a_password_from_the_network(address[0], access.methods())
             transport = HttpTransport(*address, access.admit, access)
         except ValueError as exc:
             log.error("%s", exc)

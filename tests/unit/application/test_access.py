@@ -161,3 +161,93 @@ class TestSignIn:
         directory, store, clock = parts
         access = Access([], {"b": directory, "a": directory}, store, DAY, clock)
         assert access.methods() == ["b", "a"]
+
+
+class TestLimit:
+    """A user name that fails too often is refused for a time, unasked."""
+
+    def _fail(self, access: Access, user: str = USER, times: int = 1) -> None:
+        for _ in range(times):
+            with pytest.raises(SignInRefused):
+                access.sign_in("directory", user, "wrong-EXAMPLE")
+
+    def test_five_failures_stop_the_sixth_attempt_and_the_method_is_not_asked(
+        self, parts
+    ) -> None:
+        from ish.application.access import MAX_FAILURES
+        from ish.application.ports.authenticator import SignInLimited
+
+        access = _access(parts)
+        self._fail(access, times=MAX_FAILURES)
+        asked = len(parts[0].asked)
+        with pytest.raises(SignInLimited) as limited:
+            access.sign_in("directory", USER, PASSWORD)
+        assert str(limited.value) == (
+            "Too many failed sign-ins for reader. Try again in 15 minutes."
+        )
+        assert len(parts[0].asked) == asked
+
+    def test_the_limit_ends_after_the_window(self, parts) -> None:
+        from ish.application.access import WINDOW_SECONDS
+        from ish.application.ports.authenticator import SignInLimited
+
+        access = _access(parts)
+        self._fail(access, times=5)
+        clock = parts[2]
+        clock.now += WINDOW_SECONDS - 61
+        with pytest.raises(SignInLimited, match="Try again in 2 minutes."):
+            access.sign_in("directory", USER, PASSWORD)
+        clock.now += 61
+        assert access.sign_in("directory", USER, PASSWORD).user == USER
+
+    def test_the_limit_holds_for_each_spelling_of_the_name(self, parts) -> None:
+        from ish.application.ports.authenticator import SignInLimited
+
+        access = _access(parts)
+        self._fail(access, user="Reader", times=3)
+        self._fail(access, user=" reader ", times=2)
+        with pytest.raises(SignInLimited):
+            access.sign_in("directory", "READER", PASSWORD)
+
+    def test_failures_spread_over_more_than_the_window_set_no_limit(
+        self, parts
+    ) -> None:
+        from ish.application.access import WINDOW_SECONDS
+
+        access = _access(parts)
+        for _ in range(8):
+            self._fail(access)
+            parts[2].now += WINDOW_SECONDS / 4
+        assert access.sign_in("directory", USER, PASSWORD).user == USER
+
+    def test_a_success_clears_the_failures(self, parts) -> None:
+        access = _access(parts)
+        self._fail(access, times=4)
+        access.sign_in("directory", USER, PASSWORD)
+        self._fail(access, times=4)
+        assert access.sign_in("directory", USER, PASSWORD).user == USER
+
+    def test_another_user_is_not_limited(self, parts) -> None:
+        access = _access(parts)
+        self._fail(access, user="other", times=5)
+        assert access.sign_in("directory", USER, PASSWORD).user == USER
+
+    def test_a_directory_that_is_down_is_no_failure_of_the_user(self, parts) -> None:
+        access = _access(parts)
+        parts[0].down = True
+        for _ in range(6):
+            with pytest.raises(SignInUnavailable):
+                access.sign_in("directory", USER, PASSWORD)
+        parts[0].down = False
+        assert access.sign_in("directory", USER, PASSWORD).user == USER
+
+    def test_old_names_are_forgotten(self, parts) -> None:
+        from ish.application.access import WINDOW_SECONDS
+
+        access = _access(parts)
+        self._fail(access, user="first", times=5)
+        self._fail(access, user="second")
+        parts[2].now += WINDOW_SECONDS
+        self._fail(access, user="third")
+        assert set(access._failures) == {"third"}
+        assert access._limited == {}

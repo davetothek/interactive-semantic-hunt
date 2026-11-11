@@ -50,6 +50,13 @@ class SignInUnavailable(Exception):
     """
 
 
+class SignInLimited(Exception):
+    """Report a user name that failed to sign in too often to try again now.
+
+    The server asks the method nothing while the limit holds.
+    """
+
+
 @runtime_checkable
 class SignIn(Protocol):
     """Contract for one way a user signs in with a name and a password."""

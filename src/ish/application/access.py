@@ -8,16 +8,30 @@ bytes cannot be guessed from its digest, so the digest needs no key.
 """
 
 import hashlib
+import math
 import secrets
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from ish.application.ports.authenticator import Authenticator, Identity, SignIn
+from ish.application.ports.authenticator import (
+    Authenticator,
+    Identity,
+    SignIn,
+    SignInLimited,
+    SignInRefused,
+)
 from ish.application.ports.login_store import Login, LoginStore
 
 # The random bytes of a login token.
 TOKEN_BYTES = 32
+
+# A user name that fails this many times in WINDOW_SECONDS is refused for
+# WINDOW_SECONDS, and the method is not asked. A password guessed one at
+# a time then costs hours, and the directory never sees the guesses.
+MAX_FAILURES = 5
+WINDOW_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +68,10 @@ class Access:
         self._logins = logins
         self._lifetime = lifetime
         self._clock = clock
+        # The recent failures of each user name, and when each limit ends.
+        self._failures: dict[str, list[float]] = {}
+        self._limited: dict[str, float] = {}
+        self._lock = threading.Lock()
 
     def admit(self, bearer: str) -> Identity | None:
         """Return who carries *bearer*, or None to refuse the request.
@@ -81,8 +99,9 @@ class Access:
         """Check *user* and *password* with *method*, and give a login token.
 
         Raise ``ValueError`` for a method this server does not offer, and
-        for an empty user name or password. Ask the method nothing then.
-        Raise what the method raises when it refuses.
+        for an empty user name or password. Raise ``SignInLimited`` while a
+        user name is over its limit of failures. Ask the method nothing
+        then. Raise what the method raises when it refuses.
         """
         if method not in self._sign_ins:
             offered = ", ".join(self._sign_ins) or "none"
@@ -94,10 +113,49 @@ class Access:
             raise ValueError("Give a user name.")
         if not password:
             raise ValueError("Give a password.")
-        identity = self._sign_ins[method].sign_in(user, password)
+        key = user.strip().lower()
+        now = self._clock()
+        self._check_limit(key, user.strip(), now)
+        try:
+            identity = self._sign_ins[method].sign_in(user, password)
+        except SignInRefused:
+            self._fail(key, now)
+            raise
+        with self._lock:
+            self._failures.pop(key, None)
         token = secrets.token_urlsafe(TOKEN_BYTES)
         expires = self._clock() + self._lifetime
         self._logins.add(
             Login(digest_of(token), identity.user, identity.method, expires)
         )
         return Granted(token, identity.user, expires)
+
+    def _check_limit(self, key: str, user: str, now: float) -> None:
+        with self._lock:
+            ends = self._limited.get(key, 0.0)
+        if ends > now:
+            minutes = math.ceil((ends - now) / 60)
+            raise SignInLimited(
+                f"Too many failed sign-ins for {user}. Try again in {minutes} minutes."
+            )
+
+    def _fail(self, key: str, now: float) -> None:
+        """Count a failure of *key*, and start its limit at the last one allowed."""
+        with self._lock:
+            # Forget what is older than the window, so a flood of user
+            # names holds no memory for long.
+            for name in [
+                n for n, t in self._failures.items() if now - t[-1] >= WINDOW_SECONDS
+            ]:
+                del self._failures[name]
+            for name in [n for n, ends in self._limited.items() if ends <= now]:
+                del self._limited[name]
+            recent = [
+                t for t in self._failures.get(key, []) if now - t < WINDOW_SECONDS
+            ]
+            recent.append(now)
+            if len(recent) >= MAX_FAILURES:
+                self._limited[key] = now + WINDOW_SECONDS
+                self._failures.pop(key, None)
+            else:
+                self._failures[key] = recent
