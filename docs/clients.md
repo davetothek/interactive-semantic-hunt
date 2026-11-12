@@ -216,6 +216,50 @@ Without it, the server does not start, and names the extra. Use an
 `ldap://` URL sends each password in plain text: set `ldap_starttls =
 true`, or the server starts with one warning.
 
+#### With a service account
+
+A directory where the name of a user cannot be made from the user name,
+such as an Active Directory, needs a service account. The server binds as
+the account, searches `ldap_base` for the one entry that
+`ldap_user_filter` finds, checks `ldap_group` as the account, and then
+binds as the user with the password:
+
+```toml
+auth = ["token", "ldap"]
+ldap_url = "ldaps://ldap.example.com"
+ldap_bind_dn = "cn=ish,ou=services,dc=example,dc=com"
+ldap_base = "ou=people,dc=example,dc=com"
+ldap_user_filter = "(sAMAccountName={user})"
+ldap_group = "cn=ish,ou=groups,dc=example,dc=com"
+```
+
+`ldap_user_filter` is `(uid={user})` when it is empty. Set
+`ldap_user_dn` or `ldap_bind_dn`, not both. The password of the account
+goes in `ISH_LDAP_BIND_PASSWORD`, or in a file that
+`ISH_LDAP_BIND_PASSWORD_FILE` names. No config file holds it. A search
+that finds no entry, or more than one, refuses the user as a wrong
+password does. A directory that refuses the account is a fault of the
+server: the user reads that the directory failed, and the log names the
+account.
+
+#### From the environment alone
+
+Each option is also an `ISH_*` variable, so a container needs no config
+file. A list is the names with commas:
+
+```sh
+docker run \
+  -e ISH_MCP_TOKEN \
+  -e ISH_AUTH=token,ldap \
+  -e ISH_LDAP_URL=ldaps://ldap.example.com \
+  -e ISH_LDAP_BIND_DN=cn=ish,ou=services,dc=example,dc=com \
+  -e ISH_LDAP_BASE=ou=people,dc=example,dc=com \
+  -e "ISH_LDAP_USER_FILTER=(sAMAccountName={user})" \
+  -e ISH_LDAP_GROUP=cn=ish,ou=groups,dc=example,dc=com \
+  -e ISH_LDAP_BIND_PASSWORD_FILE=/run/secrets/ldap_password \
+  ...
+```
+
 A config file in the tree that the server serves cannot set `auth`,
 `login_days`, or an `ldap_*` option, because a person who can commit to
 the tree would choose the directory that gets each password. Set them in

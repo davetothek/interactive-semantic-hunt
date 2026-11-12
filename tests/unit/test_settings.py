@@ -553,3 +553,47 @@ class TestAFileInATreeSetsNoSignIn:
         assert tree_files_setting(tmp_path, environ={}) == [
             (path, ["remote", "ldap_url"])
         ]
+
+
+class TestTheLdapPasswordIsNoOption:
+    @pytest.mark.parametrize(
+        "variable", ["ISH_LDAP_BIND_PASSWORD", "ISH_LDAP_BIND_PASSWORD_FILE"]
+    )
+    def test_the_variable_does_not_warn(self, variable: str, tmp_path, caplog) -> None:
+        with caplog.at_level("WARNING"):
+            load_settings(start=tmp_path, environ={variable: "service-EXAMPLE"})
+        assert caplog.text == ""
+
+    def test_a_server_is_set_up_from_the_environment_alone(self, tmp_path) -> None:
+        environ = {
+            "ISH_AUTH": "token,ldap",
+            "ISH_LDAP_URL": "ldaps://ldap.example.invalid",
+            "ISH_LDAP_BIND_DN": "cn=ish,ou=services,dc=example,dc=invalid",
+            "ISH_LDAP_BASE": "ou=people,dc=example,dc=invalid",
+            "ISH_LDAP_USER_FILTER": "(sAMAccountName={user})",
+            "ISH_LDAP_GROUP": "cn=ish,ou=groups,dc=example,dc=invalid",
+            "ISH_LDAP_STARTTLS": "false",
+            "ISH_LOGIN_DAYS": "7",
+        }
+        settings = load_settings(start=tmp_path, environ=environ)
+        assert settings.auth == ("token", "ldap")
+        assert settings.ldap_bind_dn == "cn=ish,ou=services,dc=example,dc=invalid"
+        assert settings.ldap_user_filter == "(sAMAccountName={user})"
+        assert (settings.ldap_starttls, settings.login_days) == (False, 7)
+
+    def test_a_tree_sets_no_service_account(self, tmp_path) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            'ldap_bind_dn = "cn=x"\nldap_base = "dc=x"\n'
+            'ldap_user_filter = "(cn={user})"\n',
+        )
+        settings = load_settings(start=tmp_path, environ={})
+        assert (
+            settings.ldap_bind_dn,
+            settings.ldap_base,
+            settings.ldap_user_filter,
+        ) == (
+            "",
+            "",
+            "",
+        )

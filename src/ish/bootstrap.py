@@ -51,7 +51,13 @@ from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
-from ish.settings import MCP_TOKEN_ENV_VAR, Settings, user_config_path
+from ish.settings import (
+    LDAP_PASSWORD_ENV_VAR,
+    LDAP_PASSWORD_FILE_ENV_VAR,
+    MCP_TOKEN_ENV_VAR,
+    Settings,
+    user_config_path,
+)
 
 if TYPE_CHECKING:
     # For the type checker alone. A local search loads no authentication code.
@@ -342,6 +348,10 @@ def build_access(settings: Settings) -> "Access":
         "token_variable": MCP_TOKEN_ENV_VAR,
         "ldap_url": settings.ldap_url,
         "ldap_user_dn": settings.ldap_user_dn,
+        "ldap_bind_dn": settings.ldap_bind_dn,
+        "ldap_bind_password": _ldap_password() if "ldap" in settings.auth else "",
+        "ldap_base": settings.ldap_base,
+        "ldap_user_filter": settings.ldap_user_filter,
         "ldap_group": settings.ldap_group,
         "ldap_starttls": "true" if settings.ldap_starttls else "",
     }
@@ -366,6 +376,29 @@ def token_file() -> Path:
     Keep it beside the config file of the user, which no tree can name.
     """
     return user_config_path().parent / TOKEN_FILE
+
+
+def _ldap_password() -> str:
+    """Return the password of the LDAP service account, or an empty text.
+
+    Read ``ISH_LDAP_BIND_PASSWORD``, or else the file that
+    ``ISH_LDAP_BIND_PASSWORD_FILE`` names, as Docker mounts a secret.
+    Drop one line break at the end of the file. Raise ``ValueError``
+    when the file cannot be read, and name the variable, not the file
+    content.
+    """
+    password = os.environ.get(LDAP_PASSWORD_ENV_VAR, "")
+    named = os.environ.get(LDAP_PASSWORD_FILE_ENV_VAR, "")
+    if password or not named:
+        return password
+    try:
+        text = Path(named).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(
+            f"Cannot read the file {LDAP_PASSWORD_FILE_ENV_VAR} names: "
+            f"{type(exc).__name__}"
+        ) from None
+    return text.removesuffix("\n").removesuffix("\r")
 
 
 def build_chunk_source(settings: Settings) -> ChunkSource:

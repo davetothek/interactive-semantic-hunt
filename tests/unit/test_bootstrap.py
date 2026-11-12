@@ -1706,3 +1706,41 @@ class TestTheTokenOfAServer:
         login = bootstrap.build_login(replace(Settings(), remote=self.URL))
         assert isinstance(login, Login)
         assert login.host == "docs.example.invalid"
+
+
+class TestThePasswordOfTheServiceAccount:
+    """The password comes from the environment, or from a file it names."""
+
+    def test_the_variable_gives_it(self, monkeypatch) -> None:
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD", "service-EXAMPLE")
+        assert bootstrap._ldap_password() == "service-EXAMPLE"
+
+    @pytest.mark.parametrize(
+        "text", ["service-EXAMPLE\n", "service-EXAMPLE\r\n", "service-EXAMPLE"]
+    )
+    def test_a_file_gives_it_as_docker_mounts_a_secret(
+        self, text: str, tmp_path, monkeypatch
+    ) -> None:
+        secret = tmp_path / "password"
+        secret.write_bytes(text.encode())
+        monkeypatch.delenv("ISH_LDAP_BIND_PASSWORD", raising=False)
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD_FILE", str(secret))
+        assert bootstrap._ldap_password() == "service-EXAMPLE"
+
+    def test_a_file_that_cannot_be_read_names_the_variable(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD_FILE", str(tmp_path / "absent"))
+        with pytest.raises(ValueError) as refused:
+            bootstrap._ldap_password()
+        assert str(refused.value) == (
+            "Cannot read the file ISH_LDAP_BIND_PASSWORD_FILE names: FileNotFoundError"
+        )
+
+    def test_no_variable_gives_none(self) -> None:
+        assert bootstrap._ldap_password() == ""
+
+    def test_a_server_with_no_ldap_reads_no_file(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("ISH_MCP_TOKEN", "test-token-EXAMPLE")
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD_FILE", str(tmp_path / "absent"))
+        assert bootstrap.build_access(Settings()).methods() == []

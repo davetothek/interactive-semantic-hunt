@@ -206,6 +206,10 @@ class TestConfiguration:
             {
                 "ldap_url": "ldap://ldap.example.invalid",
                 "ldap_user_dn": TEMPLATE,
+                "ldap_bind_dn": "",
+                "ldap_bind_password": "",
+                "ldap_base": "",
+                "ldap_user_filter": "",
                 "ldap_group": GROUP,
                 "ldap_starttls": "true",
                 "token": "not for this method",
@@ -247,3 +251,126 @@ class TestTls:
         monkeypatch.delattr(sys.modules["ldap"], name)
         with pytest.raises(ValueError, match="This python-ldap has no TLS"):
             _method()
+
+
+SERVICE = "cn=ish,ou=services,dc=example,dc=invalid"
+SERVICE_PASSWORD = "service-EXAMPLE"
+BASE = "ou=people,dc=example,dc=invalid"
+
+
+def _service(**changes) -> LdapDirectory:
+    options = {
+        "url": URL,
+        "bind_dn": SERVICE,
+        "bind_password": SERVICE_PASSWORD,
+        "base": BASE,
+    }
+    return LdapDirectory(**(options | changes))
+
+
+class TestServiceAccount:
+    """The service account finds the name of a user, then the user binds."""
+
+    @pytest.fixture()
+    def found(self, directory: Directory) -> Directory:
+        directory.users[SERVICE] = SERVICE_PASSWORD
+        directory.lookups["(uid=reader)"] = [READER]
+        return directory
+
+    def test_the_account_searches_then_the_user_binds(self, found: Directory) -> None:
+        assert _service().sign_in("reader", PASSWORD) == Identity("reader", "ldap")
+        assert found.binds == [(SERVICE, SERVICE_PASSWORD), (READER, PASSWORD)]
+        ((base, scope, query),) = found.searches
+        assert (base, scope, query) == (BASE, fake_ldap.SCOPE_SUBTREE, "(uid=reader)")
+
+    def test_a_filter_of_the_operator_finds_the_user(self, found: Directory) -> None:
+        found.lookups["(sAMAccountName=reader)"] = [READER]
+        method = _service(user_filter="(sAMAccountName={user})")
+        assert method.sign_in("reader", PASSWORD).user == "reader"
+
+    def test_the_user_name_is_escaped_in_the_filter(self, found: Directory) -> None:
+        with pytest.raises(SignInRefused):
+            _service().sign_in("r*)(uid=*", PASSWORD)
+        ((_base, _scope, query),) = found.searches
+        assert query == r"(uid=r\2a\29\28uid=\2a)"
+
+    @pytest.mark.parametrize("entries", [[], [READER, "uid=reader,ou=old,dc=x"]])
+    def test_no_entry_or_two_entries_bind_nobody(
+        self, entries: list, found: Directory
+    ) -> None:
+        found.lookups["(uid=reader)"] = entries
+        with pytest.raises(SignInRefused, match=REFUSED):
+            _service().sign_in("reader", PASSWORD)
+        assert found.binds == [(SERVICE, SERVICE_PASSWORD)]
+
+    def test_a_reference_to_another_server_is_no_entry(self, found: Directory) -> None:
+        found.lookups["(uid=reader)"] = [None, READER]
+        assert _service().sign_in("reader", PASSWORD).user == "reader"
+
+    def test_a_wrong_password_of_the_user(self, found: Directory) -> None:
+        with pytest.raises(SignInRefused, match=REFUSED):
+            _service().sign_in("reader", "wrong-EXAMPLE")
+
+    def test_an_account_the_directory_refuses_is_no_wrong_password(
+        self, found: Directory, caplog
+    ) -> None:
+        found.users[SERVICE] = "rotated-EXAMPLE"
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SignInUnavailable) as failed:
+                _service().sign_in("reader", PASSWORD)
+        assert (
+            str(failed.value) == "The directory failed. The log of the server says why."
+        )
+        assert caplog.messages == [
+            "The directory at ldap.example.invalid refused the service account "
+            f"{SERVICE}."
+        ]
+        assert SERVICE_PASSWORD not in caplog.text
+        assert found.binds == [(SERVICE, SERVICE_PASSWORD)]
+
+    def test_the_group_is_asked_before_the_password(self, found: Directory) -> None:
+        found.groups[GROUP] = set()
+        with pytest.raises(SignInRefused, match=REFUSED):
+            _service(group=GROUP).sign_in("reader", PASSWORD)
+        # The password of the user never reached the directory.
+        assert found.binds == [(SERVICE, SERVICE_PASSWORD)]
+
+    def test_a_member_of_the_group_signs_in(self, found: Directory) -> None:
+        found.groups[GROUP] = {READER}
+        assert _service(group=GROUP).sign_in("reader", PASSWORD).user == "reader"
+        assert found.binds == [(SERVICE, SERVICE_PASSWORD), (READER, PASSWORD)]
+
+    def test_it_reads_its_options(self, found: Directory) -> None:
+        method = LdapDirectory.configured(
+            {
+                "ldap_url": URL,
+                "ldap_user_dn": "",
+                "ldap_bind_dn": SERVICE,
+                "ldap_bind_password": SERVICE_PASSWORD,
+                "ldap_base": BASE,
+                "ldap_user_filter": "",
+                "ldap_group": "",
+                "ldap_starttls": "",
+            }
+        )
+        assert method.sign_in("reader", PASSWORD).user == "reader"
+        assert found.searches[0][2] == "(uid=reader)"
+
+    @pytest.mark.parametrize(
+        ("changes", "error"),
+        [
+            ({"user_dn": TEMPLATE}, "Set one of the two."),
+            ({"bind_dn": ""}, "Set one of the two."),
+            (
+                {"bind_password": ""},
+                "ISH_LDAP_BIND_PASSWORD, or ISH_LDAP_BIND_PASSWORD_FILE",
+            ),
+            ({"base": ""}, "Set ldap_base"),
+            ({"user_filter": "(uid=reader)"}, "Set ldap_user_filter"),
+        ],
+    )
+    def test_a_setting_that_cannot_work_is_refused(
+        self, changes: dict, error: str, directory: Directory
+    ) -> None:
+        with pytest.raises(ValueError, match=error):
+            _service(**changes)

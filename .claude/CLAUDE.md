@@ -115,7 +115,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
 | Adapter | `src/ish/adapters/authenticator/__init__.py` | `AUTHENTICATORS` — every way a server admits a request, and the recipe for adding one |
 | Adapter | `src/ish/adapters/authenticator/token.py` | The static token of the operator |
-| Adapter | `src/ish/adapters/authenticator/ldap.py` | A bind to an LDAP directory, with python-ldap of the `ldap` extra |
+| Adapter | `src/ish/adapters/authenticator/ldap.py` | A bind to an LDAP directory, by a name made from the user name or found by a service account, with python-ldap of the `ldap` extra |
 | Adapter | `src/ish/adapters/login_store/file.py` | The logins of a server, as a file of JSON lines in the data directory |
 | Adapter | `src/ish/adapters/login/http.py` | Sign in on the path beside `/mcp`, and keep the login token |
 | Adapter | `src/ish/adapters/_logins.py` | The login tokens of this machine, one for each server, in a file only the user can read |

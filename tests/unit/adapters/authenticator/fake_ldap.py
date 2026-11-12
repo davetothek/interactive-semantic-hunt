@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
+SCOPE_SUBTREE = 2
+
 
 class LDAPError(Exception):
     pass
@@ -55,6 +57,9 @@ class Directory:
 
     users: dict[str, str] = field(default_factory=dict)
     groups: dict[str, set[str]] = field(default_factory=dict)
+    # What a search of a subtree finds for each filter. A name of None is
+    # a reference to another server, as python-ldap returns one.
+    lookups: dict[str, list[str | None]] = field(default_factory=dict)
     down: bool = False
     failure: Exception | None = None
     binds: list[tuple[str, str]] = field(default_factory=list)
@@ -88,6 +93,8 @@ class Connection:
 
     def search_s(self, base: str, scope: int, query: str, attributes: list[str]):
         self._directory.searches.append((base, scope, query))
+        if scope == SCOPE_SUBTREE:
+            return [(dn, {}) for dn in self._directory.lookups.get(query, [])]
         members = self._directory.groups.get(base, set())
         return [(base, {})] if any(f"={m})" in query for m in members) else []
 
@@ -108,6 +115,7 @@ def module(directory: Directory) -> types.ModuleType:
         "OPT_X_TLS_DEMAND": 5,
         "OPT_X_TLS_NEWCTX": 6,
         "SCOPE_BASE": 0,
+        "SCOPE_SUBTREE": SCOPE_SUBTREE,
         "LDAPError": LDAPError,
         "INVALID_CREDENTIALS": INVALID_CREDENTIALS,
         "SERVER_DOWN": SERVER_DOWN,

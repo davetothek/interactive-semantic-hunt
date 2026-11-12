@@ -42,6 +42,10 @@ CONFIG_ENV_VAR = ENV_PREFIX + CONFIG_OPTION.upper()
 """The environment variable that names a config file."""
 
 MCP_TOKEN_ENV_VAR = ENV_PREFIX + "MCP_TOKEN"
+# The password of the LDAP service account, or a file that holds it, as
+# Docker keeps a secret. Neither is an option, so no config file holds it.
+LDAP_PASSWORD_ENV_VAR = ENV_PREFIX + "LDAP_BIND_PASSWORD"
+LDAP_PASSWORD_FILE_ENV_VAR = LDAP_PASSWORD_ENV_VAR + "_FILE"
 """The environment variable that holds the bearer token of MCP over HTTP.
 
 It is a secret, not an option. A secret must not sit in a config file
@@ -511,6 +515,31 @@ class Settings:
             metavar="DN",
         ),
     )
+    ldap_bind_dn: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Service account that searches the directory for each user. "
+            "Its password is in ISH_LDAP_BIND_PASSWORD.",
+            metavar="DN",
+        ),
+    )
+    ldap_base: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Part of the directory the service account searches for users.",
+            metavar="DN",
+        ),
+    )
+    ldap_user_filter: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Filter that finds a user, with {user}. Empty means (uid={user}).",
+            metavar="FILTER",
+        ),
+    )
     ldap_group: str = field(
         default="",
         metadata=_opt(
@@ -670,6 +699,9 @@ NOT_FROM_A_TREE = (
     "login_days",
     "ldap_url",
     "ldap_user_dn",
+    "ldap_bind_dn",
+    "ldap_base",
+    "ldap_user_filter",
     "ldap_group",
     "ldap_starttls",
 )
@@ -793,14 +825,21 @@ def project_configs(start: Path) -> list[Path]:
 def _from_env(environ: Mapping[str, str]) -> dict[str, Any]:
     """Read options from ``ISH_*`` environment variables.
 
-    Pass over ``ISH_CONFIG`` and ``ISH_MCP_TOKEN``. One names a file to
-    read and the other holds a secret. Neither is an option, and
-    reporting one as unknown would be wrong.
+    Pass over ``ISH_CONFIG``, ``ISH_MCP_TOKEN``, and the two variables of
+    the LDAP password. One names a file to read, and the others hold a
+    secret or name its file. None is an option, and reporting one as
+    unknown would be wrong.
     """
+    skipped = (
+        CONFIG_ENV_VAR,
+        MCP_TOKEN_ENV_VAR,
+        LDAP_PASSWORD_ENV_VAR,
+        LDAP_PASSWORD_FILE_ENV_VAR,
+    )
     raw = {
         key.removeprefix(ENV_PREFIX).lower(): value
         for key, value in environ.items()
-        if key.startswith(ENV_PREFIX) and key not in (CONFIG_ENV_VAR, MCP_TOKEN_ENV_VAR)
+        if key.startswith(ENV_PREFIX) and key not in skipped
     }
     return _accept("the environment", raw)
 

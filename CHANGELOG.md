@@ -47,6 +47,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   the `ldap` extra, which installs python-ldap. The user name is escaped
   before it reaches the directory, and an empty password never binds. A
   plain `ldap://` URL with no StartTLS starts with one warning.
+- `ldap_bind_dn`, `ldap_base`, and `ldap_user_filter` sign users in
+  through a service account, for a directory such as an Active Directory.
+  The server binds as the account, finds the one entry of the user, checks
+  `ldap_group`, and then binds as the user. The password of the account is
+  in `ISH_LDAP_BIND_PASSWORD`, or in the file that
+  `ISH_LDAP_BIND_PASSWORD_FILE` names, as Docker mounts a secret. Every
+  option is also an `ISH_*` variable, so a container needs no config file.
 - A server that signs users in listens on this machine only, behind a
   reverse proxy that holds the certificate, and refuses to start on
   another address. Five failed sign-ins for one user name in 15 minutes
