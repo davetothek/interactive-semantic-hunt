@@ -209,15 +209,16 @@ def _run_index(args: CliArgs) -> int:
         line.clear()
         held = ish.held()
         kept = ish.kept_by()
+    chunks = f"{held} chunk" if held == 1 else f"{held} chunks"
     if kept is not None:
         doing = f", {kept.refreshing}" if kept.refreshing else ""
         print(
             f"ish-serve {kept.pid} keeps {kept.tree} current{doing}. "
-            f"The index holds {held} chunks.",
+            f"The index holds {chunks}.",
             file=sys.stderr,
         )
         return 0
-    print(f"The index of {args.path} holds {held} chunks.", file=sys.stderr)
+    print(f"The index of {args.path} holds {chunks}.", file=sys.stderr)
     return 0
 
 

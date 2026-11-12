@@ -26,12 +26,17 @@ end
 
 local server = require('utils.ish_server')
 local asked_to_build = 0
+local remote_asked = 0
 local function setup(has, up, agree)
   asked_to_build = 0
   server.indexed = {}
   server.build_answers = {}
   server.local_server.exists = function(_, cb) cb(has) end
-  server.remote.available = function(cb) cb(up) end
+  server.server_up = nil
+  server.remote.available = function(cb)
+    remote_asked = remote_asked + 1
+    cb(up)
+  end
   server._agree_to_build = function() asked_to_build = asked_to_build + 1; return agree end
 end
 local function choose(mode)
@@ -70,6 +75,13 @@ vim.notify = function(message) table.insert(said, message) end
 check('remote, no server: nothing', choose('remote'), nil)
 vim.notify = notify
 check('remote, no server: says why', said, { 'ish: No server is set. Give --url URL, or set ISH_REMOTE.' })
+
+-- The server is asked for once, and the answer stands.
+setup(true, false, false)
+remote_asked = 0
+choose('auto')
+choose('auto')
+check('no server is asked for once', remote_asked, 1)
 
 -- The question comes once for each tree, whatever the answer.
 setup(false, false, false)

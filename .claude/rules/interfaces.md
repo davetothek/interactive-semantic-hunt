@@ -130,5 +130,7 @@ finishes a filter word. Nothing else is added.
   `ish remote ask` when the local answer is not covered.
 - An editor asks once a tree before it builds an index, and keeps the
   answer for the session. A save refreshes only a tree chosen here.
-- `index_exists` starts nothing and writes nothing. `Ish.stored()` reads
-  the catalog alone, because opening an index to ask leaves a file.
+- `index_exists` starts no index and no refresh, and creates no index
+  file. `Ish.stored()` reads the catalog alone, because opening an index
+  that does not exist creates it. An index that exists is opened to count
+  it, as a search opens it.

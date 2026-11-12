@@ -327,6 +327,21 @@ local function agreed(cwd)
   return M.build_answers[cwd]
 end
 
+-- Whether a server is set and answers, asked once a session. With no
+-- server set, `ish remote mcp` stops at once, and asking at each search
+-- would start that process each time.
+M.server_up = nil
+
+function M.remote_up(callback)
+  if M.server_up ~= nil then
+    return callback(M.server_up)
+  end
+  M.remote.available(function(up)
+    M.server_up = up
+    callback(up)
+  end)
+end
+
 --- Choose where to search *cwd*, and call back with
 --- { use_local = boolean, use_remote = boolean }, or nil for nowhere.
 ---
@@ -350,7 +365,7 @@ function M.choose(cwd, mode, callback)
   end
 
   if mode == 'remote' then
-    return M.remote.available(function(up)
+    return M.remote_up(function(up)
       if up then
         return chosen(false, true)
       end
@@ -365,7 +380,7 @@ function M.choose(cwd, mode, callback)
       end
       return build_or_stop()
     end
-    M.remote.available(function(up)
+    M.remote_up(function(up)
       if has or up then
         return chosen(has, up)
       end

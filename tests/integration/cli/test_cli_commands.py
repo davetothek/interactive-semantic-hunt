@@ -253,3 +253,16 @@ class TestIndex:
     ) -> None:
         assert main(["search", "index", "--cache-dir", str(project / "idx")]) == 0
         assert "ish-serve" not in capsys.readouterr().err
+
+
+class TestIndexOfOneChunk:
+    def test_one_chunk_is_one_chunk(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        (tmp_path / "boot.md").write_text(
+            "# Watchdog\n\nThe watchdog resets the board.\n"
+        )
+        monkeypatch.setattr(
+            bootstrap, "build_embedder", lambda settings: FakeEmbedder()
+        )
+        monkeypatch.chdir(tmp_path)
+        assert main(["index", "--cache-dir", str(tmp_path / "idx")]) == 0
+        assert capsys.readouterr().err.splitlines()[-1].endswith("holds 1 chunk.")

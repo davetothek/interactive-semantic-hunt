@@ -90,6 +90,8 @@ function settings(): Settings {
 class Servers implements vscode.Disposable {
   private readonly byRoot = new Map<string, IshServer>();
   private server: IshServer | undefined;
+  /** Whether a server answered, asked once until the servers restart. */
+  private serverUp: boolean | undefined;
   /** Where each folder was chosen to search, so a save refreshes only a tree chosen here. */
   readonly chosen = new Map<string, Choice>();
   /** Whether to build the index of each folder, asked once a session. */
@@ -129,6 +131,18 @@ class Servers implements vscode.Disposable {
     return this.server;
   }
 
+  /**
+   * Whether a server is set and answers, asked once. With no server set,
+   * `ish remote mcp` stops at once, and asking at each search would start
+   * that process each time.
+   */
+  async remoteUp(root: string): Promise<boolean> {
+    if (this.serverUp === undefined) {
+      this.serverUp = await this.remote(root).available();
+    }
+    return this.serverUp;
+  }
+
   /** Whether a server has been started for *root*. */
   has(root: string): boolean {
     return this.byRoot.has(root);
@@ -158,6 +172,7 @@ class Servers implements vscode.Disposable {
     this.byRoot.clear();
     this.server?.stop();
     this.server = undefined;
+    this.serverUp = undefined;
     this.chosen.clear();
     this.builds.clear();
   }
@@ -399,7 +414,7 @@ async function pickSource(servers: Servers, root: string): Promise<Choice | unde
   const remote = servers.remote(root);
   const choice = await choose(settings().source, {
     hasIndex: () => local.exists(root).catch(() => false),
-    serverUp: () => remote.available(),
+    serverUp: () => servers.remoteUp(root),
     agreeToBuild: () => servers.builds.agree(root),
   });
   if (choice === undefined && settings().source === "remote") {

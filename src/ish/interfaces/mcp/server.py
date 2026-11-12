@@ -396,10 +396,10 @@ class IshTools:
     def index_exists(self, arguments: Mapping[str, Any]) -> str:
         """Say whether a stored index holds chunks for a path, as JSON.
 
-        Count what is stored and start nothing: no refresh and no watch.
-        An editor asks before it chooses between this tree and a server,
-        and an index that the question started would cost the hours the
-        choice was to save.
+        Count what is stored, and start no index, no refresh, and no
+        watch. A tree with no index gets no file. An editor asks before it
+        chooses between this tree and a server, and an index that the
+        question started would cost the hours the choice was to save.
         """
         root = self._resolve(arguments.get("path"))
         session = self._session_for(root)

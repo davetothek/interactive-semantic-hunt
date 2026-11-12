@@ -1284,11 +1284,15 @@ class TestIndexExists:
         assert sorted(p.name for p in cache.rglob("*")) == before
 
     def test_a_tree_with_an_index_says_how_many_chunks(self, stored) -> None:
-        tools, _cache = stored
+        tools, cache = stored
         tools._session_for(tools._root).index()
+        indexes = sorted(cache.glob("*.db"))
         reply = json.loads(tools.index_exists({}))
         assert reply["exists"] is True
         assert reply["chunks"] >= 2
+        # Counting opens the index there is, and makes no other.
+        assert sorted(cache.glob("*.db")) == indexes
+        assert tools._watchers == []
 
     def test_only_the_server_on_stdio_offers_it(self, stored) -> None:
         tools, _cache = stored

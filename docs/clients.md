@@ -110,7 +110,8 @@ Both editor clients choose where a search and a question go. Set it with
 | `remote` | the server only, through `ish remote mcp` |
 
 With both, the picker lists this tree first and the server after, and
-marks each line of the server with `[server]`. Two indexes score on two
+marks each line of the server: `[server]` in Neovim, `server` beside the
+kind in VS Code. Two indexes score on two
 scales, so the lists stay apart. A line of the server opens the file of
 the same path in this tree, which holds it when the server serves the same
 repository. A question goes to this tree first, and when its documents do
@@ -120,7 +121,7 @@ The client asks `index_exists` whether this tree has an index, which
 starts none. With no index and no server, or with `local` and no index,
 the client asks once before it builds one, because a large tree takes
 hours to embed. It keeps the answer for each tree until the editor starts
-again. To build an index after a "Not now", run
+again, and asks once whether a server answers. To build an index after a "Not now", run
 `require('utils.ish').index()` in Neovim, `ish: Refresh the index` in
 VS Code, or `ish index` in a shell. A save refreshes only a tree that is searched here.
 
