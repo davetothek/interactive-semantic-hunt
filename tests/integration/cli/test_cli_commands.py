@@ -289,8 +289,8 @@ class TestChat:
         self._typed(monkeypatch, QUESTION, "and how often?")
         assert main(["chat", "--cache-dir", str(project / "idx")]) == 0
         out = capsys.readouterr().out
-        assert out.count("The watchdog resets the board[1].") == 2
-        assert "[1] docs/boot.md:1-3" in out
+        assert out.count("The watchdog resets the board [1].") == 2
+        assert "1. [docs/boot.md:1-3](file://" in out
         first, second = model.questions
         assert first == QUESTION
         # The follow-up reads the history, under its heading.

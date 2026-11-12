@@ -100,6 +100,17 @@ def footnote(number: int) -> str:
     return f" [^{number}]"
 
 
+def spaced(number: int) -> str:
+    """Mark a citation as `` [n]``, after a space, for a reply of a chat.
+
+    A space keeps a marker off the word before it and off the marker
+    before it, so Markdown reads ``[1] [2]`` as two markers and not as a
+    reference link. The sources are a numbered list, which no marker
+    links to.
+    """
+    return f" [{number}]"
+
+
 def number_citations(
     answer: Answer,
     numbers: dict[Chunk, int] | None = None,
@@ -150,6 +161,23 @@ def format_answer(
 ) -> str:
     """Format an answer as Markdown that a person reads from the top down.
 
+    See ``answer_text``, which also returns the sources in the order of
+    their numbers.
+    """
+    return answer_text(answer, question, link, base, kind_of)[0]
+
+
+def answer_text(
+    answer: Answer,
+    question: str,
+    link: Callable[[Chunk], str],
+    base: Path | None = None,
+    kind_of: Callable[[Chunk], str] | None = None,
+    *,
+    footnotes: bool = True,
+) -> tuple[str, list[Chunk]]:
+    """Return an answer as Markdown, and its sources in the order of their numbers.
+
     Open with the short answer. Give each part of the question its own
     section, a procedure as numbered steps, and registers or values as a
     table. Gather what the sources leave open in one block, so a reader
@@ -158,33 +186,38 @@ def format_answer(
     file name and lines, and below it what kind of file it is, its
     heading, and its directory. Name the acronyms the answer uses, and
     what each stands for, before the sources. For a question the
-    documents do not cover, list the closest sources.
+    documents do not cover, list the closest sources. With *footnotes*
+    False, mark a citation as `` [n]`` and list the sources as a numbered
+    list, as a chat shows them.
     """
+    mark = footnote if footnotes else spaced
     lines = [f"# {_one_line(question)}", ""]
     numbers: dict[Chunk, int] = {}
     if answer.covered and answer.blocks:
         for block in answer.blocks:
-            lines += _render(block, numbers, footnote) + [""]
+            lines += _render(block, numbers, mark) + [""]
     elif answer.covered:
-        text, _ = number_citations(answer, numbers, mark=footnote)
+        text, _ = number_citations(answer, numbers, mark=mark)
         for paragraph in text.split("\n\n"):
             if paragraph.strip():
                 lines += [_fill(paragraph), ""]
     if answer.covered:
-        lines += _render_terms(answer.terms, numbers)
+        lines += _render_terms(answer.terms, numbers, mark)
         cited = list(numbers)
         lines += ["## Sources", ""]
     else:
         cited = list(answer.sources)
         lines += [_fill(NOT_COVERED_TEXT, "> "), "", "## Closest sources", ""]
     # A footnote definition for a cited source, so each marker links to
-    # it. A closest source is cited by nothing, so it is a plain list.
+    # it. A closest source is cited by nothing, so it is a plain list, as
+    # each source is when the markers are no footnotes.
+    defined = answer.covered and footnotes
     for n, chunk in enumerate(cited, 1):
-        marker = f"[^{n}]: " if answer.covered else f"{n}. "
+        marker = f"[^{n}]: " if defined else f"{n}. "
         place = f"{chunk.path.name}{chunk.location.render()}"
         lines.append(f"{marker}[{place}]({link(chunk)})")
         # A footnote continues on lines indented by four spaces.
-        indent = "    " if answer.covered else " " * len(marker)
+        indent = "    " if defined else " " * len(marker)
         about = [kind_of(chunk)] if kind_of else []
         # A heading path joins its levels with " > ". A wrapped line that
         # starts with ">" is a quote in Markdown, so a source line writes
@@ -197,7 +230,7 @@ def format_answer(
     if answer.searches:
         lines += ["", "## Follow-up searches", ""]
         lines += [_fill(query, "- ", "  ") for query in answer.searches]
-    return "\n".join(lines)
+    return "\n".join(lines), cited
 
 
 def format_brief(answer: Answer) -> str:
@@ -225,29 +258,31 @@ def format_chat(
     *,
     brief: bool,
     kind_of: Callable[[Chunk], str] | None = None,
-) -> str:
-    """Return one reply of a chat.
+) -> tuple[str, list[Chunk]]:
+    """Return one reply of a chat as Markdown, and its sources by number.
 
-    A brief reply is the short answer with its ``[n]`` markers, and one
-    line for each source it cites, so a short reply stays checkable. A
-    full reply is the answer as ``format_answer`` writes it. A question
-    the sources do not cover says so in one line.
+    Mark a citation as `` [n]``, and list the sources as a numbered list
+    of links. A brief reply is the short answer and one item for each
+    source it cites, so a short reply stays checkable. A full reply is
+    the answer as ``answer_text`` writes it. A question the sources do
+    not cover says so in one line.
     """
     if not answer.covered:
-        return NOT_COVERED_TEXT.split(".")[0] + "."
+        return NOT_COVERED_TEXT.split(".")[0] + ".", []
     if not brief:
-        return format_answer(answer, question, link, kind_of=kind_of)
+        return answer_text(answer, question, link, kind_of=kind_of, footnotes=False)
     summary = next((b for b in answer.blocks if b.kind == "summary"), None)
     parts = summary.parts if summary else answer.parts
-    text, cited = number_citations(Answer(parts=tuple(parts), covered=True, sources=()))
+    text, cited = number_citations(
+        Answer(parts=tuple(parts), covered=True, sources=()), mark=spaced
+    )
     lines = [_fill(text)]
     if cited:
         lines.append("")
-        lines.extend(
-            f"[{n}] {display_path(c.path)}:{c.start_line}-{c.end_line}"
-            for n, c in enumerate(cited, 1)
-        )
-    return "\n".join(lines)
+        for n, c in enumerate(cited, 1):
+            place = f"{display_path(c.path)}:{c.start_line}-{c.end_line}"
+            lines.append(f"{n}. [{place}]({link(c)})")
+    return "\n".join(lines), cited
 
 
 # The stages of an answer as a reader names them, in the order they run.
@@ -407,13 +442,17 @@ def _joined(
     )[0]
 
 
-def _render_terms(terms: Sequence[AnswerTerm], numbers: dict[Chunk, int]) -> list[str]:
+def _render_terms(
+    terms: Sequence[AnswerTerm],
+    numbers: dict[Chunk, int],
+    mark: Callable[[int], str],
+) -> list[str]:
     """Render the acronyms of an answer as a list, each citing its source."""
     if not terms:
         return []
     lines = ["## Terms", ""]
     for term in terms:
-        marks = _marks(term.cites, numbers, footnote)
+        marks = _marks(term.cites, numbers, mark)
         lines.append(_fill(f"**{term.term}**: {term.meaning}{marks}", "- ", "  "))
     return [*lines, ""]
 

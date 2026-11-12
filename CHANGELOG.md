@@ -21,6 +21,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   chat, and `--full` replies in full. The history stays in memory, and
   holds only what a source backs. A server gets the searches, and never
   an answer.
+  On a terminal, a reply is rendered, a sent question and the sources
+  turn grey, and each marker and source links to its file. `/open N`
+  opens source N in the editor, and Tab finishes a command.
 - `ish index [PATH]` builds the index of a tree, or brings it up to date,
   with no search, and says how many chunks it holds. When `ish-serve`
   keeps the tree, it names the server and leaves the work to it.

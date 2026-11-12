@@ -418,7 +418,13 @@ def chat(settings: Settings, *, full: bool = False) -> int:
         remote = RemoteIsh(settings)
     except Exception as exc:
         return _failed(exc)
-    return loop.converse(remote, brief=not full, report=report_step)
+    return loop.converse(
+        remote,
+        brief=not full,
+        report=report_step,
+        color=resolve_color(settings.color, sys.stdout),
+        render=sys.stdout.isatty(),
+    )
 
 
 def _moment(seconds: float) -> str:

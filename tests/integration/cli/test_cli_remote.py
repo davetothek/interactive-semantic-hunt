@@ -435,7 +435,7 @@ class TestChat:
         )
         assert run(["remote", "chat"]) == 0
         out = capsys.readouterr().out
-        assert "The watchdog resets the board[1]." in out
+        assert "The watchdog resets the board [1]." in out
         assert f"# {QUESTION}\n" in out
         # /more reads what the answer read: no second call to the server.
         assert [name for name, _ in served.calls] == ["sources"]

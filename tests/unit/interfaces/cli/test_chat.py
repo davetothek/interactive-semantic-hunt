@@ -77,7 +77,8 @@ def _chat(session: Session, *typed, brief: bool = True) -> int:
     )
 
 
-BRIEF = "The watchdog resets the board.[1]\n\n[1] docs/boot.md:1-3\n\n"
+URL = "https://docs.example.invalid/tree/docs/boot.md#L1-3"
+BRIEF = f"The watchdog resets the board. [1]\n\n1. [docs/boot.md:1-3]({URL})\n\n"
 
 
 class TestQuestions:
@@ -196,3 +197,208 @@ class TestFailures:
     def test_ctrl_d_or_ctrl_c_at_the_prompt_ends_the_chat(self, end, capsys) -> None:
         assert _chat(Session(), end) == 0
         assert capsys.readouterr().out == "\n"
+
+
+class TestCompletion:
+    @pytest.mark.parametrize(
+        ("text", "line", "found"),
+        [
+            ("/mo", "/mo", ["/more"]),
+            ("/", "/", ["/more", "/sources", "/open", "/new", "/help", "/quit"]),
+            ("/x", "/x", []),
+            ("wat", "wat", []),
+            ("/mo", "how /mo", []),
+            ("1", "/open 1", []),
+        ],
+    )
+    def test_tab_finishes_the_first_word_of_a_command(self, text, line, found) -> None:
+        from ish.interfaces.cli.chat import complete
+
+        choices = []
+        for state in range(10):
+            choice = complete(text, state, line)
+            if choice is None:
+                break
+            choices.append(choice)
+        assert choices == found
+
+    def test_readline_is_set_up_with_no_history_file(self, monkeypatch) -> None:
+        import sys
+        import types
+
+        from ish.interfaces.cli import chat
+
+        calls: list[tuple] = []
+        fake = types.ModuleType("readline")
+        fake.set_completer = lambda f: calls.append(("completer", f("/mo", 0)))
+        fake.set_completer_delims = lambda d: calls.append(("delims", d))
+        fake.parse_and_bind = lambda s: calls.append(("bind", s))
+        fake.get_line_buffer = lambda: "/mo"
+        monkeypatch.setitem(sys.modules, "readline", fake)
+        chat._use_readline()
+        assert calls == [
+            ("completer", "/more"),
+            ("delims", " \t\n"),
+            ("bind", "tab: complete"),
+        ]
+
+    def test_no_readline_reads_lines_as_before(self, monkeypatch) -> None:
+        import sys
+
+        from ish.interfaces.cli import chat
+
+        monkeypatch.setitem(sys.modules, "readline", None)
+        chat._use_readline()
+
+    def test_a_terminal_sets_up_readline(self, monkeypatch) -> None:
+        from ish.interfaces.cli import chat
+
+        used: list[bool] = []
+        monkeypatch.setattr(chat, "_use_readline", lambda: used.append(True))
+        converse(
+            Session(),
+            brief=True,
+            report=lambda t, s: None,
+            read_line=_lines(),
+            terminal=True,
+        )
+        assert used == [True]
+
+
+class TestColor:
+    def test_a_rendered_reply_greys_its_sources_and_links_them(
+        self, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setenv("TERM", "xterm-256color")
+        converse(
+            Session(),
+            brief=True,
+            report=lambda t, s: None,
+            read_line=_lines("why"),
+            color=True,
+            render=True,
+            terminal=False,
+        )
+        out = capsys.readouterr().out
+        body, sources = out.split("\n\n")[:2]
+        assert body.startswith("The watchdog resets the board. ")
+        assert "\x1b]8;id=" in body and URL in body
+        assert "\x1b[90m" not in body
+        assert "\x1b[90mdocs/boot.md:1-3\x1b[0m" in sources
+        assert "](" not in out
+
+    def test_a_rendered_reply_with_no_color_keeps_the_layout(self, capsys) -> None:
+        converse(
+            Session(),
+            brief=True,
+            report=lambda t, s: None,
+            read_line=_lines("why"),
+            render=True,
+            terminal=False,
+        )
+        out = capsys.readouterr().out
+        assert "\x1b" not in out
+        assert out.startswith("The watchdog resets the board. [1]\n\n 1 ")
+        assert URL in out
+
+    def test_a_sent_question_turns_grey_where_it_was_typed(self, capsys) -> None:
+        from ish.interfaces.cli.terminal import grey
+
+        converse(
+            Session(),
+            brief=True,
+            report=lambda t, s: None,
+            read_line=_lines("/help"),
+            color=True,
+            terminal=True,
+        )
+        assert capsys.readouterr().out.startswith(
+            f"\x1b[1A\r\x1b[2K{grey('ish> /help')}\n"
+        )
+
+    def test_no_color_writes_plain_lines(self, capsys) -> None:
+        converse(
+            Session(), brief=True, report=lambda t, s: None, read_line=_lines("why")
+        )
+        assert "\x1b" not in capsys.readouterr().out
+
+    def test_a_long_question_clears_each_row_it_took(self, monkeypatch, capsys) -> None:
+        import os
+
+        monkeypatch.setattr(
+            "shutil.get_terminal_size", lambda: os.terminal_size((10, 24))
+        )
+        converse(
+            Session(),
+            brief=True,
+            report=lambda t, s: None,
+            read_line=_lines("/help " + "x" * 10),
+            color=True,
+            terminal=True,
+        )
+        assert capsys.readouterr().out.startswith("\x1b[1A\r\x1b[2K" * 3)
+
+
+class TestOpen:
+    def _open(self, monkeypatch, *typed, link: str | None = None) -> list:
+        session = Session()
+        if link is not None:
+            monkeypatch.setattr(session, "link", lambda chunk: link)
+        ran: list = []
+        monkeypatch.setattr("subprocess.run", lambda argv, check: ran.append(argv))
+        _chat(session, *typed)
+        return ran
+
+    def test_a_source_of_this_machine_opens_in_the_editor(self, monkeypatch) -> None:
+        monkeypatch.setenv("EDITOR", "nvim -R")
+        monkeypatch.delenv("VISUAL", raising=False)
+        ran = self._open(
+            monkeypatch, "why", "/open 1", link="file:///srv/docs/boot%20page.md#L1-3"
+        )
+        assert ran == [["nvim", "-R", "+1", "/srv/docs/boot page.md"]]
+
+    def test_visual_wins_over_editor(self, monkeypatch) -> None:
+        monkeypatch.setenv("EDITOR", "vi")
+        monkeypatch.setenv("VISUAL", "code -g")
+        ran = self._open(monkeypatch, "why", "/open 1", link="file:///srv/a.md")
+        assert ran == [["code", "-g", "+1", "/srv/a.md"]]
+
+    def test_a_source_of_a_server_shows_its_link(self, monkeypatch, capsys) -> None:
+        monkeypatch.setenv("EDITOR", "vi")
+        monkeypatch.delenv("VISUAL", raising=False)
+        assert self._open(monkeypatch, "why", "/open 1") == []
+        assert capsys.readouterr().out.endswith(
+            "https://docs.example.invalid/tree/docs/boot.md#L1-3\n\n"
+        )
+
+    def test_no_editor_shows_the_link(self, monkeypatch, capsys) -> None:
+        monkeypatch.delenv("EDITOR", raising=False)
+        monkeypatch.delenv("VISUAL", raising=False)
+        assert self._open(monkeypatch, "why", "/open 1", link="file:///srv/a.md") == []
+        assert "file:///srv/a.md\n" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("typed", ["/open", "/open 2", "/open x", "/open 0"])
+    def test_a_number_that_names_no_source(self, typed, monkeypatch, capsys) -> None:
+        assert self._open(monkeypatch, "why", typed) == []
+        assert "Give the number of a source: /open 1 to /open 1." in (
+            capsys.readouterr().err
+        )
+
+    def test_before_a_reply_and_after_new_there_is_none(
+        self, monkeypatch, capsys
+    ) -> None:
+        assert self._open(monkeypatch, "/open 1", "why", "/new", "/open 1") == []
+        assert capsys.readouterr().err.count("The last reply names no source.") == 2
+
+    def test_an_editor_that_cannot_start(self, monkeypatch, caplog) -> None:
+        monkeypatch.setenv("EDITOR", "no-such-editor-EXAMPLE")
+        monkeypatch.delenv("VISUAL", raising=False)
+
+        def fail(argv, check):
+            raise FileNotFoundError("no-such-editor-EXAMPLE")
+
+        session = Session()
+        monkeypatch.setattr(session, "link", lambda chunk: "file:///srv/a.md")
+        monkeypatch.setattr("subprocess.run", fail)
+        assert _chat(session, "why", "/open 1") == 0
+        assert "Cannot start no-such-editor-EXAMPLE" in caplog.text

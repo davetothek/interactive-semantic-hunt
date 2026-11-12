@@ -199,22 +199,30 @@ with a citation for each claim:
 ```text
 $ ish chat docs/
 ish> how is the watchdog configured
-The watchdog period is set in WDT_CTRL.[1]
+The watchdog period is set in WDT_CTRL. [1]
 
-[1] spec/watchdog.adoc:40-62
+ 1 spec/watchdog.adoc:40-62
 
 ish> and its reset value?
 ```
 
-A reply is short, with its `[n]` markers and one line for each source.
-`ish chat --full` replies with the full answer. In the chat:
+A reply is short, with its `[n]` markers and one numbered line for each
+source. `ish chat --full` replies with the full answer. A reply is
+Markdown. A terminal shows it rendered, and a pipe gets the Markdown.
+With color, a question turns grey once it is sent, and so do the
+sources. Each marker and each source is a link that opens the file at
+its lines, in a terminal that follows links. In the chat:
 
 | command | what it does |
 |---|---|
 | `/more` | the full answer of the last question, from the chunks it read, with no new search |
 | `/sources` | the chunks the last answer read |
+| `/open N` | open source N of the last reply in `$VISUAL` or `$EDITOR`, at its first line, or show its link |
 | `/new` | forget the chat so far |
 | `/quit` | end the chat, as Ctrl-D does |
+
+On a terminal, Tab finishes a command, and the arrow keys reach the
+questions asked before. No question is written to a history file.
 
 The chat keeps what was asked and answered while it runs, so a follow-up
 can say "it" and "that register". The model reads that history as context

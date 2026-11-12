@@ -42,7 +42,9 @@ finishes a filter word. Nothing else is added.
   unless `NO_COLOR` is set.
 - An answer is plain Markdown on every stream, so a copy from the terminal
   is the text that a pipe gets. Only `--render` shows it rendered, and only
-  on a terminal, through `cli/terminal.py`.
+  on a terminal, through `cli/terminal.py`. A chat is the exception: it
+  renders each reply on a terminal, with its sources in grey, and marks a
+  citation as `[n]` where an answer writes `[^n]`.
 - Import Rich only inside the function that renders an answer. A search
   and a plain answer must not load it.
 

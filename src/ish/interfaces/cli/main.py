@@ -234,7 +234,13 @@ def _run_chat(args: CliArgs) -> int:
     with Ish(args.path, settings=args.settings) as ish:
         ish.index(on_progress=line.show)
         line.clear()
-        return chat.converse(ish, brief=not args.full, report=report_step)
+        return chat.converse(
+            ish,
+            brief=not args.full,
+            report=report_step,
+            color=resolve_color(args.settings.color, sys.stdout),
+            render=sys.stdout.isatty(),
+        )
 
 
 def _run_scan(args: CliArgs) -> int:
