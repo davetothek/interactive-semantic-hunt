@@ -8,11 +8,15 @@ The source searches, and nothing more. It runs no language model, so the
 machine that asks decides which model reads the text.
 """
 
-from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol, runtime_checkable
 
 from ish.application.sources import Sources
 from ish.domain.chunk import Chunk
+
+# The tools of a source that read and change nothing. A call that
+# changes the source, such as a refresh, does not travel.
+READ_TOOLS = ("list_chunks", "index_status", "complete_filter")
 
 
 class ChunkSourceError(Exception):
@@ -63,6 +67,14 @@ class ChunkSource(Protocol):
 
         Return also the meaning of each acronym the texts use that the
         tree spells out, with the chunk that writes it.
+        """
+        ...
+
+    def read(self, tool: str, arguments: Mapping[str, Any]) -> str:
+        """Return the text that the read-only *tool* answers with.
+
+        *tool* is one of ``READ_TOOLS``. Raise ``ChunkSourceError`` for
+        another.
         """
         ...
 

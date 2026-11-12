@@ -254,3 +254,26 @@ class TestUnreadableAnswer:
             assert "same ish release" in str(failure.value)
         finally:
             running.close()
+
+
+class TestRead:
+    def test_each_tool_that_reads_answers_from_the_server(
+        self, served: Running
+    ) -> None:
+        source = _source(served)
+        assert "exposure.md:1-3" in source.read("list_chunks", {})
+        assert "  chunks   : 1" in source.read("index_status", {})
+        assert (
+            json.loads(source.read("complete_filter", {"query": "ty"}))["text"]
+            == "type:"
+        )
+        assert _arguments(served) == {"query": "ty"}
+
+    def test_a_tool_that_changes_the_server_is_refused(self, served: Running) -> None:
+        served.calls.clear()
+        with pytest.raises(ChunkSourceError) as refused:
+            _source(served).read("refresh_index", {})
+        assert (
+            str(refused.value) == "'refresh_index' is not a tool that reads the server."
+        )
+        assert served.calls == []

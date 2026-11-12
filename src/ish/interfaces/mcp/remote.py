@@ -16,8 +16,11 @@ from ish.interfaces.mcp.server import (
     NO_RESULTS,
     answer_data,
     ask_tool,
+    complete_tool,
+    list_tool,
     narrowing_of,
     search_tool,
+    status_tool,
     turns_of,
 )
 from ish.interfaces.python.remote import RemoteIsh
@@ -78,9 +81,46 @@ class RemoteTools:
         reply["server"] = {"host": self.host, "version": self._remote.version}
         return json.dumps(reply, ensure_ascii=False)
 
+    def list_chunks(self, arguments: Mapping[str, Any]) -> str:
+        """Return the definitions the server lists, as lines."""
+        _no_path(arguments)
+        names = ("lang", "under", "type", "format")
+        return self._remote.read(
+            "list_chunks",
+            {name: arguments[name] for name in names if arguments.get(name)},
+        )
+
+    def index_status(self, arguments: Mapping[str, Any]) -> str:
+        """Return what the index of the server holds, as JSON."""
+        _no_path(arguments)
+        return self._remote.read("index_status", {})
+
+    def complete_filter(self, arguments: Mapping[str, Any]) -> str:
+        """Return the filter word the server finishes, as JSON."""
+        _no_path(arguments)
+        return self._remote.read(
+            "complete_filter", {"query": str(arguments.get("query") or "")}
+        )
+
     def tools(self) -> list[Tool]:
-        """Describe the two tools that travel to a server."""
-        return [search_tool(self.search), ask_tool(self.ask)]
+        """Describe the tools that travel to a server.
+
+        Each one reads the server, and none changes it, so a refresh
+        stays with the operator of the server.
+        """
+        return [
+            search_tool(self.search),
+            ask_tool(self.ask),
+            list_tool(self.list_chunks),
+            status_tool(self.index_status),
+            complete_tool(self.complete_filter),
+        ]
+
+
+def _no_path(arguments: Mapping[str, Any]) -> None:
+    """Raise ``ValueError`` for a call that names a path."""
+    if arguments.get("path"):
+        raise ValueError(NO_PATH)
 
 
 def _text(arguments: Mapping[str, Any], name: str) -> str:

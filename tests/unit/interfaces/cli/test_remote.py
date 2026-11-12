@@ -200,7 +200,13 @@ class TestMcp:
         assert code == 0
         ((reply),) = replies
         names = [tool["name"] for tool in reply["result"]["tools"]]
-        assert names == ["search_code", "ask"]
+        assert names == [
+            "search_code",
+            "ask",
+            "list_chunks",
+            "index_status",
+            "complete_filter",
+        ]
         assert built == [NOWHERE]
 
     def test_ish_remote_names_the_server(self, built: list[str], monkeypatch) -> None:

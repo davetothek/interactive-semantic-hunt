@@ -331,11 +331,15 @@ other commands of `ish remote`:
 }
 ```
 
-The two tools take the arguments of the local tools, except `path`: the
+It also serves `list_chunks`, `index_status`, and `complete_filter` from
+the server. `refresh_index` changes the server, so it stays with its
+operator, and `ish remote mcp` does not list it.
+
+The tools take the arguments of the local tools, except `path`: the
 server searches its own tree, so a call with a `path` gets an error. Use
 `under` to narrow a search. Each call brings its own query and filters, so
 the line of `ish remote mcp` takes neither. `--limit`, `--format`, and
-`--ask-turns` on the line set the default of each call. The reply of `ask` names the host and the
-version of the server in `server`. The other tools stay with a local tree.
+`--ask-turns` on the line set the default of each call. The reply of
+`ask` names the host and the version of the server in `server`.
 Choose the model on this machine, as for a local answer. See
 [Answer questions](configuration.md#answer-questions).

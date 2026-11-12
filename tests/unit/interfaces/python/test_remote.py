@@ -43,6 +43,7 @@ class Server:
         self.lines = "exposure.md:1-3  section  Exposure"
         self.searches: list[tuple] = []
         self.calls: list[tuple] = []
+        self.reads: list[tuple] = []
 
     def search(self, query, limit, shape, *, lang=(), under="", type=()):
         self.searches.append((query, limit, shape, tuple(lang), under, tuple(type)))
@@ -51,6 +52,10 @@ class Server:
     def sources(self, query, limit, *, lang=(), under="", type=()):
         self.calls.append((query, limit, tuple(lang), under, tuple(type)))
         return self.found.get(query, Sources((), ()))
+
+    def read(self, tool, arguments):
+        self.reads.append((tool, dict(arguments)))
+        return "read"
 
     def link(self, chunk):
         return f"https://docs.example.invalid/tree/{chunk.path}"
@@ -354,3 +359,9 @@ class TestTerms:
         monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
         monkeypatch.setattr(bootstrap, "build_reranker", lambda s: None)
         assert RemoteIsh(_settings()).ask(QUESTION).terms == ()
+
+
+class TestRead:
+    def test_a_read_goes_to_the_server_as_given(self, server: Server) -> None:
+        assert RemoteIsh(_settings()).read("index_status", {}) == "read"
+        assert server.reads == [("index_status", {})]

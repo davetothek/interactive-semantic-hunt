@@ -39,8 +39,15 @@ def _tools(**changes) -> RemoteTools:
 
 
 class TestTools:
-    def test_only_search_code_and_ask_travel(self, server: Server) -> None:
-        assert [tool.name for tool in _tools().tools()] == ["search_code", "ask"]
+    def test_each_tool_that_reads_the_server_travels(self, server: Server) -> None:
+        # A refresh changes the server, so it stays with the operator.
+        assert [tool.name for tool in _tools().tools()] == [
+            "search_code",
+            "ask",
+            "list_chunks",
+            "index_status",
+            "complete_filter",
+        ]
 
     def test_each_tool_takes_what_the_local_tool_takes(
         self, server: Server, tmp_path
@@ -151,3 +158,34 @@ class TestAsk:
         reply = json.loads(_tools().ask({"question": "nothing matches this"}))
         assert reply["covered"] is False
         assert reply["sources"] == []
+
+
+class TestTheToolsThatRead:
+    def test_list_chunks_sends_only_the_options_of_the_call(
+        self, server: Server
+    ) -> None:
+        tools = _tools(under="src", lang=("python",))
+        assert tools.list_chunks({"lang": ["markdown"], "format": "grep"}) == "read"
+        assert tools.list_chunks({}) == "read"
+        assert server.reads == [
+            ("list_chunks", {"lang": ["markdown"], "format": "grep"}),
+            ("list_chunks", {}),
+        ]
+
+    def test_index_status_sends_nothing(self, server: Server) -> None:
+        assert _tools().index_status({}) == "read"
+        assert server.reads == [("index_status", {})]
+
+    def test_complete_filter_sends_the_query(self, server: Server) -> None:
+        assert _tools().complete_filter({"query": "ty"}) == "read"
+        assert _tools().complete_filter({}) == "read"
+        assert server.reads == [
+            ("complete_filter", {"query": "ty"}),
+            ("complete_filter", {"query": ""}),
+        ]
+
+    @pytest.mark.parametrize("name", ["list_chunks", "index_status", "complete_filter"])
+    def test_a_path_is_refused(self, name: str, server: Server) -> None:
+        with pytest.raises(ValueError, match=NO_PATH):
+            getattr(_tools(), name)({"path": "/srv/docs", "query": "x"})
+        assert server.reads == []

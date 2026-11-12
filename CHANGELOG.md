@@ -82,7 +82,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   an editor gets the tree of the server, and the language model of this
   machine writes each answer. `--url` names the server, as for the other
   commands of `ish remote`. A call takes no `path`. The reply of `ask`
-  names the host and the version of the server.
+  names the host and the version of the server. `list_chunks`,
+  `index_status`, and `complete_filter` read the server as well.
+  `refresh_index` changes the server, so it stays with its operator.
 
 ### Changed
 

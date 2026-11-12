@@ -17,7 +17,7 @@ from typing import Any
 
 from ish.adapters.chunk_source._client import TIMEOUT_SECONDS, RemoteClient
 from ish.application.glossary import Definition
-from ish.application.ports.chunk_source import ChunkSourceError
+from ish.application.ports.chunk_source import READ_TOOLS, ChunkSourceError
 from ish.application.sources import ChunkText, Sources
 from ish.domain.chunk import Chunk
 
@@ -74,6 +74,12 @@ class McpChunkSource:
         )
         nothing = f"{NO_RESULTS} {query.strip()!r} under "
         return "" if text.startswith(nothing) else text
+
+    def read(self, tool: str, arguments: Mapping[str, Any]) -> str:
+        """Return the text that the read-only *tool* of the server answers with."""
+        if tool not in READ_TOOLS:
+            raise ChunkSourceError(f"{tool!r} is not a tool that reads the server.")
+        return self._client.call(tool, dict(arguments))
 
     def sources(
         self,

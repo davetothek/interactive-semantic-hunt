@@ -102,9 +102,12 @@ finishes a filter word. Nothing else is added.
   configuration of this machine is for a tree of this machine.
 - A line without the word `remote` reads no server. `--remote URL` with
   `--ask` or `--brief` is the one exception, and it warns.
-- `ish remote mcp` offers `search_code` and `ask` alone, with the
-  schemas of the local tools. A call with a `path` is refused. `ish mcp`
-  takes no option that names a server.
+- `ish remote mcp` offers every tool that reads the server, with the
+  schemas of the local tools: `search_code`, `ask`, `list_chunks`,
+  `index_status`, and `complete_filter`. `refresh_index` changes the
+  server, so it does not travel, and `ChunkSource.read` refuses it. A
+  call with a `path` is refused. `ish mcp` takes no option that names a
+  server.
 - `ish remote login` asks for the password with no echo, only after
   `password_problem()` allows it, and keeps no password. A command of
   `ish remote` sends `ISH_MCP_TOKEN`, or else the login token of the URL.

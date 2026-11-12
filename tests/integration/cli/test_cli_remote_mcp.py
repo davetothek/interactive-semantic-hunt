@@ -94,3 +94,29 @@ class TestRemoteMcp:
             "or run: ish remote login"
         ) in caplog.text
         assert served.calls == []
+
+
+class TestTheToolsThatRead:
+    def test_listing_status_and_completion_come_from_the_server(
+        self, served: Served, monkeypatch
+    ) -> None:
+        code, results = _serve(
+            monkeypatch,
+            ["remote", "mcp", "--url", served.url],
+            _call(1, "list_chunks", {"under": "docs"}),
+            _call(2, "index_status", {}),
+            _call(3, "complete_filter", {"query": "ty"}),
+            _call(4, "refresh_index", {}),
+        )
+        assert code == 0
+        listed = results[1]["content"][0]["text"]
+        assert "docs/boot.md:1-3" in listed
+        assert "  chunks   : 2" in results[2]["content"][0]["text"]
+        assert json.loads(results[3]["content"][0]["text"])["text"] == "type:"
+        # A refresh changes the server, so it does not travel.
+        assert results[4]["isError"] is True
+        assert [name for name, _ in served.calls] == [
+            "list_chunks",
+            "index_status",
+            "complete_filter",
+        ]

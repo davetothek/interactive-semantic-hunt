@@ -11,7 +11,8 @@ same use case and the same model rules as an answer from a local tree.
     print(remote.search("parse the config"))
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from ish import bootstrap
 from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
@@ -130,6 +131,15 @@ class RemoteIsh:
             **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)
+
+    def read(self, tool: str, arguments: Mapping[str, Any]) -> str:
+        """Return what the read-only *tool* of the server answers with.
+
+        *tool* is ``list_chunks``, ``index_status``, or ``complete_filter``.
+        Only *arguments* travel, so no filter of this machine reaches the
+        server.
+        """
+        return self._source.read(tool, arguments)
 
     def link(self, chunk: Chunk) -> str:
         """Return the URL the server gave for *chunk*."""

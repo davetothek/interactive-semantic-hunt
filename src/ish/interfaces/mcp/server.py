@@ -479,38 +479,8 @@ class IshTools:
         offered = [
             search_tool(self.search),
             ask_tool(self.ask),
-            Tool(
-                name="list_chunks",
-                description=(
-                    "List every definition under a path, with its kind, "
-                    "qualified name, and line range. Use it to survey a file "
-                    "or package without reading the source."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "path": _PATH_PROPERTY,
-                        "lang": _QUERY_PROPERTIES["lang"],
-                        "under": _QUERY_PROPERTIES["under"],
-                        "type": _QUERY_PROPERTIES["type"],
-                        "format": _QUERY_PROPERTIES["format"],
-                    },
-                },
-                handler=self.list_chunks,
-            ),
-            Tool(
-                name="index_status",
-                description=(
-                    "Report how many chunks the stored index holds for a path, "
-                    "which languages they came from, which embedding backend "
-                    "produced them, and whether a refresh is running."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {"path": _PATH_PROPERTY},
-                },
-                handler=self.index_status,
-            ),
+            list_tool(self.list_chunks),
+            status_tool(self.index_status),
             Tool(
                 name="refresh_index",
                 description=(
@@ -526,29 +496,7 @@ class IshTools:
                 },
                 handler=self.refresh,
             ),
-            Tool(
-                name="complete_filter",
-                description=(
-                    "Finish the filter word a query ends in, the way a shell "
-                    "finishes a path: ty becomes type:, lang:cp becomes "
-                    "lang:cpp, and under:/s becomes the subtree that starts "
-                    "with s. Returns JSON with the completed text and, when "
-                    "several answers fit, the candidates to choose between. "
-                    "For an editor's picker, which calls it on Tab."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The query as typed so far.",
-                        },
-                        "path": _PATH_PROPERTY,
-                    },
-                    "required": ["query"],
-                },
-                handler=self.complete_filter,
-            ),
+            complete_tool(self.complete_filter),
         ]
         if over_http:
             offered = [tool for tool in offered if tool.name != "ask"]
@@ -667,6 +615,73 @@ def ask_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
                 "type": _QUERY_PROPERTIES["type"],
             },
             "required": ["question"],
+        },
+        handler=handler,
+    )
+
+
+def list_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``list_chunks``, which *handler* answers."""
+    return Tool(
+        name="list_chunks",
+        description=(
+            "List every definition under a path, with its kind, "
+            "qualified name, and line range. Use it to survey a file "
+            "or package without reading the source."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "path": _PATH_PROPERTY,
+                "lang": _QUERY_PROPERTIES["lang"],
+                "under": _QUERY_PROPERTIES["under"],
+                "type": _QUERY_PROPERTIES["type"],
+                "format": _QUERY_PROPERTIES["format"],
+            },
+        },
+        handler=handler,
+    )
+
+
+def status_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``index_status``, which *handler* answers."""
+    return Tool(
+        name="index_status",
+        description=(
+            "Report how many chunks the stored index holds for a path, "
+            "which languages they came from, which embedding backend "
+            "produced them, and whether a refresh is running."
+        ),
+        schema={
+            "type": "object",
+            "properties": {"path": _PATH_PROPERTY},
+        },
+        handler=handler,
+    )
+
+
+def complete_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``complete_filter``, which *handler* answers."""
+    return Tool(
+        name="complete_filter",
+        description=(
+            "Finish the filter word a query ends in, the way a shell "
+            "finishes a path: ty becomes type:, lang:cp becomes "
+            "lang:cpp, and under:/s becomes the subtree that starts "
+            "with s. Returns JSON with the completed text and, when "
+            "several answers fit, the candidates to choose between. "
+            "For an editor's picker, which calls it on Tab."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The query as typed so far.",
+                },
+                "path": _PATH_PROPERTY,
+            },
+            "required": ["query"],
         },
         handler=handler,
     )
