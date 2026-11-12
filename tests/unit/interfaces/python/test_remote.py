@@ -408,3 +408,18 @@ class TestAChatReading:
         with pytest.raises(LanguageModelError):
             RemoteIsh(_settings()).prepare()
         assert server.calls == []
+
+
+class TestTheTextsKeptAreThoseOfTheLastAnswer:
+    """A server over MCP runs for days, so the texts kept do not grow."""
+
+    def test_the_texts_of_an_earlier_answer_are_let_go(
+        self, server: Server, model: Model
+    ) -> None:
+        server.found["first"] = _found(EXPOSURE)
+        server.found["second"] = _found(GAIN)
+        remote = RemoteIsh(_settings())
+        remote.ask("first")
+        assert set(remote._texts) == {EXPOSURE}
+        remote.ask("second")
+        assert set(remote._texts) == {GAIN}

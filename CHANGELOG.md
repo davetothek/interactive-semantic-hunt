@@ -18,8 +18,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   each claim, and the chat keeps what was asked while it runs. A reply is
   short, with its sources named. `/more` writes the full answer from what
   the last answer read, `/sources` names those chunks, `/new` forgets the
-  chat, and `--full` replies in full. The history stays in memory, and on
-  this machine with a server.
+  chat, and `--full` replies in full. The history stays in memory, and
+  holds only what a source backs. A server gets the searches, and never
+  an answer.
 - `ish index [PATH]` builds the index of a tree, or brings it up to date,
   with no search, and says how many chunks it holds. When `ish-serve`
   keeps the tree, it names the server and leaves the work to it.
@@ -109,8 +110,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The first word of a command line is a command when it is `search`,
-  `ask`, `pick`, `index`, `chat`, `mcp`, `serve`, or `complete`. To search for one of
-  these words, use `ish search WORD` or `ish -- WORD`.
+  `ask`, `pick`, `index`, `chat`, `mcp`, `serve`, or `complete`. To search
+  for one of these words, use `ish search WORD` or `ish -- WORD`.
 - A line without the word `remote` reads the tree on this machine, also
   when `ISH_REMOTE` or a config file names a server. `ish --ask` with
   such a server answers here and prints a warning that names
@@ -119,9 +120,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   editor reads a server through `ish remote mcp`.
 - A config file in a tree, at or above the working directory, does not
   name a server. ish ignores its `remote`, and `ish remote` prints a
-  warning that names the file. A tree that named the server would choose where your token
-  goes. Set `remote` in the user config file, or in a file you name with
-  `--config`.
+  warning that names the file. A tree that named the server would choose
+  where your token goes. Set `remote` in the user config file, or in a
+  file you name with `--config`.
 - `--remote URL` with `--ask` or `--brief` gets chunks from the server,
   and the language model of this machine writes the answer. This machine
   needs a `language_model` for it.

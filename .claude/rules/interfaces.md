@@ -30,7 +30,9 @@ finishes a filter word. Nothing else is added.
 - `ish chat` and `ish remote chat` run one loop, `cli/chat.py`, over the
   `Chat` use case. Each reply goes through `ask` with a `Reading`, so the
   grounding of an answer holds for each turn. The history never reaches
-  disk, a server, or the model as a source.
+  disk, or the model as a source. Only the parts of an answer that cite a
+  chunk enter it. A server gets a query of the last question with the new
+  one, as it gets any query, and never an answer.
 - Write the refresh line to stderr, rewritten in place and cleared at the
   end. stdout holds only results. The line lives in `interfaces/busy.py`,
   the one place a step is rendered with a rate and a time left, and

@@ -225,10 +225,13 @@ the results. Past about 4,000 tokens, the history keeps the recent turns
 whole and only the questions of the older ones. No model summarizes it, so
 the history holds nothing that no answer said.
 
-The history stays in memory, and the chat writes none of it to disk. Ctrl-C
-stops the reply that runs, and the chat goes on. `ish remote chat` chats
-about the tree of a server the same way: the server returns chunks, and the
-history and the model stay on this machine.
+The history holds only the parts of each answer that cite a source, so
+the model never reads back a claim that no chunk made. It stays in memory,
+and the chat writes none of it to disk. Ctrl-C stops the reply that runs,
+and the chat goes on. `ish remote chat` chats about the tree of a server the
+same way: the server returns chunks, and the answers and the model stay on
+this machine. The server gets the searches, so it sees each question and
+the one before it, as it sees any query.
 
 ### Ask a server
 

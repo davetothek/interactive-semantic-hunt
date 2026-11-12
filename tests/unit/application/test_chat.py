@@ -133,17 +133,18 @@ class TestHistory:
             f"Q: why\nA: {NOT_COVERED}"
         )
 
-    def test_said_has_no_markers_and_no_empty_parts(self) -> None:
+    def test_said_keeps_the_cited_parts_with_no_space_before_a_stop(self) -> None:
         answer = Answer(
             parts=(
                 AnswerPart(" One ", (WATCHDOG,)),
-                AnswerPart("  "),
-                AnswerPart("Two"),
+                AnswerPart(". ", (WATCHDOG,)),
+                AnswerPart("  ", (RESET,)),
+                AnswerPart("Two", (RESET,)),
             ),
             covered=True,
             sources=(),
         )
-        assert said(answer) == "One Two"
+        assert said(answer) == "One. Two"
 
     def test_the_recent_turns_stay_whole_and_older_keep_their_questions(self) -> None:
         turns = [_turn(f"q{n}", "x" * 40) for n in range(1, 6)]
@@ -229,3 +230,41 @@ class TestPlan:
         assert (kept, turns) == (None, 0)
         assert found("anything") == [Match(WATCHDOG, 1.0), Match(RESET, 1.0)]
         assert ran == []
+
+
+class TestAClaimWithNoSourceStaysOutOfTheHistory:
+    """The model reads the history again, so only a cited part may enter it.
+
+    A part with no citation printed in a reply would otherwise come back
+    to the model in the next turn as something the chat had said.
+    """
+
+    def test_an_uncited_part_is_left_out(self) -> None:
+        answer = Answer(
+            parts=(
+                AnswerPart("The board resets after 5 seconds"),
+                AnswerPart("The watchdog resets the board.", (WATCHDOG,)),
+            ),
+            covered=True,
+            sources=(WATCHDOG,),
+        )
+        assert said(answer) == "The watchdog resets the board."
+
+    def test_an_answer_that_cites_nothing_says_so(self) -> None:
+        from ish.application.chat import NO_CLAIM
+
+        answer = Answer(parts=(AnswerPart("Made up."),), covered=True, sources=())
+        assert said(answer) == NO_CLAIM
+
+    def test_the_next_turn_reads_no_uncited_claim(self) -> None:
+        first = Answer(
+            parts=(AnswerPart("Five seconds."), AnswerPart("It resets.", (WATCHDOG,))),
+            covered=True,
+            sources=(WATCHDOG,),
+        )
+        asked = Asked(first, _answer("Yes.", RESET))
+        chat = Chat(asked)
+        chat.ask("what does it do")
+        chat.ask("how long")
+        assert "Five seconds." not in asked.calls[1][0]
+        assert "It resets." in asked.calls[1][0]

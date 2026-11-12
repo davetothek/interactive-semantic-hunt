@@ -38,6 +38,12 @@ HISTORY_HEADING = (
 # What a turn says of an answer that the sources did not cover.
 NOT_COVERED = "The sources do not cover it."
 
+# What a turn says of an answer with no part that cites a source.
+NO_CLAIM = "The answer cited no source."
+
+# Punctuation that ends a clause, which no space comes before.
+_CLOSERS = ".,;:!?)"
+
 
 @dataclass(frozen=True, slots=True)
 class Reading:
@@ -150,10 +156,23 @@ def cited(answer: Answer) -> tuple[Chunk, ...]:
 
 
 def said(answer: Answer) -> str:
-    """Return what *answer* says, as plain text with no markers."""
+    """Return what *answer* says with a source behind it, as plain text.
+
+    Keep only the parts that cite a chunk. The model reads the history
+    again in the next turn, and a part with no citation must not come
+    back to it as something the chat already said.
+    """
     if not answer.covered:
         return NOT_COVERED
-    return " ".join(part.text.strip() for part in answer.parts if part.text.strip())
+    text = ""
+    for part in answer.parts:
+        piece = part.text.strip()
+        if not part.cites or not piece:
+            continue
+        if text and piece[0] not in _CLOSERS:
+            text += " "
+        text += piece
+    return text or NO_CLAIM
 
 
 def history_text(turns: Sequence[Turn], budget_chars: int) -> str:

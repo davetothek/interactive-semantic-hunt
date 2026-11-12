@@ -48,8 +48,8 @@ class RemoteIsh:
         self._reranker: LanguageModel | None = None
         # What the acronyms of the tree stand for, as the server sent them.
         self._glossary = Glossary()
-        # The text of each chunk the server sent, so a later answer of a
-        # chat can read a chunk again without asking the server for it.
+        # The text of each chunk the last answer read, so the next answer
+        # of a chat can read it again without asking the server for it.
         self._texts: dict[Chunk, str] = {}
 
     @property
@@ -135,7 +135,12 @@ class RemoteIsh:
             glossary=self._glossary,
             **({"on_step": on_step} if on_step else {}),
         )
-        return use_case.answer(question)
+        answer = use_case.answer(question)
+        # Keep the texts of what this answer read, which a next turn of a
+        # chat reads again, and no more: a server over MCP runs for days.
+        read = set(answer.sources)
+        self._texts = {c: t for c, t in self._texts.items() if c in read}
+        return answer
 
     def prepare(self, brief: bool = False) -> None:
         """Build the language model of an answer, and the rerank model, now.
