@@ -115,7 +115,18 @@
         "ish.askCommand": {
           "type": "string",
           "default": "ish",
-          "description": "The command that answers a question. It must be on PATH, or name the full path."
+          "description": "The command that answers a question, and that starts `ish remote mcp` for a server. It must be on PATH, or name the full path."
+        },
+        "ish.source": {
+          "type": "string",
+          "enum": ["auto", "local", "remote"],
+          "enumDescriptions": [
+            "The index of this folder when there is one, the server when one is set, and both when both are.",
+            "The index of this folder only.",
+            "The server that ISH_REMOTE or the user config names only."
+          ],
+          "default": "auto",
+          "description": "Where a search and a question go. With no index and no server, ish asks once a folder before it builds an index."
         }
       }
     },

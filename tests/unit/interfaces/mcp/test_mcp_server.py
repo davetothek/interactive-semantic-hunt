@@ -1,5 +1,6 @@
 """Test the ish tools exposed over MCP."""
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -205,6 +206,7 @@ class TestToolDefinitions:
             "index_status",
             "refresh_index",
             "complete_filter",
+            "index_exists",
         ]
 
     def test_search_requires_a_query(self, tools: IshTools) -> None:
@@ -1128,7 +1130,9 @@ class TestSources:
         local = [t.name for t in tools.tools()]
         assert "sources" not in local
         offered = [t.name for t in tools.tools(over_http=True)]
-        assert offered == [name for name in local if name != "ask"] + ["sources"]
+        assert offered == [
+            name for name in local if name not in ("ask", "index_exists")
+        ] + ["sources"]
 
     def test_the_server_on_stdio_keeps_its_ask(self, tools: IshTools) -> None:
         assert "ask" in [t.name for t in tools.tools()]
@@ -1256,3 +1260,37 @@ class TestAskTurnsPerCall:
         self._recording(tools, project, monkeypatch)
         with pytest.raises(ValueError, match="ask_turns"):
             tools.ask({"question": "q", "path": str(project), "ask_turns": value})
+
+
+class TestIndexExists:
+    """An editor asks whether a tree has an index, and starts none by asking."""
+
+    @pytest.fixture()
+    def stored(self, project: Path, tmp_path_factory, stub_backend):
+        from dataclasses import replace
+
+        cache = tmp_path_factory.mktemp("idx")
+        settings = replace(Settings(), git=False, cache_dir=str(cache))
+        made = IshTools(settings, project)
+        yield made, cache
+        made.close()
+
+    def test_a_tree_with_no_index_says_so_and_starts_nothing(self, stored) -> None:
+        tools, cache = stored
+        before = sorted(p.name for p in cache.rglob("*"))
+        assert json.loads(tools.index_exists({})) == {"exists": False, "chunks": 0}
+        # No watch thread, and no file of an index.
+        assert tools._watchers == []
+        assert sorted(p.name for p in cache.rglob("*")) == before
+
+    def test_a_tree_with_an_index_says_how_many_chunks(self, stored) -> None:
+        tools, _cache = stored
+        tools._session_for(tools._root).index()
+        reply = json.loads(tools.index_exists({}))
+        assert reply["exists"] is True
+        assert reply["chunks"] >= 2
+
+    def test_only_the_server_on_stdio_offers_it(self, stored) -> None:
+        tools, _cache = stored
+        assert "index_exists" in [t.name for t in tools.tools()]
+        assert "index_exists" not in [t.name for t in tools.tools(over_http=True)]

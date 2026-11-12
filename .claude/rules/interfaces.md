@@ -124,5 +124,11 @@ finishes a filter word. Nothing else is added.
 
 - The picker never waits on the main loop. Return a function to fzf-lua, not
   a table.
-- A question from an editor runs `ish ask`, in Neovim and in VS Code. It
-  answers from the local tree, as the resident server does.
+- Both editor clients choose the source the same way: `auto` reads the
+  local index when `index_exists` finds one, the server when `ish remote
+  mcp` starts, and both when both do. A question runs `ish ask`, and offers
+  `ish remote ask` when the local answer is not covered.
+- An editor asks once a tree before it builds an index, and keeps the
+  answer for the session. A save refreshes only a tree chosen here.
+- `index_exists` starts nothing and writes nothing. `Ish.stored()` reads
+  the catalog alone, because opening an index to ask leaves a file.

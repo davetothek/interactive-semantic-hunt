@@ -16,7 +16,15 @@ import * as path from "node:path";
 
 import * as vscode from "vscode";
 
-import { answerName, answerOf, askArgs, run as runAsk } from "./ask";
+import {
+  answerName,
+  answerOf,
+  askArgs,
+  NOT_COVERED,
+  remoteAskArgs,
+  run as runAsk,
+} from "./ask";
+import { BuildAnswers, type Choice, choose, type Mode } from "./source";
 import { isFilterWord, takeCandidate } from "./completion";
 import { DONE, render as renderProgress } from "./progress";
 import { iconFor, parseResults, type Result } from "./results";
@@ -61,6 +69,7 @@ interface Settings {
   preview: boolean;
   refreshOnSave: boolean;
   askCommand: string;
+  source: Mode;
 }
 
 function settings(): Settings {
@@ -73,14 +82,52 @@ function settings(): Settings {
     preview: read.get<boolean>("preview", true),
     refreshOnSave: read.get<boolean>("refreshOnSave", true),
     askCommand: read.get<string>("askCommand", "ish"),
+    source: read.get<Mode>("source", "auto"),
   };
 }
 
-/** One server per workspace folder, started on first use. */
+/** One server per workspace folder, and one for a server, started on first use. */
 class Servers implements vscode.Disposable {
   private readonly byRoot = new Map<string, IshServer>();
+  private server: IshServer | undefined;
+  /** Where each folder was chosen to search, so a save refreshes only a tree chosen here. */
+  readonly chosen = new Map<string, Choice>();
+  /** Whether to build the index of each folder, asked once a session. */
+  readonly builds = new BuildAnswers(async (root) => {
+    const build = "Build the index";
+    const answer = await vscode.window.showWarningMessage(
+      `ish has no index of ${path.basename(root)}. Build one now?`,
+      {
+        modal: true,
+        detail:
+          "It embeds about one chunk a second, so a large tree takes hours. " +
+          "ish asks once for each folder until the window reloads.",
+      },
+      build,
+    );
+    return answer === build;
+  });
 
   constructor(private readonly output: vscode.OutputChannel) {}
+
+  /**
+   * The client of the server that `ISH_REMOTE` or the user config names,
+   * through `ish remote mcp`. It stops at once when no server is set.
+   */
+  remote(root: string): IshServer {
+    if (this.server === undefined) {
+      const wanted = settings();
+      this.server = new IshServer({
+        command: wanted.askCommand,
+        args: ["remote", "mcp"],
+        cwd: root,
+        paths: false,
+        log: (line) => this.output.appendLine(`[server] ${line}`),
+        onStopped: (reason) => this.output.appendLine(`[server] ${reason}`),
+      });
+    }
+    return this.server;
+  }
 
   /** Whether a server has been started for *root*. */
   has(root: string): boolean {
@@ -109,6 +156,10 @@ class Servers implements vscode.Disposable {
       server.stop();
     }
     this.byRoot.clear();
+    this.server?.stop();
+    this.server = undefined;
+    this.chosen.clear();
+    this.builds.clear();
   }
 }
 
@@ -234,10 +285,12 @@ function locate(root: string, result: Result): { uri: vscode.Uri; range: vscode.
   return { uri, range };
 }
 
-function toItem(result: Result): Item {
+function toItem(result: Result, onServer = false): Item {
   return {
     label: `$(${iconFor(result.kind)}) ${result.score.toFixed(2)}  ${result.symbol}`,
-    description: result.kind,
+    // A result of the server opens the file of the same path in this
+    // tree, which holds it when the server serves the same repository.
+    description: onServer ? `${result.kind} · server` : result.kind,
     detail: `${result.path}:${result.startLine}-${result.endLine}`,
     // The list is ranked by the server, and the words typed are a
     // question rather than a label to match, so every entry stays.
@@ -335,13 +388,48 @@ async function open(root: string, result: Result): Promise<void> {
 }
 
 /** Run the picker over *root*, starting from *seed* in the query field. */
-function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): void {
+/**
+ * Choose where *root* is searched: this tree, the server, or both.
+ *
+ * With no index and no server, or with `local` and no index, ask before
+ * an index is built, because a large tree takes hours to embed.
+ */
+async function pickSource(servers: Servers, root: string): Promise<Choice | undefined> {
+  const local = servers.for(root);
+  const remote = servers.remote(root);
+  const choice = await choose(settings().source, {
+    hasIndex: () => local.exists(root).catch(() => false),
+    serverUp: () => remote.available(),
+    agreeToBuild: () => servers.builds.agree(root),
+  });
+  if (choice === undefined && settings().source === "remote") {
+    void vscode.window.showWarningMessage(
+      `ish: ${remote.lastError || "no server answers"}`,
+    );
+  }
+  if (choice !== undefined) {
+    servers.chosen.set(root, choice);
+  }
+  return choice;
+}
+
+async function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): Promise<void> {
   const wanted = settings();
-  const server = servers.for(root);
+  const choice = await pickSource(servers, root);
+  if (choice === undefined) {
+    return;
+  }
+  const local = choice.local ? servers.for(root) : undefined;
+  const remote = choice.remote ? servers.remote(root) : undefined;
+  // Finish a filter word against the tree that is searched: this one
+  // when it is, else the server.
+  const server = local ?? servers.remote(root);
   // Look for changes now, once, rather than on every keystroke. The
   // search runs against whatever is already stored and improves as the
-  // refresh lands.
-  watch.start(server, root);
+  // refresh lands. Only this tree is refreshed: a server keeps its own.
+  if (local !== undefined) {
+    watch.start(local, root);
+  }
   const before = placeOf(vscode.window.activeTextEditor);
   const pick = vscode.window.createQuickPick<Item>();
   pick.title = `ish: ${path.basename(root)}`;
@@ -354,14 +442,28 @@ function search(servers: Servers, watch: IndexWatch, root: string, seed = ""): v
   let generation = 0;
   let timer: NodeJS.Timeout | undefined;
 
-  const results = async (query: string): Promise<Item[]> => {
+  // The results of one side, or a notice of why there are none.
+  const side = async (from: IshServer | undefined, query: string, onServer: boolean) => {
+    if (from === undefined) {
+      return [];
+    }
     try {
-      const lines = await server.search(query, root, wanted.limit);
-      const items = parseResults(lines).map(toItem);
-      return items.length > 0 ? items : [toNotice(`No results for ${query}`)];
+      const lines = await from.search(query, root, wanted.limit);
+      return parseResults(lines).map((result) => toItem(result, onServer));
     } catch (error) {
       return [toNotice(error instanceof Error ? error.message : String(error))];
     }
+  };
+
+  // This tree first, then the server. Two indexes score on two scales,
+  // so the lists stay apart rather than merged into one order.
+  const results = async (query: string): Promise<Item[]> => {
+    const [here, there] = await Promise.all([
+      side(local, query, false),
+      side(remote, query, true),
+    ]);
+    const items = [...here, ...there];
+    return items.length > 0 ? items : [toNotice(`No results for ${query}`)];
   };
 
   // Offer the choices while a filter word is under way. An ordinary
@@ -515,10 +617,15 @@ class Answers implements vscode.TextDocumentContentProvider {
  * the time and the tokens of the answer, goes to the output channel.
  */
 async function ask(
+  servers: Servers,
   answers: Answers,
   output: vscode.OutputChannel,
   root: string,
 ): Promise<void> {
+  const choice = await pickSource(servers, root);
+  if (choice === undefined) {
+    return;
+  }
   const typed = await vscode.window.showInputBox({
     title: "ish: ask a question",
     prompt: "ish answers from the indexed documents and code, with a link to each source.",
@@ -528,6 +635,34 @@ async function ask(
   if (question === "") {
     return;
   }
+  const code = await answer(
+    answers,
+    output,
+    root,
+    question,
+    choice.local ? askArgs(question, root) : remoteAskArgs(question),
+  );
+  // This tree does not cover it. The server may, so offer it.
+  if (choice.local && choice.remote && code === NOT_COVERED) {
+    const again = "Ask the server";
+    const picked = await vscode.window.showInformationMessage(
+      "ish: this tree does not cover it.",
+      again,
+    );
+    if (picked === again) {
+      await answer(answers, output, root, question, remoteAskArgs(question));
+    }
+  }
+}
+
+/** Run one question with *args*, show the answer, and return its exit code. */
+async function answer(
+  answers: Answers,
+  output: vscode.OutputChannel,
+  root: string,
+  question: string,
+  args: string[],
+): Promise<number | null | undefined> {
   const outcome = await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
@@ -537,27 +672,28 @@ async function ask(
     (_progress, token) => {
       const stop = new AbortController();
       token.onCancellationRequested(() => stop.abort());
-      return runAsk(settings().askCommand, askArgs(question, root), root, stop.signal);
+      return runAsk(settings().askCommand, args, root, stop.signal);
     },
   );
   if (outcome.cancelled) {
-    return;
+    return undefined;
   }
   if (outcome.stderr.trim() !== "") {
     output.appendLine(outcome.stderr.trimEnd());
   }
-  const answer = answerOf(outcome);
-  if ("reason" in answer) {
-    void vscode.window.showErrorMessage(`ish gave no answer: ${answer.reason}`);
-    return;
+  const read = answerOf(outcome);
+  if ("reason" in read) {
+    void vscode.window.showErrorMessage(`ish gave no answer: ${read.reason}`);
+    return outcome.code;
   }
   const document = await vscode.workspace.openTextDocument(
-    answers.add(question, answer.markdown),
+    answers.add(question, read.markdown),
   );
   await vscode.window.showTextDocument(document, {
     viewColumn: vscode.ViewColumn.Beside,
     preview: false,
   });
+  return outcome.code;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -589,7 +725,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ish.search",
-      withRoot((root) => search(servers, watch, root)),
+      withRoot((root) => void search(servers, watch, root)),
     ),
     vscode.commands.registerCommand(
       "ish.searchHere",
@@ -600,30 +736,35 @@ export function activate(context: vscode.ExtensionContext): void {
         const file = editor?.document.uri.fsPath;
         const here = file === undefined ? "" : path.relative(root, path.dirname(file));
         const seed = here === "" ? "" : `under:/${here.split(path.sep).join("/")}/ `;
-        search(servers, watch, root, seed);
+        void search(servers, watch, root, seed);
       }),
     ),
     vscode.commands.registerCommand(
       "ish.refresh",
-      withRoot((root) => watch.start(servers.for(root), root)),
+      withRoot((root) => {
+        // A refresh asked for by name builds the index, so the tree counts
+        // as chosen here, and a save refreshes it after.
+        servers.chosen.set(root, { local: true, remote: servers.chosen.get(root)?.remote ?? false });
+        watch.start(servers.for(root), root);
+      }),
     ),
     vscode.commands.registerCommand(
       "ish.ask",
-      withRoot((root) => void ask(answers, output, root)),
+      withRoot((root) => void ask(servers, answers, output, root)),
     ),
     vscode.commands.registerCommand("ish.complete", () => {
       void active?.complete();
     }),
     // The editor is the one place that knows a file was saved, so tell
     // the server then, rather than have it find out on its next poll,
-    // up to `refresh_seconds` later. Only a tree somebody has searched
-    // has a server, so a save elsewhere starts nothing.
+    // up to `refresh_seconds` later. Only a tree chosen to search here
+    // is refreshed, so a save never starts an index nobody asked for.
     vscode.workspace.onDidSaveTextDocument((document) => {
       if (!settings().refreshOnSave || document.uri.scheme !== "file") {
         return;
       }
       const root = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
-      if (root === undefined || !servers.has(root)) {
+      if (root === undefined || !servers.has(root) || !servers.chosen.get(root)?.local) {
         return;
       }
       clearTimeout(saveTimer);

@@ -28,6 +28,11 @@ export interface ServerOptions {
   /** Called when the process goes away, with the reason. */
   onStopped?: (reason: string) => void;
   timeoutMs?: number;
+  /**
+   * Whether a call names the tree, true by default. A server searches
+   * its own tree, so `ish remote mcp` takes no path and refuses one.
+   */
+  paths?: boolean;
 }
 
 /** What `index_status` reports, as far as a status bar needs it. */
@@ -52,6 +57,8 @@ export class IshServer {
   private child: ChildProcess | undefined;
   private readonly pending = new Pending();
   private readonly lines = new LineBuffer();
+  /** The last line the process wrote on stderr, to say why it stopped. */
+  lastError = "";
 
   constructor(private readonly options: ServerOptions) {}
 
@@ -88,6 +95,10 @@ export class IshServer {
     child.stderr?.on("data", (chunk: string) => {
       for (const line of errors.push(chunk)) {
         this.options.log?.(line);
+        if (line.trim() !== "") {
+          // Drop the time and the level that the log of ish starts with.
+          this.lastError = line.trim().replace(/^.*?\[[A-Z]+\]\s*/, "");
+        }
       }
     });
     child.on("error", (error: Error) => {
@@ -152,36 +163,64 @@ export class IshServer {
     return text;
   }
 
+  /** The arguments of a call, with the tree only where the server takes one. */
+  private located(args: Record<string, unknown>, path: string): Record<string, unknown> {
+    return this.options.paths === false ? args : { ...args, path };
+  }
+
+  /**
+   * Resolve true once the server answers, and false when it stops first.
+   * `ish remote mcp` stops at once when no server is set, and says why
+   * in `lastError`.
+   */
+  async available(): Promise<boolean> {
+    try {
+      await this.call("initialize", {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "ish-vscode" },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Whether a stored index reaches *path*. Asking starts no index. */
+  async exists(path: string): Promise<boolean> {
+    const text = await this.callTool("index_exists", this.located({}, path));
+    const parsed = JSON.parse(text) as { exists?: unknown };
+    return parsed.exists === true;
+  }
+
   /** Ask for ranked results, one line each, in the plain shape. */
   async search(
     query: string,
     path: string,
     limit: number,
   ): Promise<string[]> {
-    const text = await this.callTool("search_code", {
-      query,
-      path,
-      limit,
-      format: "plain",
-    });
+    const text = await this.callTool(
+      "search_code",
+      this.located({ query, limit, format: "plain" }, path),
+    );
     // "No results for ..." is prose, not a result.
     return text.split("\n").filter((line) => line.startsWith("["));
   }
 
   /** Ask the server to bring the index up to date, and return at once. */
   async refresh(path: string): Promise<void> {
-    await this.callTool("refresh_index", { path });
+    await this.callTool("refresh_index", this.located({}, path));
   }
 
   /** Report what the index holds, and whether a refresh is running. */
   async status(path: string): Promise<IndexState> {
-    const text = await this.callTool("index_status", { path });
+    const text = await this.callTool("index_status", this.located({}, path));
     return parseStatus(text);
   }
 
   /** Finish the filter word *query* ends in. */
   async complete(query: string, path: string): Promise<Completion> {
-    const text = await this.callTool("complete_filter", { query, path });
+    const text = await this.callTool("complete_filter", this.located({ query }, path));
     const parsed = JSON.parse(text) as Partial<Completion>;
     return {
       text: typeof parsed.text === "string" ? parsed.text : query,

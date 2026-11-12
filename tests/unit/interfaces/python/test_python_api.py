@@ -706,3 +706,44 @@ class TestWarmReader:
     def test_the_plan_reads_what_is_stored(self, project: Path, offline) -> None:
         with _ish(project) as ish:
             assert ish.warm_reader_plan() == []
+
+
+class TestStored:
+    """Say whether a stored index reaches a tree, and open none to say it."""
+
+    def _settings(self, cache: Path) -> Settings:
+        return Settings(git=False, cache_dir=str(cache))
+
+    def test_a_tree_with_no_index_has_none_and_gets_no_file(
+        self, project: Path, tmp_path_factory
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        assert Ish(project, settings=self._settings(cache)).stored() is False
+        assert list(cache.iterdir()) == []
+
+    def test_the_index_of_the_tree(
+        self, project: Path, tmp_path_factory, offline
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        with Ish(project, settings=self._settings(cache)) as ish:
+            ish.index()
+        assert Ish(project, settings=self._settings(cache)).stored() is True
+
+    def test_an_index_below_the_tree(
+        self, project: Path, tmp_path_factory, offline
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        with Ish(project / "src", settings=self._settings(cache)) as ish:
+            ish.index()
+        assert Ish(project, settings=self._settings(cache)).stored() is True
+
+    def test_an_index_above_the_tree(
+        self, project: Path, tmp_path_factory, offline
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        with Ish(project, settings=self._settings(cache)) as ish:
+            ish.index()
+        assert Ish(project / "docs", settings=self._settings(cache)).stored() is True
+
+    def test_an_index_in_memory_is_never_stored(self, project: Path) -> None:
+        assert _ish(project).stored() is False

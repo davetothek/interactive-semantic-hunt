@@ -3,7 +3,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { answerName, answerOf, askArgs, run } from "../src/ask";
+import { answerName, answerOf, askArgs, remoteAskArgs, run } from "../src/ask";
 
 /** Run a line of JavaScript as the command, in place of ish. */
 function script(body: string, signal?: AbortSignal) {
@@ -12,6 +12,8 @@ function script(body: string, signal?: AbortSignal) {
 
 test("the question follows the flag and the separator", () => {
   assert.deepEqual(askArgs("-v is what", "/tree"), ["ask", "--", "-v is what", "/tree"]);
+  // A server answers from its own tree, so the question names no path.
+  assert.deepEqual(remoteAskArgs("-v is what"), ["remote", "ask", "--", "-v is what"]);
 });
 
 test("an answer is the text on stdout", () => {

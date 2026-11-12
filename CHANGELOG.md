@@ -77,6 +77,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   `~/.local/share/ish/logins.jsonl`. The operator ends a login by deleting
   its line. Each tool call writes one line that names the user and the
   tool, never the query.
+- The Neovim and VS Code clients search this tree, a server, or both:
+  `vim.g.ish_source` or `ish.source`, `auto` by default. `auto` reads the
+  local index when there is one, the server when one is set, and both when
+  both are, with each line of the server marked. A question goes to this
+  tree first and offers the server when the answer is not covered. With
+  no index and no server, a client asks once a tree before it builds an
+  index. `require('utils.ish').index()` and `ish: Refresh the index`
+  build one by name.
+- `index_exists` on `ish mcp` says whether a tree has an index, and starts
+  none.
 - `ish remote mcp` serves `search_code` and `ask` on stdio for the tree
   of a server, as `ish remote search` and `ish remote ask` do. An agent or
   an editor gets the tree of the server, and the language model of this
@@ -95,9 +105,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   when `ISH_REMOTE` or a config file names a server. `ish --ask` with
   such a server answers here and prints a warning that names
   `ish remote ask`.
-- The Neovim and VS Code clients ask through `ish ask`, and answer from
-  the local tree. An agent or an editor reads a server through `ish
-  remote mcp`.
+- The Neovim and VS Code clients ask through `ish ask`. An agent or an
+  editor reads a server through `ish remote mcp`.
 - A config file in a tree, at or above the working directory, does not
   name a server. ish ignores its `remote`, and `ish remote` prints a
   warning that names the file. A tree that named the server would choose where your token

@@ -37,6 +37,17 @@ export function askArgs(question: string, root: string): string[] {
 }
 
 /**
+ * The arguments that ask the server *question*. A server answers from
+ * its own tree, so the arguments name no path.
+ */
+export function remoteAskArgs(question: string): string[] {
+  return ["remote", "ask", "--", question];
+}
+
+/** The exit code of an answer that the documents do not cover. */
+export const NOT_COVERED = 2;
+
+/**
  * Read an answer out of *outcome*.
  *
  * Judge by the text, not the exit code: a question the documents do not

@@ -393,6 +393,19 @@ class IshTools:
             ensure_ascii=False,
         )
 
+    def index_exists(self, arguments: Mapping[str, Any]) -> str:
+        """Say whether a stored index holds chunks for a path, as JSON.
+
+        Count what is stored and start nothing: no refresh and no watch.
+        An editor asks before it chooses between this tree and a server,
+        and an index that the question started would cost the hours the
+        choice was to save.
+        """
+        root = self._resolve(arguments.get("path"))
+        session = self._session_for(root)
+        chunks = session.held() if session.stored() else 0
+        return json.dumps({"exists": chunks > 0, "chunks": chunks})
+
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
         root = self._resolve(arguments.get("path"))
@@ -498,6 +511,10 @@ class IshTools:
             ),
             complete_tool(self.complete_filter),
         ]
+        if not over_http:
+            # Only an editor on this machine chooses between this tree and
+            # a server, so only the server on stdio offers this tool.
+            offered.append(exists_tool(self.index_exists))
         if over_http:
             offered = [tool for tool in offered if tool.name != "ask"]
             offered.append(
@@ -682,6 +699,24 @@ def complete_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
                 "path": _PATH_PROPERTY,
             },
             "required": ["query"],
+        },
+        handler=handler,
+    )
+
+
+def exists_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``index_exists``, which *handler* answers."""
+    return Tool(
+        name="index_exists",
+        description=(
+            "Say whether a stored index holds chunks for a path, and how "
+            "many. Returns JSON with 'exists' and 'chunks'. It starts no "
+            "index and no refresh, unlike index_status. An editor calls it "
+            "to choose between this tree and a server."
+        ),
+        schema={
+            "type": "object",
+            "properties": {"path": _PATH_PROPERTY},
         },
         handler=handler,
     )

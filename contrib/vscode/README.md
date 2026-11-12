@@ -93,7 +93,8 @@ time and the tokens of each answer.
 | `ish.debounceMs` | `120` | how long typing must pause before a search is sent |
 | `ish.preview` | `true` | show the highlighted chunk while the picker is open |
 | `ish.refreshOnSave` | `true` | refresh the index when a file in a searched folder is saved |
-| `ish.askCommand` | `ish` | the command that answers a question |
+| `ish.askCommand` | `ish` | the command that answers a question, and starts `ish remote mcp` |
+| `ish.source` | `auto` | where a search and a question go: `auto`, `local`, or `remote` |
 
 What is indexed, which backend embeds it, and how paths are sorted into
 `code`, `doc`, `test`, and `config` come from ish's own config file,

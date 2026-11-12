@@ -77,9 +77,10 @@ map('n', '<leader>fa', function() require('utils.ish_ask').ask() end,
 
 It asks for the question and opens the split at once, with the seconds it
 has waited. When `ish ask` returns, the split holds the answer as
-Markdown. The command line answers from the tree on this machine, so the
-language model and the filter words in the question are the ones a shell
-uses. It needs `ish` on PATH. A call can give the question, the tree, and more flags:
+Markdown. The model of this machine writes the answer, so the language
+model and the filter words in the question are the ones a shell uses. See
+[This tree, a server, or both](#this-tree-a-server-or-both) for where the
+question goes. It needs `ish` on PATH. A call can give the question, the tree, and more flags:
 
 ```lua
 require('utils.ish_ask').ask('how is the watchdog configured',
@@ -96,6 +97,32 @@ local ask = require('utils.ish_ask')
 ask.split = 'botright 15split'
 ask.link_keys = { 'gf', '<CR>' }
 ```
+
+### This tree, a server, or both
+
+Both editor clients choose where a search and a question go. Set it with
+`vim.g.ish_source` in Neovim, or `ish.source` in VS Code:
+
+| value | where it goes |
+|---|---|
+| `auto` (the default) | the index of this tree when there is one, the server when one is set, and both when both are |
+| `local` | the index of this tree only |
+| `remote` | the server only, through `ish remote mcp` |
+
+With both, the picker lists this tree first and the server after, and
+marks each line of the server with `[server]`. Two indexes score on two
+scales, so the lists stay apart. A line of the server opens the file of
+the same path in this tree, which holds it when the server serves the same
+repository. A question goes to this tree first, and when its documents do
+not cover it, the client offers to ask the server.
+
+The client asks `index_exists` whether this tree has an index, which
+starts none. With no index and no server, or with `local` and no index,
+the client asks once before it builds one, because a large tree takes
+hours to embed. It keeps the answer for each tree until the editor starts
+again. To build an index after a "Not now", run
+`require('utils.ish').index()` in Neovim, or `ish: Refresh the index` in
+VS Code. A save refreshes only a tree that is searched here.
 
 ## Use from VS Code
 
@@ -140,7 +167,8 @@ can query the index directly. Add it to a project with `.mcp.json`:
 ```
 
 It offers `search_code`, `ask`, `list_chunks`, `index_status`,
-`refresh_index`, and `complete_filter`. `ask` answers a question from the
+`refresh_index`, `complete_filter`, and `index_exists`, which says whether
+a tree has an index and starts none. `ask` answers a question from the
 chunks a search finds and returns JSON: the answer with `[n]` markers, and
 for each citation the path, the location, and a link. It needs a language
 model, which [Answer questions](configuration.md#answer-questions) sets up. The server stays resident, so a query costs about 58 ms

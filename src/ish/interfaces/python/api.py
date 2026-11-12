@@ -183,6 +183,23 @@ class Ish:
         """Return how many chunks the index holds now, without refreshing it."""
         return self._use_case.held()
 
+    def stored(self) -> bool:
+        """Return True when a stored index reaches this tree.
+
+        Read the catalog alone, and open and write no index: the index of
+        the tree, one below it, or one above it that a search would read.
+        An index opened to ask would leave an empty file behind.
+        """
+        if self.settings.no_cache:
+            return False
+        indexes = bootstrap.catalog(self.settings)
+        _repository, checkout = self.identity
+        return (
+            indexes.path_for(self.path).exists()
+            or bool(indexes.entries_below(self.path))
+            or indexes.covering(self.path, checkout) is not None
+        )
+
     def warm(self) -> None:
         """Load the model before the first query waits on it.
 
