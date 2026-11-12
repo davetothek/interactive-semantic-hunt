@@ -22,7 +22,8 @@ SEARCH = "search"
 ASK = "ask"
 PICK = "pick"
 INDEX = "index"
-COMMANDS = (SEARCH, ASK, PICK, INDEX)
+CHAT = "chat"
+COMMANDS = (SEARCH, ASK, PICK, INDEX, CHAT)
 
 _USAGE = {
     "": "%(prog)s [options] [query] [path]\n       %(prog)s command ...",
@@ -30,6 +31,7 @@ _USAGE = {
     ASK: "%(prog)s [options] question [path]",
     PICK: "%(prog)s [options] [path]",
     INDEX: "%(prog)s [options] [path]",
+    CHAT: "%(prog)s [--full] [options] [path]",
 }
 
 _DESCRIPTION = {
@@ -41,6 +43,7 @@ _DESCRIPTION = {
         "  ask QUESTION [PATH]   Answer a question, with the sources it cites.\n"
         "  pick [PATH]           Open the interactive picker.\n"
         "  index [PATH]          Build or refresh the index of a tree.\n"
+        "  chat [PATH]           Chat about the files, with the sources cited.\n"
         "  remote COMMAND ...    Search, or ask, the tree of a server.\n"
         "  mcp                   Serve the tools over MCP. Also: ish-mcp\n"
         "  serve [TREE]          Keep the indexes of a tree current. Also: ish-serve\n"
@@ -60,6 +63,11 @@ _DESCRIPTION = {
     INDEX: (
         "Build the index of a tree, or bring it up to date, and say how many\n"
         "chunks it holds. A search does this as well, before it answers."
+    ),
+    CHAT: (
+        "Chat about the files of a tree. Each reply answers from the chunks a\n"
+        "search finds, with the sources cited, and the chat keeps what was asked\n"
+        "while it runs. /help in the chat names its commands."
     ),
 }
 
@@ -173,6 +181,12 @@ def build_parser(command: str = "") -> argparse.ArgumentParser:
             action="store_true",
             help="Answer in a sentence or two, with no sources.",
         )
+    elif command == CHAT:
+        parser.add_argument(
+            "--full",
+            action="store_true",
+            help="Reply with the full answer. A reply is short by default.",
+        )
     elif not command:
         parser.add_argument(
             "query",
@@ -267,6 +281,8 @@ class CliArgs:
     brief: bool = False
     # The command the line starts with, or nothing for a line with none.
     command: str = ""
+    # `ish chat --full`: reply with the full answer.
+    full: bool = False
     # The flags as given, so a tree below can resolve its own
     # configuration and still let a flag override it.
     overrides: Mapping[str, Any] = field(default_factory=dict)
@@ -314,6 +330,7 @@ class CliArgs:
 
         brief = getattr(args, "brief", False)
         return cls(
+            full=getattr(args, "full", False),
             path=path,
             query=query_val,
             interactive=command == PICK or getattr(args, "interactive", False),

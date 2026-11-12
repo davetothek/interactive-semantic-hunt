@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
+from typing import TYPE_CHECKING
 
 from ish import bootstrap
 from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
@@ -38,6 +39,10 @@ from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.interfaces import completion, heartbeat
 from ish.settings import Settings, load_settings
+
+if TYPE_CHECKING:
+    # For the type checker alone. A search loads no chat code.
+    from ish.application.chat import Reading
 
 log = logging.getLogger(__name__)
 
@@ -296,6 +301,7 @@ class Ish:
         on_step: AnswerCallback | None = None,
         brief: bool = False,
         turns: int | None = None,
+        reading: "Reading | None" = None,
     ) -> Answer:
         """Answer *question* from the chunks a search of this tree returns.
 
@@ -307,6 +313,46 @@ class Ish:
         call takes seconds. With *brief*, the model writes the short answer
         alone, which costs a fraction of the output. *turns* overrides
         ``ask_turns`` for this question alone.
+
+        A chat gives a *reading*: the queries the first search runs in
+        place of the question, which holds the history of the chat, and
+        the chunks to offer beside the results. With its ``only``, the
+        answer reads those chunks, with no search, no rerank, and no
+        follow-up search.
+        """
+        self.prepare(brief)
+        read = self._reader_for_answers()
+        # A rerank model sorts a wide search cheaply from the start of each
+        # chunk. Without one, the best chunks as ranked are read in full.
+        wide = self._reranker is not None
+        limit = self.settings.rerank_candidates if wide else ASK_LIMIT
+
+        def search(text: str) -> list[Match]:
+            return self.search(text, limit, lang=lang, under=under, type=type)
+
+        found, reranker = search, self._reranker
+        if reading is not None:
+            from ish.application.chat import plan
+
+            found, reranker, turns = plan(reading, search, limit, reranker, turns)
+        use_case = AnswerQuestion(
+            search=found,
+            model=self._models[brief],
+            reranker=reranker,
+            pick=ASK_LIMIT,
+            turns=self.settings.ask_turns if turns is None else turns,
+            read=read,
+            glossary=self._glossary,
+            **({"on_step": on_step} if on_step else {}),
+        )
+        return use_case.answer(question)
+
+    def prepare(self, brief: bool = False) -> None:
+        """Build the language model of an answer, and the rerank model, now.
+
+        A chat calls it before its first question, so a machine that
+        allows no model stops before it reads any text. Raise
+        ``LanguageModelError`` when no model is set or allowed.
         """
         if brief not in self._models:
             self._models[brief] = bootstrap.build_language_model(
@@ -315,24 +361,6 @@ class Ish:
         if self._reranker is None and not self._built:
             self._reranker = bootstrap.build_reranker(self.settings)
             self._built = True
-        read = self._reader_for_answers()
-        # A rerank model sorts a wide search cheaply from the start of each
-        # chunk. Without one, the best chunks as ranked are read in full.
-        wide = self._reranker is not None
-        limit = self.settings.rerank_candidates if wide else ASK_LIMIT
-        use_case = AnswerQuestion(
-            search=lambda text: self.search(
-                text, limit, lang=lang, under=under, type=type
-            ),
-            model=self._models[brief],
-            reranker=self._reranker,
-            pick=ASK_LIMIT,
-            turns=self.settings.ask_turns if turns is None else turns,
-            read=read,
-            glossary=self._glossary,
-            **({"on_step": on_step} if on_step else {}),
-        )
-        return use_case.answer(question)
 
     def sources(
         self,

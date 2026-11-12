@@ -7,6 +7,7 @@ import pytest
 
 from ish.interfaces.cli.args import (
     ASK,
+    CHAT,
     COMMANDS,
     INDEX,
     PICK,
@@ -140,7 +141,7 @@ class TestEveryCommand:
 
     @pytest.mark.parametrize("command", COMMANDS)
     def test_an_option_reaches_the_settings(self, command: str) -> None:
-        words = [command] if command in (PICK, INDEX) else [command, "query"]
+        words = [command] if command in (PICK, INDEX, CHAT) else [command, "query"]
         assert CliArgs.from_args([*words, "--limit", "17"]).settings.limit == 17
 
     @pytest.mark.parametrize("command", COMMANDS)
@@ -174,3 +175,11 @@ class TestIndexCommand:
         monkeypatch.chdir(tmp_path)
         with pytest.raises(SystemExit):
             CliArgs.from_args(["index", "query", "src"])
+
+
+class TestChatCommand:
+    def test_it_takes_the_path_and_full(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        args = CliArgs.from_args(["chat", "--full"])
+        assert (args.command, args.full, args.path) == (CHAT, True, tmp_path.resolve())
+        assert CliArgs.from_args(["chat"]).full is False

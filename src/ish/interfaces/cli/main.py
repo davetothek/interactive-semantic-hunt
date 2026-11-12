@@ -13,7 +13,7 @@ import sys
 from ish import bootstrap
 from ish.application.answer import FOLLOWING, AnswerStep
 from ish.interfaces.busy import ProgressLine, Ticker
-from ish.interfaces.cli.args import INDEX, CliArgs
+from ish.interfaces.cli.args import CHAT, INDEX, CliArgs
 from ish.interfaces.format import (
     answer_usage,
     format_answer,
@@ -222,6 +222,21 @@ def _run_index(args: CliArgs) -> int:
     return 0
 
 
+def _run_chat(args: CliArgs) -> int:
+    """Chat about the files of the path, until the person ends it.
+
+    Bring the index up to date first, behind the line a search shows, so
+    no reply waits for a walk of the tree.
+    """
+    from ish.interfaces.cli import chat
+
+    line = ProgressLine()
+    with Ish(args.path, settings=args.settings) as ish:
+        ish.index(on_progress=line.show)
+        line.clear()
+        return chat.converse(ish, brief=not args.full, report=report_step)
+
+
 def _run_scan(args: CliArgs) -> int:
     """Scan the path and list every chunk in the plain output format."""
     for chunk in Ish(args.path, settings=args.settings).scan():
@@ -336,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
             line.clear()
         if args.command == INDEX:
             return _run_index(args)
+        if args.command == CHAT:
+            return _run_chat(args)
         if args.ask:
             return _run_ask(args)
         if args.query:

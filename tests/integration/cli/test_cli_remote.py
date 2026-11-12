@@ -420,3 +420,28 @@ class TestFailures:
     def test_verbose_adds_the_traceback(self, served: Served, capsys) -> None:
         assert run(["remote", "search", "watchdog", "--url", NOWHERE, "-vv"]) == 1
         assert "Traceback" in capsys.readouterr().err
+
+
+class TestChat:
+    """`ish remote chat` gets chunks from the server and answers here."""
+
+    def test_a_chat_with_the_server(self, served: Served, monkeypatch, capsys) -> None:
+        model = FakeModel()
+        _model(monkeypatch, model)
+        left = [QUESTION, "/more"]
+        monkeypatch.setattr(
+            "builtins.input",
+            lambda prompt: left.pop(0) if left else (_ for _ in ()).throw(EOFError()),
+        )
+        assert run(["remote", "chat"]) == 0
+        out = capsys.readouterr().out
+        assert "The watchdog resets the board[1]." in out
+        assert f"# {QUESTION}\n" in out
+        # /more reads what the answer read: no second call to the server.
+        assert [name for name, _ in served.calls] == ["sources"]
+        assert len(model.questions) == 2
+
+    def test_a_server_that_cannot_be_named(self, tmp_path, monkeypatch, caplog) -> None:
+        monkeypatch.chdir(tmp_path)
+        assert run(["remote", "chat", "--url", "ftp://docs.example.invalid/mcp"]) == 1
+        assert "not an http or https URL" in caplog.text

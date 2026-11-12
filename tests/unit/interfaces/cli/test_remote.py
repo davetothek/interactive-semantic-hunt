@@ -16,8 +16,8 @@ from ish.settings import CONFIG_FILENAME, REMOTE_ENV_VAR
 NOWHERE = "http://127.0.0.1:9/mcp"
 
 USE = (
-    "Use: ish remote search QUERY, ish remote ask QUESTION, ish remote mcp, "
-    "ish remote login, or ish remote logout"
+    "Use: ish remote search QUERY, ish remote ask QUESTION, ish remote chat, "
+    "ish remote mcp, ish remote login, or ish remote logout"
 )
 NO_SERVER = "No server is set. Give --url URL, or set ISH_REMOTE."
 
@@ -151,7 +151,7 @@ class TestTheOptions:
 
     def test_every_option_is_one_of_the_list(self) -> None:
         args = build_parser().parse_intermixed_args(["search", "q"])
-        own = {"command", "words", "brief", "config", "method", "user"}
+        own = {"command", "words", "brief", "config", "method", "user", "full"}
         assert set(vars(args)) == set(OPTIONS) | own
 
     def test_lang_takes_a_name_this_machine_does_not_know(self) -> None:
@@ -543,3 +543,24 @@ class TestTheLineOfLoginAndLogout:
         monkeypatch.chdir(tmp_path)
         assert run(["remote", command]) == 1
         assert _errors(caplog) == [NO_SERVER]
+
+
+class TestTheLineOfChat:
+    @pytest.mark.parametrize(
+        ("line", "error"),
+        [
+            (["chat", "why"], "ish remote chat takes no query."),
+            (
+                ["chat", "--under", "docs"],
+                "ish remote chat takes no --lang, --under, or --type.",
+            ),
+            (
+                ["search", "watchdog", "--full"],
+                "--full is an option of ish remote chat.",
+            ),
+            (["mcp", "--full"], "--full is an option of ish remote chat."),
+        ],
+    )
+    def test_the_line_is_refused(self, line, error, nowhere, caplog) -> None:
+        assert run(["remote", *line]) == 1
+        assert _errors(caplog) == [error]

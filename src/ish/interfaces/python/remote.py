@@ -12,7 +12,7 @@ same use case and the same model rules as an answer from a local tree.
 """
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ish import bootstrap
 from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
@@ -22,6 +22,9 @@ from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.interfaces.python.api import ASK_LIMIT
 from ish.settings import Settings
+
+if TYPE_CHECKING:
+    from ish.application.chat import Reading
 
 
 class RemoteIsh:
@@ -45,6 +48,9 @@ class RemoteIsh:
         self._reranker: LanguageModel | None = None
         # What the acronyms of the tree stand for, as the server sent them.
         self._glossary = Glossary()
+        # The text of each chunk the server sent, so a later answer of a
+        # chat can read a chunk again without asking the server for it.
+        self._texts: dict[Chunk, str] = {}
 
     @property
     def host(self) -> str:
@@ -92,6 +98,7 @@ class RemoteIsh:
         on_step: AnswerCallback | None = None,
         brief: bool = False,
         turns: int | None = None,
+        reading: "Reading | None" = None,
     ) -> Answer:
         """Answer *question* from the chunks the server finds.
 
@@ -100,7 +107,41 @@ class RemoteIsh:
         ``LanguageModelError`` when no model is set or allowed. Run the
         rerank and the answer here, and send each follow-up search to
         the server. The model reads the text the server sent, and no
-        file of this machine.
+        file of this machine. A chat gives a *reading*, as for ``Ish.ask``.
+        """
+        self.prepare(brief)
+        limit = self.settings.rerank_candidates if self._reranker else ASK_LIMIT
+
+        def search(text: str) -> list[Match]:
+            found = self._source.sources(text, limit, lang=lang, under=under, type=type)
+            for entry in found.chunks:
+                self._texts[entry.chunk] = entry.text
+            for term in found.terms:
+                self._glossary.keep(term)
+            return [Match(entry.chunk, entry.score) for entry in found.chunks]
+
+        found, reranker = search, self._reranker
+        if reading is not None:
+            from ish.application.chat import plan
+
+            found, reranker, turns = plan(reading, search, limit, reranker, turns)
+        use_case = AnswerQuestion(
+            search=found,
+            model=self._models[brief],
+            reranker=reranker,
+            pick=ASK_LIMIT,
+            turns=self.settings.ask_turns if turns is None else turns,
+            read=self._texts.get,
+            glossary=self._glossary,
+            **({"on_step": on_step} if on_step else {}),
+        )
+        return use_case.answer(question)
+
+    def prepare(self, brief: bool = False) -> None:
+        """Build the language model of an answer, and the rerank model, now.
+
+        Raise ``LanguageModelError`` when no model is set or allowed, so
+        a machine that allows no model reads no text of the server.
         """
         if brief not in self._models:
             self._models[brief] = bootstrap.build_language_model(
@@ -109,28 +150,6 @@ class RemoteIsh:
         if self._reranker is None and not self._built:
             self._reranker = bootstrap.build_reranker(self.settings)
             self._built = True
-        limit = self.settings.rerank_candidates if self._reranker else ASK_LIMIT
-        texts: dict[Chunk, str] = {}
-
-        def search(text: str) -> list[Match]:
-            found = self._source.sources(text, limit, lang=lang, under=under, type=type)
-            for entry in found.chunks:
-                texts[entry.chunk] = entry.text
-            for term in found.terms:
-                self._glossary.keep(term)
-            return [Match(entry.chunk, entry.score) for entry in found.chunks]
-
-        use_case = AnswerQuestion(
-            search=search,
-            model=self._models[brief],
-            reranker=self._reranker,
-            pick=ASK_LIMIT,
-            turns=self.settings.ask_turns if turns is None else turns,
-            read=texts.get,
-            glossary=self._glossary,
-            **({"on_step": on_step} if on_step else {}),
-        )
-        return use_case.answer(question)
 
     def read(self, tool: str, arguments: Mapping[str, Any]) -> str:
         """Return what the read-only *tool* of the server answers with.

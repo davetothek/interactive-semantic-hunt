@@ -13,6 +13,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - Commands. `ish search QUERY [PATH]` searches, `ish ask QUESTION [PATH]`
   answers a question, and `ish pick [PATH]` opens the picker. `ish ask`
   takes `--brief`. Each command takes every option, and `--help`.
+- `ish chat [PATH]` and `ish remote chat`: a conversation about the files.
+  Each reply answers from the chunks a search finds, with a citation for
+  each claim, and the chat keeps what was asked while it runs. A reply is
+  short, with its sources named. `/more` writes the full answer from what
+  the last answer read, `/sources` names those chunks, `/new` forgets the
+  chat, and `--full` replies in full. The history stays in memory, and on
+  this machine with a server.
 - `ish index [PATH]` builds the index of a tree, or brings it up to date,
   with no search, and says how many chunks it holds. When `ish-serve`
   keeps the tree, it names the server and leaves the work to it.
@@ -102,7 +109,7 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The first word of a command line is a command when it is `search`,
-  `ask`, `pick`, `index`, `mcp`, `serve`, or `complete`. To search for one of
+  `ask`, `pick`, `index`, `chat`, `mcp`, `serve`, or `complete`. To search for one of
   these words, use `ish search WORD` or `ish -- WORD`.
 - A line without the word `remote` reads the tree on this machine, also
   when `ISH_REMOTE` or a config file names a server. `ish --ask` with

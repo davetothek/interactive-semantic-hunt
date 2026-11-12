@@ -90,6 +90,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Application | `src/ish/application/answer.py` | Answer use case: search, read, fit the budget, ask the model |
 | Application | `src/ish/application/access.py` | Access use case: admit a request, sign a user in, give a login token |
 | Application | `src/ish/application/sources.py` | Sources use case: the chunks a search found, with their text and terms |
+| Application | `src/ish/application/chat.py` | Chat use case: the history, the searches of a follow-up, and `/more` |
 | Adapter | `src/ish/adapters/_http.py` | One JSON request over HTTP, and the four ways it fails |
 | Adapter | `src/ish/adapters/_ollama.py` | The daemon host the Ollama embedder and language model share |
 | Adapter | `src/ish/adapters/parser/__init__.py` | `PARSERS` — every language, and the recipe for adding one |
@@ -138,6 +139,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Interface | `src/ish/interfaces/cli/__init__.py` | `ish` entry point: hand the line to the program its first word names |
 | Interface | `src/ish/interfaces/cli/main.py` | The search program: search, ask, pick, list |
 | Interface | `src/ish/interfaces/cli/remote.py` | The remote program: search a server, or answer from it |
+| Interface | `src/ish/interfaces/cli/chat.py` | The loop of `ish chat` and `ish remote chat` |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/cli/terminal.py` | An answer rendered for a terminal, and the grey of the timing table |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |

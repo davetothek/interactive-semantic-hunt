@@ -174,6 +174,8 @@ class TestWhatACommandImports:
             "ish.adapters.chunk_source",
             "ish.adapters.authenticator",
             "ish.application.ports.authenticator",
+            "ish.application.chat",
+            "ish.interfaces.cli.chat",
         )
         assert not [name for name in loaded if name.startswith(apart)]
         assert "ish.interfaces.cli.complete" not in loaded

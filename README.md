@@ -75,6 +75,8 @@ ish ask "how does the release branch get its version" docs/
 ```
 
 See [answer questions](https://davetothek.github.io/interactive-semantic-hunt/configuration/#answer-questions).
+`ish chat` asks again from each answer, and keeps the conversation while it
+runs.
 
 The first search of a tree builds its index, and `ish index PATH` builds it
 with no search. Later searches parse only the files that changed and embed

@@ -266,3 +266,48 @@ class TestIndexOfOneChunk:
         monkeypatch.chdir(tmp_path)
         assert main(["index", "--cache-dir", str(tmp_path / "idx")]) == 0
         assert capsys.readouterr().err.splitlines()[-1].endswith("holds 1 chunk.")
+
+
+class TestChat:
+    """`ish chat` answers each line from the tree, until the input ends."""
+
+    def _typed(self, monkeypatch, *lines: str) -> None:
+        left = list(lines)
+
+        def read(prompt: str) -> str:
+            if not left:
+                raise EOFError
+            return left.pop(0)
+
+        monkeypatch.setattr("builtins.input", read)
+
+    def test_a_chat_answers_and_follows_up(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        model = FakeModel()
+        _model(monkeypatch, model)
+        self._typed(monkeypatch, QUESTION, "and how often?")
+        assert main(["chat", "--cache-dir", str(project / "idx")]) == 0
+        out = capsys.readouterr().out
+        assert out.count("The watchdog resets the board[1].") == 2
+        assert "[1] docs/boot.md:1-3" in out
+        first, second = model.questions
+        assert first == QUESTION
+        # The follow-up reads the history, under its heading.
+        assert second.startswith("This is a chat.")
+        assert second.endswith("Question: and how often?")
+
+    def test_full_starts_with_full_answers(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        _model(monkeypatch, FakeModel())
+        self._typed(monkeypatch, QUESTION)
+        assert main(["chat", "--full", "--cache-dir", str(project / "idx")]) == 0
+        assert capsys.readouterr().out.startswith(f"# {QUESTION}\n")
+
+    def test_no_language_model_stops_the_chat(
+        self, project: Path, monkeypatch, caplog
+    ) -> None:
+        self._typed(monkeypatch, QUESTION)
+        assert main(["chat", "--cache-dir", str(project / "idx")]) == 1
+        assert "Set language_model" in caplog.text

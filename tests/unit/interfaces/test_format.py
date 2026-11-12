@@ -671,3 +671,74 @@ class TestTermsSection:
         answer, _a, _b = self._answer()
         text = format_answer(replace(answer, terms=()), "q", lambda c: "file:///x")
         assert "## Terms" not in text
+
+
+class TestFormatChat:
+    """A chat reply is short and cited, or the full answer."""
+
+    @staticmethod
+    def _answer(*parts, sources=(), blocks=(), covered=True):
+        from ish.application.answer import Answer
+
+        return Answer(parts=parts, covered=covered, sources=sources, blocks=blocks)
+
+    def test_a_brief_reply_keeps_its_markers_and_names_each_source(self) -> None:
+        from ish.application.answer import AnswerBlock, AnswerPart
+        from ish.interfaces.format import format_chat
+
+        a = Chunk(Path("spec/a.adoc"), "t", "section", "asciidoc", "a", 10, 20)
+        b = Chunk(Path("spec/b.adoc"), "t", "section", "asciidoc", "b", 3, 4)
+        answer = self._answer(
+            sources=(a, b),
+            blocks=(
+                AnswerBlock(
+                    "summary",
+                    parts=(
+                        AnswerPart("It is 49 ms", (a,)),
+                        AnswerPart(" in mode B.", (b,)),
+                    ),
+                ),
+                AnswerBlock(
+                    "prose", heading="More", parts=(AnswerPart("Detail.", (a,)),)
+                ),
+            ),
+        )
+        assert format_chat(answer, "why", lambda c: "", brief=True) == (
+            "It is 49 ms[1] in mode B.[2]\n\n[1] spec/a.adoc:10-20\n[2] spec/b.adoc:3-4"
+        )
+
+    def test_a_brief_reply_with_no_summary_uses_its_parts(self) -> None:
+        from ish.application.answer import AnswerPart
+        from ish.interfaces.format import format_chat
+
+        a = Chunk(Path("spec/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        answer = self._answer(AnswerPart("Yes.", (a,)), sources=(a,))
+        assert format_chat(answer, "why", lambda c: "", brief=True) == (
+            "Yes.[1]\n\n[1] spec/a.adoc:1-2"
+        )
+
+    def test_a_brief_reply_that_cites_nothing_is_its_text(self) -> None:
+        from ish.application.answer import AnswerPart
+        from ish.interfaces.format import format_chat
+
+        answer = self._answer(AnswerPart("Yes."))
+        assert format_chat(answer, "why", lambda c: "", brief=True) == "Yes."
+
+    def test_an_uncovered_question_says_so_in_one_line(self) -> None:
+        from ish.interfaces.format import format_chat
+
+        answer = self._answer(covered=False)
+        text = format_chat(answer, "why", lambda c: "", brief=True)
+        assert text == "The documents do not answer this."
+        assert format_chat(answer, "why", lambda c: "", brief=False) == text
+
+    def test_a_full_reply_is_the_answer_as_ask_writes_it(self) -> None:
+        from ish.application.answer import AnswerPart
+        from ish.interfaces.format import format_answer, format_chat
+
+        a = chunk()
+        answer = self._answer(AnswerPart("Long.", (a,)), sources=(a,))
+        link = lambda c: "file:///x"  # noqa: E731
+        assert format_chat(answer, "why", link, brief=False) == format_answer(
+            answer, "why", link
+        )

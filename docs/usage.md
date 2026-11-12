@@ -190,6 +190,46 @@ ish ask --brief "how long is the watchdog period while streaming" docs/
 Ask again without `--brief` for the sources. A brief answer costs about a
 third of the output tokens and half the time.
 
+### Chat about the files
+
+`ish chat` is a conversation about a tree. Each line is a question, and
+each reply answers from the chunks a search finds, as `ish ask` does,
+with a citation for each claim:
+
+```text
+$ ish chat docs/
+ish> how is the watchdog configured
+The watchdog period is set in WDT_CTRL.[1]
+
+[1] spec/watchdog.adoc:40-62
+
+ish> and its reset value?
+```
+
+A reply is short, with its `[n]` markers and one line for each source.
+`ish chat --full` replies with the full answer. In the chat:
+
+| command | what it does |
+|---|---|
+| `/more` | the full answer of the last question, from the chunks it read, with no new search |
+| `/sources` | the chunks the last answer read |
+| `/new` | forget the chat so far |
+| `/quit` | end the chat, as Ctrl-D does |
+
+The chat keeps what was asked and answered while it runs, so a follow-up
+can say "it" and "that register". The model reads that history as context
+for the question, under a heading that says it is no source: a claim still
+needs a chunk. A follow-up is searched alone and together with the question
+before it, and the chunks the last answer cited are offered again beside
+the results. Past about 4,000 tokens, the history keeps the recent turns
+whole and only the questions of the older ones. No model summarizes it, so
+the history holds nothing that no answer said.
+
+The history stays in memory, and the chat writes none of it to disk. Ctrl-C
+stops the reply that runs, and the chat goes on. `ish remote chat` chats
+about the tree of a server the same way: the server returns chunks, and the
+history and the model stay on this machine.
+
 ### Ask a server
 
 `ish remote` reads an `ish mcp --http` server, not a tree on this machine.

@@ -365,3 +365,46 @@ class TestRead:
     def test_a_read_goes_to_the_server_as_given(self, server: Server) -> None:
         assert RemoteIsh(_settings()).read("index_status", {}) == "read"
         assert server.reads == [("index_status", {})]
+
+
+class TestAChatReading:
+    """A chat reads the server through the same reading as a local chat."""
+
+    def test_the_queries_go_to_the_server_and_a_carried_chunk_keeps_its_text(
+        self, server: Server, model: Model
+    ) -> None:
+        from ish.application.chat import Reading
+
+        server.found["first"] = _found(EXPOSURE)
+        server.found["second"] = _found(GAIN)
+        remote = RemoteIsh(_settings())
+        remote.ask("first")
+        model.read.clear()
+        remote.ask(
+            "the history", reading=Reading(("second", "first second"), (EXPOSURE,))
+        )
+        assert [call[0] for call in server.calls] == ["first", "second", "first second"]
+        # The carried chunk reads the text the server sent for it before.
+        assert "Text of exposure.md." in [text for _title, text in model.read[0]]
+
+    def test_only_reads_the_chunks_the_server_sent_before(
+        self, server: Server, model: Model
+    ) -> None:
+        from ish.application.chat import Reading
+
+        remote = RemoteIsh(_settings())
+        first = remote.ask(QUESTION)
+        calls = len(server.calls)
+        remote.ask("why", reading=Reading(only=first.sources))
+        assert len(server.calls) == calls
+        assert [text for _title, text in model.read[-1]] == [
+            "Text of exposure.md.",
+            "Text of gain.md.",
+        ]
+
+    def test_prepare_builds_the_model_and_reads_no_text(self, server: Server) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        with pytest.raises(LanguageModelError):
+            RemoteIsh(_settings()).prepare()
+        assert server.calls == []

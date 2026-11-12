@@ -747,3 +747,61 @@ class TestStored:
 
     def test_an_index_in_memory_is_never_stored(self, project: Path) -> None:
         assert _ish(project).stored() is False
+
+
+class TestAChatReading:
+    """A chat tells an answer which queries to run, and what to read."""
+
+    def _model(self, monkeypatch) -> "TestAsk.Model":
+        model = TestAsk.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
+        return model
+
+    def test_the_queries_run_in_place_of_the_question(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.chat import Reading
+
+        model = self._model(monkeypatch)
+        ran: list[str] = []
+        with _ish(project) as ish:
+            search = ish.search
+            monkeypatch.setattr(
+                ish,
+                "search",
+                lambda text, *a, **k: ran.append(text) or search(text, *a, **k),
+            )
+            ish.ask(
+                "the history and the question", reading=Reading(("parse", "configure"))
+            )
+        assert ran == ["parse", "configure"]
+        assert model.sources
+
+    def test_only_reads_those_chunks_and_searches_nothing(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.chat import Reading
+
+        model = self._model(monkeypatch)
+        with _ish(project) as ish:
+            guide = next(c for c in ish.scan() if c.language == "markdown")
+
+            def refuse(*_a, **_k):
+                raise AssertionError("an answer of /more searched")
+
+            monkeypatch.setattr(ish, "search", refuse)
+            answer = ish.ask("why", reading=Reading(only=(guide,)))
+        assert len(model.sources) == 1
+        assert answer.sources == (guide,)
+
+    def test_prepare_builds_the_model_before_any_question(
+        self, project: Path, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        with pytest.raises(LanguageModelError, match="language_model"):
+            _ish(project).prepare()
+        model = self._model(monkeypatch)
+        ish = _ish(project)
+        ish.prepare(brief=True)
+        assert ish._models[True] is model

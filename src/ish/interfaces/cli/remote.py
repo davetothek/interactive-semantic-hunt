@@ -42,10 +42,11 @@ ASK = "ask"
 MCP = "mcp"
 LOGIN = "login"
 LOGOUT = "logout"
-COMMANDS = (SEARCH, ASK, MCP, LOGIN, LOGOUT)
+CHAT = "chat"
+COMMANDS = (SEARCH, ASK, MCP, LOGIN, LOGOUT, CHAT)
 
 # The commands that take no text, no filter, and no --brief.
-_BARE = (MCP, LOGIN, LOGOUT)
+_BARE = (MCP, LOGIN, LOGOUT, CHAT)
 
 # What each command reads from the line, as its usage names it.
 _TEXT = {SEARCH: "query", ASK: "question"}
@@ -76,7 +77,8 @@ _USAGE = (
     "       %(prog)s ask QUESTION [--brief] [options]\n"
     "       %(prog)s mcp [options]\n"
     "       %(prog)s login [--method NAME] [--user NAME] [options]\n"
-    "       %(prog)s logout [options]"
+    "       %(prog)s logout [options]\n"
+    "       %(prog)s chat [--full] [options]"
 )
 
 _DESCRIPTION = (
@@ -89,6 +91,8 @@ _DESCRIPTION = (
     "                  for an agent or an editor.\n"
     "  login           Sign in to the server, and keep its login token.\n"
     "  logout          Delete the login token of the server.\n"
+    "  chat            Chat about the tree of the server, with the language\n"
+    "                  model of this machine.\n"
     "\n"
     f"--url, {REMOTE_ENV_VAR}, or `remote` in the user config file names the\n"
     "server, in that order. A config file in a tree names no server. The\n"
@@ -96,8 +100,8 @@ _DESCRIPTION = (
 )
 
 _USE = (
-    "Use: ish remote search QUERY, ish remote ask QUESTION, ish remote mcp, "
-    "ish remote login, or ish remote logout"
+    "Use: ish remote search QUERY, ish remote ask QUESTION, ish remote chat, "
+    "ish remote mcp, ish remote login, or ish remote logout"
 )
 
 
@@ -117,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--brief",
         action="store_true",
         help="Answer in a sentence or two, with no sources.",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="In a chat, reply with the full answer. A reply is short by default.",
     )
     parser.add_argument(
         "--method",
@@ -158,6 +167,8 @@ def _problem(args: argparse.Namespace, settings: Settings) -> str:
         return _bare_problem(args)
     if args.method or args.user:
         return "--method and --user are options of ish remote login."
+    if args.full:
+        return "--full is an option of ish remote chat."
     text = _TEXT[args.command]
     if not args.words or not args.words[0].strip():
         return f"ish remote {args.command} needs a {text}."
@@ -193,6 +204,8 @@ def _bare_problem(args: argparse.Namespace) -> str:
         return f"ish remote {command} takes no --lang, --under, or --type."
     if command != LOGIN and (args.method or args.user):
         return "--method and --user are options of ish remote login."
+    if command != CHAT and args.full:
+        return "--full is an option of ish remote chat."
     return ""
 
 
@@ -393,6 +406,21 @@ def logout(settings: Settings) -> int:
     return 0
 
 
+def chat(settings: Settings, *, full: bool = False) -> int:
+    """Chat about the tree of the server, until the person ends it.
+
+    The server returns chunks, and the model of this machine writes each
+    reply. The history of the chat stays on this machine.
+    """
+    from ish.interfaces.cli import chat as loop
+
+    try:
+        remote = RemoteIsh(settings)
+    except Exception as exc:
+        return _failed(exc)
+    return loop.converse(remote, brief=not full, report=report_step)
+
+
 def _moment(seconds: float) -> str:
     """Return the moment *seconds* after the epoch, in UTC, to the minute."""
     import datetime
@@ -451,6 +479,8 @@ def main(argv: list[str] | None = None) -> int:
         return login(settings, args.method, args.user)
     if args.command == LOGOUT:
         return logout(settings)
+    if args.command == CHAT:
+        return chat(settings, full=args.full)
     if args.command == ASK:
         return ask(settings, args.words[0], brief=args.brief, **narrowing)
     return search(settings, args.words[0], **narrowing)

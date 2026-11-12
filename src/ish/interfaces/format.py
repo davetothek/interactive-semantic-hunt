@@ -218,6 +218,38 @@ def format_brief(answer: Answer) -> str:
     return _fill(text)
 
 
+def format_chat(
+    answer: Answer,
+    question: str,
+    link: Callable[[Chunk], str],
+    *,
+    brief: bool,
+    kind_of: Callable[[Chunk], str] | None = None,
+) -> str:
+    """Return one reply of a chat.
+
+    A brief reply is the short answer with its ``[n]`` markers, and one
+    line for each source it cites, so a short reply stays checkable. A
+    full reply is the answer as ``format_answer`` writes it. A question
+    the sources do not cover says so in one line.
+    """
+    if not answer.covered:
+        return NOT_COVERED_TEXT.split(".")[0] + "."
+    if not brief:
+        return format_answer(answer, question, link, kind_of=kind_of)
+    summary = next((b for b in answer.blocks if b.kind == "summary"), None)
+    parts = summary.parts if summary else answer.parts
+    text, cited = number_citations(Answer(parts=tuple(parts), covered=True, sources=()))
+    lines = [_fill(text)]
+    if cited:
+        lines.append("")
+        lines.extend(
+            f"[{n}] {display_path(c.path)}:{c.start_line}-{c.end_line}"
+            for n, c in enumerate(cited, 1)
+        )
+    return "\n".join(lines)
+
+
 # The stages of an answer as a reader names them, in the order they run.
 _STAGES = (
     ("searching", "search"),
