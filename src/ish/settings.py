@@ -42,15 +42,21 @@ CONFIG_ENV_VAR = ENV_PREFIX + CONFIG_OPTION.upper()
 """The environment variable that names a config file."""
 
 MCP_TOKEN_ENV_VAR = ENV_PREFIX + "MCP_TOKEN"
-# The password of the LDAP service account, or a file that holds it, as
-# Docker keeps a secret. Neither is an option, so no config file holds it.
-LDAP_PASSWORD_ENV_VAR = ENV_PREFIX + "LDAP_BIND_PASSWORD"
-LDAP_PASSWORD_FILE_ENV_VAR = LDAP_PASSWORD_ENV_VAR + "_FILE"
 """The environment variable that holds the bearer token of MCP over HTTP.
 
 It is a secret, not an option. A secret must not sit in a config file
 or show as a flag, so the name stays out of the option set.
 """
+
+LDAP_PASSWORD_ENV_VAR = ENV_PREFIX + "LDAP_BIND_PASSWORD"
+"""The environment variable that holds the password of the LDAP service account.
+
+It is a secret, not an option, as ``ISH_MCP_TOKEN`` is.
+"""
+
+LDAP_PASSWORD_FILE_ENV_VAR = LDAP_PASSWORD_ENV_VAR + "_FILE"
+"""The environment variable that names a file with that password, as Docker
+mounts a secret."""
 
 REMOTE_ENV_VAR = ENV_PREFIX + "REMOTE"
 """The environment variable that names the server of ``ish remote``.

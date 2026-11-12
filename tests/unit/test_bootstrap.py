@@ -1740,7 +1740,20 @@ class TestThePasswordOfTheServiceAccount:
     def test_no_variable_gives_none(self) -> None:
         assert bootstrap._ldap_password() == ""
 
-    def test_a_server_with_no_ldap_reads_no_file(self, tmp_path, monkeypatch) -> None:
+    def test_a_server_with_no_service_account_reads_no_file(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from tests.unit.adapters.authenticator import fake_ldap
+
+        fake_ldap.install(monkeypatch, fake_ldap.Directory())
         monkeypatch.setenv("ISH_MCP_TOKEN", "test-token-EXAMPLE")
         monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD_FILE", str(tmp_path / "absent"))
         assert bootstrap.build_access(Settings()).methods() == []
+        settings = replace(
+            Settings(),
+            auth=("ldap",),
+            ldap_url="ldaps://ldap.example.invalid",
+            ldap_user_dn="uid={user},dc=example,dc=invalid",
+        )
+        # A direct bind needs no account, so a bad path stops nothing.
+        assert bootstrap.build_access(settings).methods() == ["ldap"]

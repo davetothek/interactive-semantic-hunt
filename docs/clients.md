@@ -260,6 +260,8 @@ docker run \
   ...
 ```
 
+#### What the server refuses
+
 A config file in the tree that the server serves cannot set `auth`,
 `login_days`, or an `ldap_*` option, because a person who can commit to
 the tree would choose the directory that gets each password. Set them in
@@ -313,8 +315,8 @@ certificate when the token crosses a network you do not trust.
 
 ### Give an agent the tree of a server
 
-`ish remote mcp` serves `search_code` and `ask` on stdio for the tree of a
-server. The server searches and returns chunks, and the language model of
+`ish remote mcp` serves the tools that read a server, on stdio. With
+`search_code` and `ask`, the server searches and returns chunks, and the language model of
 this machine writes each answer, with the login of this machine. `--url`,
 `ISH_REMOTE`, or `remote` in your user config file names the server, as for the
 other commands of `ish remote`:

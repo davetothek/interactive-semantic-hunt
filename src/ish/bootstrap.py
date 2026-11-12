@@ -349,7 +349,8 @@ def build_access(settings: Settings) -> "Access":
         "ldap_url": settings.ldap_url,
         "ldap_user_dn": settings.ldap_user_dn,
         "ldap_bind_dn": settings.ldap_bind_dn,
-        "ldap_bind_password": _ldap_password() if "ldap" in settings.auth else "",
+        # Only a server with a service account reads its password.
+        "ldap_bind_password": _ldap_password() if settings.ldap_bind_dn else "",
         "ldap_base": settings.ldap_base,
         "ldap_user_filter": settings.ldap_user_filter,
         "ldap_group": settings.ldap_group,

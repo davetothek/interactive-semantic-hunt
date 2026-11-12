@@ -267,8 +267,8 @@ that tree is behind the same token, the [Neovim link
 opener](clients.md#use-from-neovim) sends `ISH_MCP_TOKEN` with each fetch.
 Set `ISH_REMOTE` rather than `--url` so the opener knows the server.
 
-For an agent or an editor, `ish remote mcp` serves the same two tools
-on stdio. See [Give an agent the tree of a
+For an agent or an editor, `ish remote mcp` serves the same search and
+answer on stdio, with the other tools that read the server. See [Give an agent the tree of a
 server](clients.md#give-an-agent-the-tree-of-a-server).
 
 Every line without the word `remote` reads the tree on this machine, with

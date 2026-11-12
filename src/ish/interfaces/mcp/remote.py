@@ -1,10 +1,12 @@
-"""Serve ``search_code`` and ``ask`` on stdio for the tree of a server.
+"""Serve the tools that read a server, on stdio, for the tree of a server.
 
-``ish remote mcp`` starts this. The two tools behave as ``ish remote
-search`` and ``ish remote ask`` do: the server searches its own tree and
-returns chunks, and the language model of this machine writes the
-answer. An agent or an editor gets the tools of a server with the model
-login of the user. Only ``ish remote mcp`` imports this module.
+``ish remote mcp`` starts this. ``search_code`` and ``ask`` behave as
+``ish remote search`` and ``ish remote ask`` do: the server searches its
+own tree and returns chunks, and the language model of this machine
+writes the answer. ``list_chunks``, ``index_status``, and
+``complete_filter`` pass the call to the server. An agent or an editor
+gets the tools of a server with the model login of the user. Only ``ish
+remote mcp`` imports this module.
 """
 
 import json
