@@ -112,6 +112,12 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - `--remote URL` on a line with no command. It prints one warning that
   names `ish remote`. Use `ish remote` with `--url URL`.
 
+### Fixed
+
+- Quitting the picker while a search ran could fail on the way out with
+  an error that no node matches `OptionList`. A search that ends after
+  the picker closed now fills nothing.
+
 ### Removed
 
 - The `ask` tool of `ish mcp --http`. A server over HTTP answers no

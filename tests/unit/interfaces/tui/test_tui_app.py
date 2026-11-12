@@ -1586,3 +1586,26 @@ class TestWarmUp:
 
         run(body())
         assert order == ["index", "warm"]
+
+
+class TestASearchThatEndsAsThePickerQuits:
+    """A search that ends after the picker closed fills nothing and raises nothing.
+
+    The search runs on a worker. When the picker quit as one ended, the
+    worker looked up a result list that was gone and failed on the way
+    out, which failed one test in about five full runs.
+    """
+
+    def test_filling_the_results_after_the_close_does_nothing(self) -> None:
+        from ish.domain.match import Match
+
+        app = IshApp(FakeSession(), Path("."))
+
+        async def body():
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+
+        run(body())
+        before = list(app._current_results)
+        app._populate_results([Match(chunk("late"), 0.5)], show_scores=True)
+        assert app._current_results == before
