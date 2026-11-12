@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from ish.interfaces.cli.args import ASK, COMMANDS, PICK, SEARCH, CliArgs, build_parser
+from ish.interfaces.cli.args import (
+    ASK,
+    COMMANDS,
+    INDEX,
+    PICK,
+    SEARCH,
+    CliArgs,
+    build_parser,
+)
 from ish.settings import option_names
 
 
@@ -132,7 +140,7 @@ class TestEveryCommand:
 
     @pytest.mark.parametrize("command", COMMANDS)
     def test_an_option_reaches_the_settings(self, command: str) -> None:
-        words = [command] if command == PICK else [command, "query"]
+        words = [command] if command in (PICK, INDEX) else [command, "query"]
         assert CliArgs.from_args([*words, "--limit", "17"]).settings.limit == 17
 
     @pytest.mark.parametrize("command", COMMANDS)
@@ -152,3 +160,17 @@ class TestEveryCommand:
         args = CliArgs.from_args(["search", str(gone), "--forget"])
         assert args.path == gone
         assert args.query == ""
+
+
+class TestIndexCommand:
+    def test_it_takes_the_path_alone(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        args = CliArgs.from_args(["index"])
+        assert (args.command, args.query, args.path) == (INDEX, "", tmp_path.resolve())
+        (tmp_path / "src").mkdir()
+        assert CliArgs.from_args(["index", "src"]).path == (tmp_path / "src").resolve()
+
+    def test_a_query_is_refused(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(SystemExit):
+            CliArgs.from_args(["index", "query", "src"])

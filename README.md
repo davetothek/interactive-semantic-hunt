@@ -76,8 +76,9 @@ ish ask "how does the release branch get its version" docs/
 
 See [answer questions](https://davetothek.github.io/interactive-semantic-hunt/configuration/#answer-questions).
 
-The first search of a tree builds its index. Later searches parse only the
-files that changed and embed only text they have not seen.
+The first search of a tree builds its index, and `ish index PATH` builds it
+with no search. Later searches parse only the files that changed and embed
+only text they have not seen.
 
 ### Narrow a search
 

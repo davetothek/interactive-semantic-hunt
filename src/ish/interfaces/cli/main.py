@@ -13,7 +13,7 @@ import sys
 from ish import bootstrap
 from ish.application.answer import FOLLOWING, AnswerStep
 from ish.interfaces.busy import ProgressLine, Ticker
-from ish.interfaces.cli.args import CliArgs
+from ish.interfaces.cli.args import INDEX, CliArgs
 from ish.interfaces.format import (
     answer_usage,
     format_answer,
@@ -197,6 +197,30 @@ def _run_tui(args: CliArgs) -> int:
     return 0
 
 
+def _run_index(args: CliArgs) -> int:
+    """Build or refresh the index of the path, and say how many chunks it holds.
+
+    Name ``ish-serve`` when it keeps the tree. It does the work then, and
+    the count is what it has stored so far.
+    """
+    line = ProgressLine()
+    with Ish(args.path, settings=args.settings) as ish:
+        ish.index(on_progress=line.show)
+        line.clear()
+        held = ish.held()
+        kept = ish.kept_by()
+    if kept is not None:
+        doing = f", {kept.refreshing}" if kept.refreshing else ""
+        print(
+            f"ish-serve {kept.pid} keeps {kept.tree} current{doing}. "
+            f"The index holds {held} chunks.",
+            file=sys.stderr,
+        )
+        return 0
+    print(f"The index of {args.path} holds {held} chunks.", file=sys.stderr)
+    return 0
+
+
 def _run_scan(args: CliArgs) -> int:
     """Scan the path and list every chunk in the plain output format."""
     for chunk in Ish(args.path, settings=args.settings).scan():
@@ -309,6 +333,8 @@ def main(argv: list[str] | None = None) -> int:
                 overrides=args.overrides,
             )
             line.clear()
+        if args.command == INDEX:
+            return _run_index(args)
         if args.ask:
             return _run_ask(args)
         if args.query:

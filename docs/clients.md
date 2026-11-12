@@ -121,8 +121,8 @@ starts none. With no index and no server, or with `local` and no index,
 the client asks once before it builds one, because a large tree takes
 hours to embed. It keeps the answer for each tree until the editor starts
 again. To build an index after a "Not now", run
-`require('utils.ish').index()` in Neovim, or `ish: Refresh the index` in
-VS Code. A save refreshes only a tree that is searched here.
+`require('utils.ish').index()` in Neovim, `ish: Refresh the index` in
+VS Code, or `ish index` in a shell. A save refreshes only a tree that is searched here.
 
 ## Use from VS Code
 

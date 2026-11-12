@@ -194,3 +194,62 @@ class TestPick:
     ) -> None:
         assert main(["pick", "watchdog", *FLAGS]) == 1
         assert "Path does not exist" in caplog.text
+
+
+class TestIndex:
+    """`ish index` builds or refreshes the index of a tree, and says how big."""
+
+    def test_it_builds_the_index_and_names_its_size(
+        self, project: Path, capsys
+    ) -> None:
+        cache = project / "idx"
+        assert main(["index", str(project), "--cache-dir", str(cache)]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.splitlines()[-1] == (
+            f"The index of {project.resolve()} holds 2 chunks."
+        )
+        assert list(cache.glob("*.db"))
+
+    def test_a_second_run_finds_the_same_index(self, project: Path, capsys) -> None:
+        cache = project / "idx"
+        main(["index", "--cache-dir", str(cache)])
+        capsys.readouterr()
+        assert main(["index", "--cache-dir", str(cache)]) == 0
+        assert capsys.readouterr().err.splitlines()[-1].endswith("holds 2 chunks.")
+
+    def test_a_tree_ish_serve_keeps_is_named(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        from ish.interfaces import heartbeat
+        from ish.interfaces.python.api import Ish
+
+        kept = MagicMock(spec=heartbeat.Status)
+        kept.pid, kept.tree, kept.refreshing = 4242, project, "Embedding 3 of 9"
+        monkeypatch.setattr(Ish, "kept_by", lambda self: kept)
+        assert main(["index", "--cache-dir", str(project / "idx")]) == 0
+        assert capsys.readouterr().err.splitlines()[-1] == (
+            # ish-serve does the work, so this run built nothing of its own.
+            f"ish-serve 4242 keeps {project} current, Embedding 3 of 9. "
+            "The index holds 0 chunks."
+        )
+
+    def test_a_tree_ish_serve_keeps_with_nothing_to_do(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        from ish.interfaces import heartbeat
+        from ish.interfaces.python.api import Ish
+
+        kept = MagicMock(spec=heartbeat.Status)
+        kept.pid, kept.tree, kept.refreshing = 4242, project, ""
+        monkeypatch.setattr(Ish, "kept_by", lambda self: kept)
+        assert main(["index", "--cache-dir", str(project / "idx")]) == 0
+        assert capsys.readouterr().err.splitlines()[-1] == (
+            f"ish-serve 4242 keeps {project} current. The index holds 0 chunks."
+        )
+
+    def test_a_search_for_the_word_index_says_search(
+        self, project: Path, capsys
+    ) -> None:
+        assert main(["search", "index", "--cache-dir", str(project / "idx")]) == 0
+        assert "ish-serve" not in capsys.readouterr().err

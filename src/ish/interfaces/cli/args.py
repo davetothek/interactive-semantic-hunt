@@ -21,13 +21,15 @@ from ish.settings import CONFIG_OPTION, SECTIONS, Settings, load_settings
 SEARCH = "search"
 ASK = "ask"
 PICK = "pick"
-COMMANDS = (SEARCH, ASK, PICK)
+INDEX = "index"
+COMMANDS = (SEARCH, ASK, PICK, INDEX)
 
 _USAGE = {
     "": "%(prog)s [options] [query] [path]\n       %(prog)s command ...",
     SEARCH: "%(prog)s [options] query [path]",
     ASK: "%(prog)s [options] question [path]",
     PICK: "%(prog)s [options] [path]",
+    INDEX: "%(prog)s [options] [path]",
 }
 
 _DESCRIPTION = {
@@ -38,6 +40,7 @@ _DESCRIPTION = {
         "  search QUERY [PATH]   Search, also for a query that names a command.\n"
         "  ask QUESTION [PATH]   Answer a question, with the sources it cites.\n"
         "  pick [PATH]           Open the interactive picker.\n"
+        "  index [PATH]          Build or refresh the index of a tree.\n"
         "  remote COMMAND ...    Search, or ask, the tree of a server.\n"
         "  mcp                   Serve the tools over MCP. Also: ish-mcp\n"
         "  serve [TREE]          Keep the indexes of a tree current. Also: ish-serve\n"
@@ -54,6 +57,10 @@ _DESCRIPTION = {
         "sources it cites."
     ),
     PICK: "Open the interactive picker, and print the chunk it selects.",
+    INDEX: (
+        "Build the index of a tree, or bring it up to date, and say how many\n"
+        "chunks it holds. A search does this as well, before it answers."
+    ),
 }
 
 _EPILOG = (
