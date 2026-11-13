@@ -812,3 +812,50 @@ class TestTheTitleNamesTheType:
             "doc: /docs/spec.adoc:1-10 spec",
             "code: /docs/main.adoc:1-10 main",
         ]
+
+
+class TestCost:
+    """An answer adds up what the rerank and each turn of the model cost."""
+
+    def test_the_rerank_and_the_answer_add_up(self) -> None:
+        from dataclasses import replace
+
+        from ish.application.ports.language_model import Selection
+
+        class PricedReranker(FakeReranker):
+            def select(self, question, candidates, limit):
+                return Selection(ids=("1",), cost_usd=0.002)
+
+        model = FakeModel()
+        model.reply = replace(model.reply, cost_usd=0.01)
+        result = AnswerQuestion(
+            search=searching(make_chunk("a")),
+            model=model,
+            reranker=PricedReranker(()),
+        ).answer("q")
+        assert result.cost_usd == pytest.approx(0.012)
+
+    def test_each_turn_adds_its_cost(self) -> None:
+        from dataclasses import replace
+
+        class PricedAgent(FakeAgent):
+            def step(self, question, sources, searched, turns_left):
+                return replace(
+                    super().step(question, sources, searched, turns_left),
+                    cost_usd=0.01,
+                )
+
+        result = AnswerQuestion(
+            search=routed(make_chunk("x")), model=PricedAgent(("more",)), turns=2
+        ).answer("q")
+        assert result.turns == 2
+        assert result.cost_usd == pytest.approx(0.02)
+
+    def test_a_rerank_that_finds_nothing_readable_costs_nothing(self) -> None:
+        result = AnswerQuestion(
+            search=searching(make_chunk("a")),
+            model=FakeModel(),
+            reranker=FakeReranker(("1",)),
+            read=lambda c: None,
+        ).answer("q")
+        assert result.cost_usd == 0.0

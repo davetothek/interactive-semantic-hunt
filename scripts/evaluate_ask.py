@@ -21,6 +21,10 @@ Paths are relative to TREE. A citation hits when it names an expected
 file and its lines overlap the expected range. The question set is kept
 outside the repository when it names a private tree.
 
+The reported cost is what the backend says each answer cost, rerank
+included. claude-cli reports what a call would cost at the prices of the
+API, also when a subscription pays for it.
+
 The language model options are allowed for this run only, so the script
 needs no change to a configuration file. The cost counts the tokens of
 the rerank model as well, at the same prices, since it runs on the same
@@ -71,6 +75,7 @@ class Scored:
     turns: int = 0
     searches: list[str] = field(default_factory=list)
     error: str = ""
+    cost_usd: float = 0.0
 
 
 def load(path: Path) -> list[dict]:
@@ -144,6 +149,7 @@ def score(item: dict, ish: Ish | RemoteIsh, tree: Path | None) -> Scored:
     result.rerank_input_tokens = answer.rerank_input_tokens
     result.rerank_output_tokens = answer.rerank_output_tokens
     result.turns = answer.turns
+    result.cost_usd = answer.cost_usd
     result.searches = list(answer.searches)
     result.cited = sorted(
         {
@@ -199,6 +205,16 @@ def summary(rows: list[Scored], price_in: float, price_out: float) -> dict[str, 
         if answered
         else 0,
         "cost per answer (USD)": round(statistics.mean(cost), 4) if cost else 0,
+        "reported cost per answer (USD), mean": round(
+            statistics.mean(r.cost_usd for r in answered), 4
+        )
+        if answered
+        else 0,
+        "reported cost per answer (USD), median": round(
+            statistics.median(r.cost_usd for r in answered), 4
+        )
+        if answered
+        else 0,
     }
 
 

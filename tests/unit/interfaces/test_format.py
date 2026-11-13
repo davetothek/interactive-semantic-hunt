@@ -551,6 +551,12 @@ class TestFormatUsage:
             ]
         )
 
+    def test_the_total_names_the_cost_claude_reports(self) -> None:
+        from ish.interfaces.format import format_usage
+
+        lines = format_usage({**USAGE, "cost_usd": 0.01234}).splitlines()
+        assert lines[-1].split() == ["total", "34.6", "s", "about", "$0.0123"]
+
     def test_a_stage_with_a_model_and_no_time_shows_its_tokens(self) -> None:
         from ish.interfaces.format import format_usage
 

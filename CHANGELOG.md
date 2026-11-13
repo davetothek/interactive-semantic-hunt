@@ -10,6 +10,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The timing table of an answer ends with what the answer cost, when the
+  backend says so. claude-cli says what each call would cost at the
+  prices of the API, also when a subscription pays for it. The `ask`
+  tool sends it as `cost_usd`.
 - Commands. `ish search QUERY [PATH]` searches, `ish ask QUESTION [PATH]`
   answers a question, and `ish pick [PATH]` opens the picker. `ish ask`
   takes `--brief`. Each command takes every option, and `--help`.

@@ -169,6 +169,8 @@ class Answer:
         terms: The acronyms the answer uses, each with what it stands for
             and the sources that write it, sorted by term. A meaning that
             no source writes is not kept, so none is invented.
+        cost_usd: What the backends say the rerank and every turn of the
+            answer cost, in US dollars, or 0 when they do not say.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -187,6 +189,7 @@ class Answer:
     timings: tuple[tuple[str, float], ...] = ()
     seconds: float = 0.0
     terms: tuple[AnswerTerm, ...] = ()
+    cost_usd: float = 0.0
 
 
 class AnswerQuestion:
@@ -254,6 +257,7 @@ class AnswerQuestion:
         self._texts: dict[Chunk, str | None] = {}
         self._first: dict[str, Chunk] = {}
         self._copies: dict[Chunk, list[Chunk]] = {}
+        self._rerank_cost = 0.0
 
     def _timed(self, stage: str, call: Callable[..., object], *args: object):
         """Run *call* with *args*, and add the seconds it took to *stage*."""
@@ -271,6 +275,7 @@ class AnswerQuestion:
         """
         self._spent = {}
         self._texts, self._first, self._copies = {}, {}, {}
+        self._rerank_cost = 0.0
         start = self._clock()
         answer = self._answer(question)
         return _with_time(answer, tuple(self._spent.items()), self._clock() - start)
@@ -304,6 +309,7 @@ class AnswerQuestion:
                 rerank_input_tokens=rerank_in,
                 rerank_output_tokens=rerank_out,
                 rerank_model=rerank_model,
+                cost_usd=self._rerank_cost,
             )
 
         if self._turns > 0:
@@ -344,6 +350,7 @@ class AnswerQuestion:
             rerank_model=rerank_model,
             searches=tuple(searched),
             turns=turns,
+            cost_usd=reply.cost_usd + self._rerank_cost,
         )
 
     def _named(
@@ -419,6 +426,7 @@ class AnswerQuestion:
         """
         searched: list[str] = []
         read_in = wrote = turns = 0
+        cost = 0.0
         for turns_left in range(self._turns, -1, -1):
             sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
             self._on_step(
@@ -435,6 +443,7 @@ class AnswerQuestion:
             turns += 1
             read_in += reply.input_tokens
             wrote += reply.output_tokens
+            cost += reply.cost_usd
             if not reply.searches or turns_left == 0:
                 break
             seen = {chunk for chunk, _ in texts}
@@ -460,6 +469,7 @@ class AnswerQuestion:
             covered=reply.covered and not (reply.searches and not reply.passages),
             input_tokens=read_in,
             output_tokens=wrote,
+            cost_usd=cost,
             blocks=reply.blocks,
             terms=reply.terms,
         )
@@ -492,6 +502,7 @@ class AnswerQuestion:
             CHOOSING, self._reranker.select, question, previews, self._pick
         )
         chosen = [by_id[i] for i in selection.ids if i in by_id]
+        self._rerank_cost = selection.cost_usd
         log.info(
             "%s chose %d of %d chunks, reading %d tokens",
             self._reranker.model_name,

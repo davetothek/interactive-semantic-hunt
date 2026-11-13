@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import Prompts
@@ -132,17 +133,18 @@ class ClaudeCliLanguageModel:
 
     def answer(self, question: str, sources: Sequence[Source]) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes."""
-        structured, read, wrote = self._run(
+        structured, read, wrote, cost = self._run(
             self._prompts.answer,
             _grounded.SCHEMA,
             _grounded.prompt(question, sources),
         )
-        return _grounded.parse(
+        reply = _grounded.parse(
             json.dumps(structured),
             f"claude {self.model_name}",
             input_tokens=read,
             output_tokens=wrote,
         )
+        return replace(reply, cost_usd=cost)
 
     def step(
         self,
@@ -152,36 +154,42 @@ class ClaudeCliLanguageModel:
         turns_left: int,
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
-        structured, read, wrote = self._run(
+        structured, read, wrote, cost = self._run(
             self._prompts.step,
             _grounded.STEP_SCHEMA,
             _grounded.step_prompt(question, sources, searched, turns_left),
         )
-        return _grounded.parse_step(
+        reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
         )
+        return replace(reply, cost_usd=cost)
 
     def select(
         self, question: str, candidates: Sequence[Source], limit: int
     ) -> Selection:
         """Choose at most *limit* candidates, in the JSON the schema fixes."""
-        structured, read, wrote = self._run(
+        structured, read, wrote, cost = self._run(
             self._prompts.select,
             _grounded.SELECT_SCHEMA,
             _grounded.select_prompt(question, candidates, limit),
         )
-        return _grounded.parse_ids(
+        selection = _grounded.parse_ids(
             json.dumps(structured),
             f"claude {self.model_name}",
             limit,
             input_tokens=read,
             output_tokens=wrote,
         )
+        return replace(selection, cost_usd=cost)
 
     def _run(
         self, system: str, schema: dict[str, object], prompt: str
-    ) -> tuple[object, int, int]:
-        """Run one call, and return its structured output and token counts."""
+    ) -> tuple[object, int, int, float]:
+        """Run one call, and return its structured output, tokens, and cost.
+
+        The cost is what claude says the call would cost at the prices of
+        the API, also when a subscription pays for it.
+        """
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
             try:
                 done = subprocess.run(
@@ -216,4 +224,6 @@ class ClaudeCliLanguageModel:
                 "cache_read_input_tokens",
             )
         )
-        return body["structured_output"], read, int(usage.get("output_tokens") or 0)
+        wrote = int(usage.get("output_tokens") or 0)
+        cost = float(body.get("total_cost_usd") or 0.0)
+        return body["structured_output"], read, wrote, cost

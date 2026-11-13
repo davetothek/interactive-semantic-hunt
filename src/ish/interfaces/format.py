@@ -312,6 +312,7 @@ def answer_usage(answer: Answer) -> dict[str, object]:
         "searches": list(answer.searches),
         "timings": {stage: round(seconds, 3) for stage, seconds in answer.timings},
         "seconds": round(answer.seconds, 3),
+        "cost_usd": round(answer.cost_usd, 6),
     }
 
 
@@ -332,8 +333,11 @@ def format_usage(usage: Mapping[str, object], versions: str = "") -> str:
             spent = f"{_seconds(timings[stage]):.1f} s" if stage in timings else ""
             rows.append([label, spent, model, read, wrote])
     seconds = usage.get("seconds")
+    cost = usage.get("cost_usd")
+    # What claude says the answer would cost at the prices of the API.
+    priced = f"about ${cost:.4f}" if isinstance(cost, (int, float)) and cost else ""
     if isinstance(seconds, (int, float)):
-        rows.append(["total", f"{_seconds(seconds):.1f} s", "", "", ""])
+        rows.append(["total", f"{_seconds(seconds):.1f} s", priced, "", ""])
     tokens = any(row[3] or row[4] for row in rows)
     header = ["stage", "time", "model" if any(r[2] for r in rows) else "", "", ""]
     if tokens:

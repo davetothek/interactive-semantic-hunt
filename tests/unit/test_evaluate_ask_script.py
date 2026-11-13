@@ -183,6 +183,22 @@ class TestScore:
         assert numbers["cost per answer (USD)"] == round((0.003 + 0.009 + 0) / 3, 4)
         assert "| q4 | not covered |" in ev.table(rows, numbers)
 
+    def test_the_summary_names_the_cost_the_backend_reported(self) -> None:
+        rows = [
+            ev.Scored("q1", True, covered=True, cost_usd=0.01),
+            ev.Scored("q2", True, covered=True, cost_usd=0.03),
+            ev.Scored("q3", True, covered=True, cost_usd=0.05),
+            ev.Scored("q4", True, error="down"),
+        ]
+        numbers = ev.summary(rows, 0, 0)
+        assert numbers["reported cost per answer (USD), mean"] == 0.03
+        assert numbers["reported cost per answer (USD), median"] == 0.03
+
+    def test_a_score_keeps_the_cost_of_the_answer(self) -> None:
+        answer = Answer(parts=(), covered=False, sources=(), cost_usd=0.02)
+        row = ev.score(self.uncovered, FakeIsh(answer), TREE)
+        assert row.cost_usd == 0.02
+
     def test_an_empty_summary(self) -> None:
         numbers = ev.summary([], 0, 0)
         assert numbers["citation hit rate"] == "-"

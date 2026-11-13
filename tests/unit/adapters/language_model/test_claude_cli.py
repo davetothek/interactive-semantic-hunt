@@ -213,3 +213,28 @@ class TestStep:
         )
         assert call["input"] == _grounded.step_prompt("q", SOURCES, [], 2)
         assert reply.searches == ("where is it handled",)
+
+
+class TestCost:
+    """claude says what each call would cost at the prices of the API."""
+
+    def test_each_kind_of_call_keeps_the_cost(self, runner) -> None:
+        body = json.loads(runner.stdout)
+        runner.stdout = json.dumps({**body, "total_cost_usd": 0.0123})
+        model = ClaudeCliLanguageModel("sonnet", timeout=5)
+        assert model.answer("q", SOURCES).cost_usd == 0.0123
+        assert model.step("q", SOURCES, [], 0).cost_usd == 0.0123
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"ids": ["1"]},
+                "total_cost_usd": 0.002,
+            }
+        )
+        assert model.select("q", SOURCES, 1).cost_usd == 0.002
+
+    def test_a_reply_with_no_cost_costs_nothing_known(self, runner) -> None:
+        assert (
+            ClaudeCliLanguageModel("sonnet", timeout=5).answer("q", SOURCES).cost_usd
+            == 0.0
+        )

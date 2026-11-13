@@ -110,6 +110,8 @@ class Reply:
             reader of the flat text misses no claim and no citation.
         terms: The acronyms the answer uses, as the model expanded them.
             The use case keeps only a meaning that a source writes.
+        cost_usd: What the backend says the call cost, in US dollars, or 0
+            when it does not say.
     """
 
     passages: tuple[Passage, ...]
@@ -119,6 +121,7 @@ class Reply:
     searches: tuple[str, ...] = ()
     blocks: tuple[Block, ...] = ()
     terms: tuple[Term, ...] = ()
+    cost_usd: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,11 +132,14 @@ class Selection:
         ids: Keys of the chosen sources, best first.
         input_tokens: Tokens the model read.
         output_tokens: Tokens the model wrote.
+        cost_usd: What the backend says the call cost, in US dollars, or 0
+            when it does not say.
     """
 
     ids: tuple[str, ...]
     input_tokens: int = 0
     output_tokens: int = 0
+    cost_usd: float = 0.0
 
 
 @runtime_checkable
