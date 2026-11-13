@@ -454,6 +454,26 @@ class Settings:
             metavar="DIR",
         ),
     )
+    answer_notes: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Text the answering model reads after its instructions, such as "
+            "the language to answer in or what the names of a tree mean. It "
+            "adds to the instructions and replaces none.",
+            metavar="TEXT",
+        ),
+    )
+    rerank_notes: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Text the rerank model reads after its instructions, such as "
+            "which directories hold the specifications. It adds to the "
+            "instructions and replaces none.",
+            metavar="TEXT",
+        ),
+    )
     allowed_language_models: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
@@ -698,8 +718,12 @@ def _file_options(path: Path) -> Mapping[str, Any]:
 # Options that a file in a tree may not set. A tree that names the
 # server of `ish remote` chooses where the token of the user goes. A tree
 # that sets how a server signs users in chooses the directory that gets
-# each password, and how long a login lasts.
+# each password, and how long a login lasts. A tree that sets what a
+# model is told can tell it to answer from outside the sources.
 NOT_FROM_A_TREE = (
+    "prompt_dir",
+    "answer_notes",
+    "rerank_notes",
     "remote",
     "auth",
     "login_days",

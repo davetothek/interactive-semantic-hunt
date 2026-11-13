@@ -69,6 +69,8 @@ OPTIONS = (
     "rerank_candidates",
     "ask_turns",
     "prompt_dir",
+    "answer_notes",
+    "rerank_notes",
     "allowed_language_models",
 )
 

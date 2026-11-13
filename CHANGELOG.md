@@ -10,6 +10,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `answer_notes` and `rerank_notes`: text the answering model and the
+  rerank model read after their instructions. A note adds to the
+  instructions and replaces none of them.
 - The timing table of an answer ends with what the answer cost, when the
   backend says so. claude-cli says what each call would cost at the
   prices of the API, also when a subscription pays for it. The `ask`
@@ -116,6 +119,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A config file in a tree cannot set `prompt_dir`, `answer_notes`, or
+  `rerank_notes`. A tree you cloned would otherwise choose what the model
+  is told. Set them in the user config file.
 - An answer with a rerank model chooses from the best docs, tests, and
   code of the tree, a fifth of the candidates each, beside the best
   overall. A question in prose otherwise found no code at all. A text

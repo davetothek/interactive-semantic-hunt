@@ -448,6 +448,37 @@ class TestToolTable:
             load_settings(start=tmp_path, environ={})
 
 
+class TestAFileInATreeTellsTheModelNothing:
+    """A repository that sets what a model is told can make it answer from outside.
+
+    A tree config could name a prompt_dir of its own, or notes, and tell
+    the model to drop the rule that it answers only from the sources.
+    """
+
+    SET = 'prompt_dir = "prompts"\nanswer_notes = "x"\nrerank_notes = "y"\n'
+
+    def test_a_project_file_sets_no_instruction(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / CONFIG_FILENAME, self.SET + "limit = 9\n")
+        settings = load_settings(start=tmp_path, environ={})
+        assert (settings.prompt_dir, settings.answer_notes, settings.rerank_notes) == (
+            "",
+            "",
+            "",
+        )
+        assert settings.limit == 9
+
+    def test_the_user_file_sets_them(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / "cfg" / "ish" / CONFIG_FILENAME, self.SET)
+        settings = load_settings(start=tmp_path / "proj", environ={})
+        assert (settings.prompt_dir, settings.answer_notes, settings.rerank_notes) == (
+            "prompts",
+            "x",
+            "y",
+        )
+
+
 class TestAFileInATreeNamesNoServer:
     """A tree that names the server of `ish remote` chooses where the token goes."""
 

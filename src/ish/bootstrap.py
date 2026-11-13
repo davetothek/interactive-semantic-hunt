@@ -291,9 +291,13 @@ def _language_model(
 
 
 def build_prompts(settings: Settings) -> Prompts:
-    """Read the instructions, from ``prompt_dir`` where it holds a file."""
+    """Read the instructions, from ``prompt_dir`` where it holds a file, with notes."""
     directory = Path(settings.prompt_dir).expanduser() if settings.prompt_dir else None
-    return load_prompts(directory)
+    return load_prompts(
+        directory,
+        answer_notes=settings.answer_notes,
+        rerank_notes=settings.rerank_notes,
+    )
 
 
 # The file in the data directory where a server keeps the logins it gave.

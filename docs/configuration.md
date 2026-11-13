@@ -3,9 +3,11 @@
 Every command-line option is also a key in the config file, under the same
 name. The one exception is `--config` itself: a file cannot name where to
 find itself. A config file in a tree cannot set `remote`, the server of `ish
-remote`, because a tree you cloned would choose where your token goes. Set
-it in the user config file, `~/.config/ish/config.toml`, or in a file you
-name with `--config`. Put project settings in `.ish/config.toml` at the root
+remote`, because a tree you cloned would choose where your token goes. It
+also cannot set `prompt_dir`, `answer_notes`, or `rerank_notes`, because
+a tree you cloned would choose what the model is told. Set them in the
+user config file, `~/.config/ish/config.toml`, or in a file you name with
+`--config`. Put project settings in `.ish/config.toml` at the root
 of your repository:
 
 ```toml
@@ -260,6 +262,25 @@ the file.
 
 The JSON a reply must follow stays in code, because the parser reads it.
 An instruction can ask for a different layout only within that schema.
+
+To add to the instructions and change none of them, write notes. The
+answering model reads `answer_notes` after its instructions, and the
+rerank model reads `rerank_notes` after its own, each under a heading
+that says the notes change none of the instructions above:
+
+```toml
+answer_notes = """
+Answer in English, also when the question is in Norwegian.
+A name such as REQ-1234 is a requirement id. Cite it as written.
+"""
+rerank_notes = "The specifications are under docs/spec and docs/system."
+```
+
+A note is sent as written, with no `$name` filled in. Prefer notes to
+`prompt_dir`: a replaced file must keep every rule of the shipped one,
+such as the rule to answer only from the sources, and a note cannot drop
+one. Set notes, and `prompt_dir`, in the user config file or in a file
+you name with `--config`. A config file in a tree cannot set them.
 
 To compare two sets of instructions, run the evaluation with each:
 

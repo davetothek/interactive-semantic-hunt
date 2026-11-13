@@ -86,6 +86,39 @@ class TestOverride:
         assert "at most two" in loaded.answer
 
 
+class TestNotes:
+    """Notes add to the instructions and replace none of them."""
+
+    def test_answer_notes_follow_each_instruction_that_answers(self) -> None:
+        shipped, noted = load(), load(answer_notes="  Answer in Norwegian.  ")
+        tail = f"\n\n{prompts.NOTES_HEADING}\n\nAnswer in Norwegian."
+        assert noted.answer == shipped.answer + tail
+        assert noted.answer_cited == shipped.answer_cited + tail
+        assert noted.step.startswith(noted.answer)
+        assert (noted.select, noted.brief) == (shipped.select, shipped.brief)
+
+    def test_rerank_notes_follow_the_rerank_alone(self) -> None:
+        shipped, noted = load(), load(rerank_notes="Prefer docs/spec.")
+        assert noted.select.endswith("\n\nPrefer docs/spec.")
+        assert noted.answer == shipped.answer
+
+    def test_a_note_is_sent_as_written(self) -> None:
+        assert load(answer_notes="It costs $5 and $name.").answer.endswith(
+            "It costs $5 and $name."
+        )
+
+    def test_brief_comes_after_the_notes(self) -> None:
+        noted = load(answer_notes="Note.").briefly()
+        assert noted.answer.index("Note.") < noted.answer.index(load().brief)
+
+    def test_bootstrap_hands_the_notes_on(self) -> None:
+        from ish import bootstrap
+        from ish.settings import Settings
+
+        built = bootstrap.build_prompts(Settings(answer_notes="A.", rerank_notes="R."))
+        assert built == load(answer_notes="A.", rerank_notes="R.")
+
+
 class TestInjection:
     def test_bootstrap_hands_the_backend_the_prompts_of_prompt_dir(
         self, tmp_path: Path, monkeypatch
