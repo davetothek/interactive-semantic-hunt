@@ -70,6 +70,9 @@ def _use_readline() -> None:
     The history of `readline` stays in memory: no file is read or written,
     because a question can quote a specification. A system with no
     `readline` reads lines as before.
+
+    A Python built on libedit, as uv installs it, reads its own syntax
+    for a key binding and ignores the one of GNU readline.
     """
     try:
         import readline
@@ -79,7 +82,20 @@ def _use_readline() -> None:
         lambda text, state: complete(text, state, readline.get_line_buffer())
     )
     readline.set_completer_delims(" \t\n")
-    readline.parse_and_bind("tab: complete")
+    if _is_libedit(readline):
+        readline.parse_and_bind("bind ^I rl_complete")
+    else:
+        readline.parse_and_bind("tab: complete")
+
+
+def _is_libedit(module: Any) -> bool:
+    """Return True when *module* is `readline` built on libedit.
+
+    Python 3.13 names the library in ``backend``. Python 3.12 says it
+    only in the text of the module.
+    """
+    backend = getattr(module, "backend", "")
+    return backend == "editline" or "libedit" in (module.__doc__ or "")
 
 
 class _Loop:

@@ -242,6 +242,34 @@ class TestCompletion:
             ("bind", "tab: complete"),
         ]
 
+    @pytest.mark.parametrize(
+        ("backend", "doc"),
+        [("editline", ""), ("", "Importing this module enables libedit readline.")],
+    )
+    def test_tab_completes_on_a_python_built_on_libedit(
+        self, backend, doc, monkeypatch
+    ) -> None:
+        """A Python that uv installs reads key bindings in the syntax of libedit.
+
+        Bound as GNU readline binds it, Tab did nothing in the chat.
+        """
+        import sys
+        import types
+
+        from ish.interfaces.cli import chat
+
+        bound: list[str] = []
+        fake = types.ModuleType("readline", doc)
+        if backend:
+            fake.backend = backend
+        fake.set_completer = lambda f: None
+        fake.set_completer_delims = lambda d: None
+        fake.parse_and_bind = bound.append
+        fake.get_line_buffer = lambda: ""
+        monkeypatch.setitem(sys.modules, "readline", fake)
+        chat._use_readline()
+        assert bound == ["bind ^I rl_complete"]
+
     def test_no_readline_reads_lines_as_before(self, monkeypatch) -> None:
         import sys
 
