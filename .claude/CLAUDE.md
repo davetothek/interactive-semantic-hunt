@@ -370,6 +370,26 @@ something broke. This is that record, so a rule is never argued from taste.
   15 s to the 87.5 s that parsing the tree at start took. Hence
   `application/glossary.py`, and a meaning only from the results.
 
+- One search ranks every chunk on one scale. For a question about one
+  test mode of a firmware tree of ten indexes, the 50 candidates held 25
+  docs, 25 tests, and no code: the best code chunk scored 0.751 against
+  0.755 for the 50th, while 29 firmware files handle the mode. 15 of
+  the 50 repeated another candidate word for word, and the rerank was
+  told to prefer a rule over a test, so 6 answers of 6 read 10 docs.
+  With a fifth of the candidates kept for each of doc, test, and code,
+  one copy of each text, and the type in each title, the 25 questions
+  scored 21 of 21 cited against 20, 4 of 4 refused both times, and 6
+  questions that need code or tests 6 of 6 against 4. An answer wrote
+  2,223 tokens against 1,587, took 25.2 s against 18.3, median, and
+  cost $0.070 against $0.061, mean, as claude reports it. Hence
+  `application/candidates.py`.
+- Nine follow-ups of a chat, each labeled with a section of the tree:
+  searched alone, the expected section ranked at an MRR of 0.111.
+  Joined to the question before it, 0.226, in two searches. In one
+  search for a query that claude-haiku-5-5 wrote from the history,
+  0.469, with as many in the top 50, for $0.0003 a follow-up. Hence
+  `query.md` and `query_for()`.
+
 ### Embedding
 
 - Task prefixes: measured on this repo with nomic-embed-text over 16 queries,
@@ -379,6 +399,11 @@ something broke. This is that record, so a rule is never argued from taste.
 
 ### Ranking
 
+- Removing filler words, such as "how", "the", and "please", from 27
+  labeled questions moved the expected section lower for 8 and higher
+  for 3: MRR 0.628 against 0.607, 25 against 24 in the top 50. The
+  embedding model reads those words as part of what is asked. So a
+  query keeps its words.
 - The result filter used to run after the top slice. `--type code` returned
   nothing at a limit of 20 and two results at 100, because no code chunk sat
   in the slice.
@@ -461,6 +486,9 @@ Profiled against a real 7,834-chunk index across three federated indexes:
 
 ### Interfaces
 
+- The Python that uv installs builds readline on libedit, which ignores
+  the GNU binding "tab: complete". In a pseudo-terminal, "/mo" and Tab
+  gave the line '/mo\t', and with "bind ^I rl_complete", '/more'.
 - A thread pool held the process open for as long as an index took, because
   it joins its threads at exit. Hence daemon threads the TUI owns.
 - A schema rebuild once left the picker at "Loading index..." with 274
