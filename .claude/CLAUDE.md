@@ -383,12 +383,20 @@ something broke. This is that record, so a rule is never argued from taste.
   2,223 tokens against 1,587, took 25.2 s against 18.3, median, and
   cost $0.070 against $0.061, mean, as claude reports it. Hence
   `application/candidates.py`.
-- Nine follow-ups of a chat, each labeled with a section of the tree:
-  searched alone, the expected section ranked at an MRR of 0.111.
-  Joined to the question before it, 0.226, in two searches. In one
-  search for a query that claude-haiku-5-5 wrote from the history,
-  0.469, with as many in the top 50, for $0.0003 a follow-up. Hence
-  `query.md` and `query_for()`.
+- 17 follow-ups of a chat, each labeled with a section of the tree:
+  searched alone, the expected section was among the 50 candidates for
+  8, joined to the question before it for 13 in two searches, and in
+  one search for a query that claude-haiku-5-5 wrote from the history
+  for 15, MRR 0.073, 0.222, and 0.269, for $0.0003 a follow-up. The
+  written query differs from run to run, and so does its rank: one
+  follow-up ranked 1st in one run and 11th in the next. Run as chats,
+  with brief replies, 13 of the 17 follow-ups cited the expected
+  section and 14 read it, at $0.048 a follow-up. Two of the misses have
+  labels that no query found. Hence `query.md` and `query_for()`.
+- 10 more questions over six topics, whose answers sit in code or tests,
+  scored 10 of 10 with the candidates of each type, after one label
+  that named one function of two that answer was widened. $0.068 and
+  28.2 s an answer.
 
 ### Embedding
 
