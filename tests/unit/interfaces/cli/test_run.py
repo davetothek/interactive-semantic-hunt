@@ -219,3 +219,38 @@ class TestWhatACommandImports:
         assert "ish.interfaces.cli.remote" in loaded
         apart = ("ish.interfaces.mcp", "ish.interfaces.daemon", "ish.interfaces.tui")
         assert not [name for name in loaded if name.startswith(apart)]
+
+
+class TestCtrlCStopsQuietly:
+    """Ctrl-C during a long walk printed a traceback of 30 lines.
+
+    A KeyboardInterrupt is no Exception, so it passed every handler of the
+    search program and reached the interpreter.
+    """
+
+    @pytest.mark.parametrize("line", [["query"], ["remote", "search", "q"]])
+    def test_the_program_stops_with_one_line(self, line, monkeypatch, capsys) -> None:
+        from ish.interfaces.cli import STOPPED, main, remote, run
+
+        def stopped(words):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(main, "main", stopped)
+        monkeypatch.setattr(remote, "main", stopped)
+        assert run(line) == STOPPED == 130
+        assert capsys.readouterr().err == "ish: stopped\n"
+
+    def test_a_terminal_gets_the_busy_line_cleared_first(
+        self, monkeypatch, capsys
+    ) -> None:
+        import sys
+
+        from ish.interfaces.cli import main, run
+
+        def stopped(words):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(main, "main", stopped)
+        monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
+        run(["query"])
+        assert capsys.readouterr().err == "\r\033[2Kish: stopped\n"

@@ -160,6 +160,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Ctrl-C stops `ish` with exit code 130 and the line `ish: stopped`, in
+  place of a traceback.
 - Quitting the picker while a search ran could fail on the way out with
   an error that no node matches `OptionList`. A search that ends after
   the picker closed now fills nothing.
