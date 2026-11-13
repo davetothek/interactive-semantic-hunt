@@ -1199,6 +1199,31 @@ class TestStaleResultsAreNotShown:
 class TestTheme:
     """Verify that the picker draws in the theme the settings name."""
 
+    @pytest.mark.parametrize(
+        "theme", ["ansi-dark", "ansi-light", "textual-dark", "solarized-light"]
+    )
+    def test_the_highlighted_result_stands_out_in_every_theme(self, theme) -> None:
+        """Under ansi-dark the highlighted row was drawn as every other row.
+
+        The query field keeps the focus, and an ANSI theme leaves the
+        highlight of a list without focus in the colors of the list.
+        """
+        from textual.widgets import OptionList
+
+        app = IshApp(FakeSession(), Path("."), theme=theme)
+
+        async def body() -> None:
+            async with app.run_test() as pilot:
+                await _ready(app, pilot)
+                found = app.query_one(OptionList)
+                marked = found.get_component_rich_style(
+                    "option-list--option-highlighted"
+                )
+                assert found.highlighted == 0
+                assert marked.bgcolor != found.rich_style.bgcolor
+
+        run(body())
+
     def test_the_named_theme_is_taken(self) -> None:
         app = IshApp(FakeSession(), Path("."), theme="solarized-light")
 

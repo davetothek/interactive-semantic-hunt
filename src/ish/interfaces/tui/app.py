@@ -91,6 +91,14 @@ class IshApp(App[Match | None]):
         height: 1fr;
         border: solid $accent;
     }
+    /* The query field keeps the focus, so the list is never focused, and
+       an ANSI theme draws the highlight of a list without focus in the
+       colors of every other row. Draw it as the focused cursor. */
+    #results-list > .option-list--option-highlighted {
+        color: $block-cursor-foreground;
+        background: $block-cursor-background;
+        text-style: $block-cursor-text-style;
+    }
     #preview-pane {
         width: 60%;
         height: 1fr;
