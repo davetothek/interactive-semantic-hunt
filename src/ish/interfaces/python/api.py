@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from ish import bootstrap
 from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
+from ish.application.candidates import candidates
 from ish.application.filters import Filters, parse_query
 from ish.application.glossary import Glossary
 from ish.application.ports.language_model import LanguageModel
@@ -327,8 +328,15 @@ class Ish:
         wide = self._reranker is not None
         limit = self.settings.rerank_candidates if wide else ASK_LIMIT
 
+        def narrowed(text: str, kinds: Sequence[str], count: int) -> list[Match]:
+            return self.search(text, count, lang=lang, under=under, type=kinds or type)
+
         def search(text: str) -> list[Match]:
-            return self.search(text, limit, lang=lang, under=under, type=type)
+            # A wide search keeps the best of each type for the rerank. A
+            # type the caller asked for is the whole search.
+            if wide and not type:
+                return candidates(narrowed, text, limit)
+            return narrowed(text, (), limit)
 
         found, reranker = search, self._reranker
         if reading is not None:
@@ -343,6 +351,7 @@ class Ish:
             turns=self.settings.ask_turns if turns is None else turns,
             read=read,
             glossary=self._glossary,
+            kind_of=self.kind_of,
             **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)

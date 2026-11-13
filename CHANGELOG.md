@@ -112,6 +112,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- An answer with a rerank model chooses from the best docs, tests, and
+  code of the tree, a fifth of the candidates each, beside the best
+  overall. A question in prose otherwise found no code at all. A text
+  that several files hold word for word is read once, and its title names
+  the other files. Each source tells the model its type, and the model
+  explains from the docs and says what the code does and what a test
+  checks.
 - The first word of a command line is a command when it is `search`,
   `ask`, `pick`, `index`, `chat`, `mcp`, `serve`, or `complete`. To search
   for one of these words, use `ish search WORD` or `ish -- WORD`.

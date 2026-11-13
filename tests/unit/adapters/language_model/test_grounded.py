@@ -177,8 +177,14 @@ class TestSelect:
         )
 
     def test_the_prompt_prefers_a_rule_over_a_test(self) -> None:
-        assert "test case" in PROMPTS.select
-        assert "bare numbers" in PROMPTS.select
+        text = " ".join(PROMPTS.select.split())
+        assert "over a test that only exercises it" in text
+        assert "bare numbers" in text
+
+    def test_the_prompt_also_chooses_the_code_and_the_test_it_needs(self) -> None:
+        text = " ".join(PROMPTS.select.split())
+        assert "A title starts with the type of its source" in text
+        assert "Also choose the code that does what the question asks" in text
 
     def test_ids_keep_their_order_drop_repeats_and_stop_at_the_limit(self) -> None:
         selection = _grounded.parse_ids(

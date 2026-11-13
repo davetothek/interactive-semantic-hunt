@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from ish import bootstrap
 from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
+from ish.application.candidates import candidates
 from ish.application.glossary import Glossary
 from ish.application.ports.language_model import LanguageModel
 from ish.domain.chunk import Chunk
@@ -112,13 +113,21 @@ class RemoteIsh:
         self.prepare(brief)
         limit = self.settings.rerank_candidates if self._reranker else ASK_LIMIT
 
-        def search(text: str) -> list[Match]:
-            found = self._source.sources(text, limit, lang=lang, under=under, type=type)
+        def narrowed(text: str, kinds: Sequence[str], count: int) -> list[Match]:
+            found = self._source.sources(
+                text, count, lang=lang, under=under, type=kinds or type
+            )
             for entry in found.chunks:
                 self._texts[entry.chunk] = entry.text
             for term in found.terms:
                 self._glossary.keep(term)
             return [Match(entry.chunk, entry.score) for entry in found.chunks]
+
+        def search(text: str) -> list[Match]:
+            # As for a local answer: the best of each type for the rerank.
+            if self._reranker is not None and not type:
+                return candidates(narrowed, text, limit)
+            return narrowed(text, (), limit)
 
         found, reranker = search, self._reranker
         if reading is not None:
@@ -133,6 +142,7 @@ class RemoteIsh:
             turns=self.settings.ask_turns if turns is None else turns,
             read=self._texts.get,
             glossary=self._glossary,
+            kind_of=self.kind_of,
             **({"on_step": on_step} if on_step else {}),
         )
         answer = use_case.answer(question)

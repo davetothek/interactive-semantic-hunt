@@ -88,6 +88,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |
 | Application | `src/ish/application/preview.py` | Read the source a chunk points at |
 | Application | `src/ish/application/answer.py` | Answer use case: search, read, fit the budget, ask the model |
+| Application | `src/ish/application/candidates.py` | The candidates of a reranked answer: the best overall, and the best of each type |
 | Application | `src/ish/application/access.py` | Access use case: admit a request, sign a user in, give a login token |
 | Application | `src/ish/application/sources.py` | Sources use case: the chunks a search found, with their text and terms |
 | Application | `src/ish/application/chat.py` | Chat use case: the history, the searches of a follow-up, and `/more` |

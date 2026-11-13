@@ -323,7 +323,7 @@ class TestFollowUp:
         assert [call[3] for call in server.calls] == ["docs", "docs"]
         assert answer.searches == ("analog gain",)
         assert answer.sources == (EXPOSURE, GAIN, TERMS)
-        assert model.read[1][2] == ("terms.md:1-3 terms.md", "Text of terms.md.")
+        assert model.read[1][2] == ("doc: terms.md:1-3 terms.md", "Text of terms.md.")
 
     def test_the_turns_of_the_settings_reach_the_model(
         self, server: Server, model: Model

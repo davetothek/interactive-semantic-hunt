@@ -12,10 +12,11 @@ from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 
 
-def make_chunk(name: str, text: str = "body", line: int = 1) -> Chunk:
+def make_chunk(name: str, text: str = "", line: int = 1) -> Chunk:
+    # A text of its own for each name: two chunks of one text are copies.
     return Chunk(
         path=Path(f"/docs/{name}.adoc"),
-        text=text,
+        text=text or f"The text of {name}.",
         kind="section",
         language="asciidoc",
         symbol=name,
@@ -527,11 +528,11 @@ class TestTimings:
             reranker=FakeReranker(("1",)),
             clock=Ticks(),
         ).answer("q")
-        # One second for each call. The rerank reads two previews, and the
-        # answer reads the one chunk chosen.
+        # One second for each call. Each chunk is read once, before the
+        # rerank, and the answer reads the chosen one from that text.
         assert result.timings == (
             ("searching", 1.0),
-            ("reading", 3.0),
+            ("reading", 2.0),
             ("choosing", 1.0),
             ("writing", 1.0),
         )
@@ -752,3 +753,62 @@ class TestTermsFromTheTree:
             glossary=glossary,
         ).answer("q")
         assert len(result.terms) == MAX_TERMS
+
+
+class TestOneCopyOfATextIsRead:
+    """A tree can hold one section in several files, word for word.
+
+    On a firmware tree, 15 of the 50 candidates for one question repeated
+    another candidate, so the rerank chose among fewer texts than it saw.
+    """
+
+    def test_a_copy_leaves_the_candidates_and_is_named_in_the_title(self) -> None:
+        first = make_chunk("imaging", "The mode  starts at reset.")
+        copy = make_chunk("structural", "the mode starts at RESET.")
+        other = make_chunk("other", "Another text.")
+        reranker = FakeReranker(("1", "2"))
+        model = FakeModel()
+        result = AnswerQuestion(
+            search=searching(first, copy, other), model=model, reranker=reranker
+        ).answer("q")
+        previews = reranker.calls[0][1]
+        assert [s.title.split(" ")[0] for s in previews] == [
+            "/docs/imaging.adoc:1-10",
+            "/docs/other.adoc:1-10",
+        ]
+        assert previews[0].title.endswith(
+            "(the same text is also in /docs/structural.adoc:1-10)"
+        )
+        assert result.sources == (first, other)
+
+    def test_a_follow_up_search_reads_no_copy_of_a_text_it_read(self) -> None:
+        start = make_chunk("start", "Spec.")
+        again = make_chunk("again", "spec.")
+        found = make_chunk("found", "Handler.")
+        agent = FakeAgent(("the handler",))
+        result = AnswerQuestion(
+            search=routed(start, the_handler=[again, found]), model=agent, turns=1
+        ).answer("q")
+        assert result.sources == (start, found)
+
+    def test_a_chunk_with_no_text_is_no_copy_of_another(self) -> None:
+        empty, blank = make_chunk("empty"), make_chunk("blank")
+        result = AnswerQuestion(
+            search=searching(empty, blank), model=FakeModel(), read=lambda c: None
+        ).answer("q")
+        assert result.dropped == 2
+
+
+class TestTheTitleNamesTheType:
+    def test_each_source_names_its_type_first(self) -> None:
+        doc, code = make_chunk("spec", "Spec."), make_chunk("main", "int main;")
+        model = FakeModel()
+        AnswerQuestion(
+            search=searching(doc, code),
+            model=model,
+            kind_of=lambda c: "code" if c is code else "doc",
+        ).answer("q")
+        assert [s.title for s in model.calls[0][1]] == [
+            "doc: /docs/spec.adoc:1-10 spec",
+            "code: /docs/main.adoc:1-10 main",
+        ]
