@@ -137,6 +137,11 @@ class _Loop:
             log.debug("Traceback:", exc_info=True)
             return
         self.ticker[0].stop()
+        if turn.searched and turn.searched != (turn.question,):
+            # A follow-up searched for what a model wrote. Show it, so a
+            # person can tell why the reply read what it read.
+            line = f"Searched for: {' | '.join(turn.searched)}"
+            sys.stderr.write(f"{grey(line) if self.color else line}\n")
         text, self.cited = format_chat(
             turn.answer,
             turn.question,
@@ -242,7 +247,8 @@ def converse(
             reading=reading,
         )
 
-    loop = _Loop(session, Chat(ask, brief=brief), ticker, color=color, render=render)
+    chat = Chat(ask, brief=brief, write_query=session.query_for)
+    loop = _Loop(session, chat, ticker, color=color, render=render)
     if terminal:
         _use_readline()
     sys.stderr.write("Ask about the files. /help names the commands.\n")

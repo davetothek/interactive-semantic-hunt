@@ -356,6 +356,24 @@ class Ish:
         )
         return use_case.answer(question)
 
+    def query_for(self, question: str, history: str) -> str:
+        """Return one search query for *question* of a chat, given its *history*.
+
+        The rerank model writes it, the cheap one, or the model of the
+        answer when no rerank model is set. Raise ``LanguageModelError``
+        when no model is set or allowed, or when it does not reply.
+        """
+        self.prepare()
+        model = self._reranker or self._models[False]
+        query = model.query(question, history)
+        log.info(
+            "%s wrote the search query %r for %d tokens",
+            model.model_name,
+            query.text,
+            query.input_tokens,
+        )
+        return query.text
+
     def prepare(self, brief: bool = False) -> None:
         """Build the language model of an answer, and the rerank model, now.
 

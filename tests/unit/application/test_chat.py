@@ -268,3 +268,66 @@ class TestAClaimWithNoSourceStaysOutOfTheHistory:
         chat.ask("how long")
         assert "Five seconds." not in asked.calls[1][0]
         assert "It resets." in asked.calls[1][0]
+
+
+class TestAFollowUpSearchesForWhatAModelWrote:
+    """A follow-up such as "cool, what about ldap?" names little to search for.
+
+    Searched alone and joined to the question before it, nine follow-ups
+    of a private tree ranked the expected section at an MRR of 0.226. A
+    query a model wrote from the history ranked it at 0.469, in one
+    search.
+    """
+
+    def test_the_written_query_is_the_one_search(self) -> None:
+        asked = Asked(
+            _answer("The watchdog resets.", WATCHDOG), _answer("0x10.", RESET)
+        )
+        written: list[tuple[str, str]] = []
+
+        def write(question: str, history: str) -> str:
+            written.append((question, history))
+            return "watchdog reset value"
+
+        chat = Chat(asked, write_query=write)
+        first = chat.ask("what does the watchdog do")
+        second = chat.ask("and its reset value?")
+        assert first.searched == ("what does the watchdog do",)
+        assert written == [
+            (
+                "and its reset value?",
+                "Q: what does the watchdog do\nA: The watchdog resets.",
+            )
+        ]
+        assert asked.calls[1][1] == Reading(("watchdog reset value",), (WATCHDOG,))
+        assert second.searched == ("watchdog reset value",)
+
+    def test_the_query_reads_a_short_history(self) -> None:
+        from ish.application.chat import QUERY_HISTORY_TOKENS
+
+        asked = Asked(*[_answer("x" * 3000, WATCHDOG) for _ in range(3)])
+        seen: list[str] = []
+        chat = Chat(asked, write_query=lambda q, h: seen.append(h) or q)
+        for n in range(3):
+            chat.ask(f"q{n}")
+        assert len(seen[-1]) <= QUERY_HISTORY_TOKENS * CHARS_PER_TOKEN + 3000
+
+    def test_a_model_that_fails_leaves_the_two_searches(self, caplog) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        def fail(question: str, history: str) -> str:
+            raise LanguageModelError("claude did not answer.")
+
+        asked = Asked(_answer("A.", WATCHDOG), _answer("B.", RESET))
+        chat = Chat(asked, write_query=fail)
+        chat.ask("first")
+        with caplog.at_level("WARNING"):
+            turn = chat.ask("second")
+        assert turn.searched == ("second", "first second")
+        assert "claude did not answer. Searching for the question" in caplog.text
+
+    def test_more_runs_no_search(self) -> None:
+        asked = Asked(_answer("A.", WATCHDOG), _answer("Long.", WATCHDOG))
+        chat = Chat(asked, write_query=lambda q, h: q)
+        chat.ask("why")
+        assert chat.more().searched == ()

@@ -199,3 +199,24 @@ class TestStep:
             "q", SOURCES, ["done"], 1
         )
         assert reply.searches == ("x",)
+
+
+class TestQuery:
+    def test_query_sends_the_query_schema(self, recorder) -> None:
+        recorder.reply = {
+            "message": {"content": '{"query": "watchdog reset value"}'},
+            "prompt_eval_count": 30,
+            "eval_count": 6,
+        }
+        query = _model().query("and its reset?", "Q: watchdog")
+        body = json.loads(recorder.requests[0][0].data)
+        assert body["format"] == _grounded.QUERY_SCHEMA
+        assert body["messages"][0]["content"] == PROMPTS.query
+        assert body["messages"][1]["content"] == _grounded.query_prompt(
+            "and its reset?", "Q: watchdog"
+        )
+        assert (query.text, query.input_tokens, query.output_tokens) == (
+            "watchdog reset value",
+            30,
+            6,
+        )

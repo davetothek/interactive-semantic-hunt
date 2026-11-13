@@ -288,9 +288,14 @@ class TestChat:
         _model(monkeypatch, model)
         self._typed(monkeypatch, QUESTION, "and how often?")
         assert main(["chat", "--cache-dir", str(project / "idx")]) == 0
-        out = capsys.readouterr().out
+        out, err = capsys.readouterr()
         assert out.count("The watchdog resets the board [1].") == 2
         assert "1. [docs/boot.md:1-3](file://" in out
+        # The model wrote the search of the follow-up from the history,
+        # and the chat says what it searched for.
+        [(asked, history)] = model.queries
+        assert asked == "and how often?" and history.startswith(f"Q: {QUESTION}")
+        assert "Searched for: watchdog and how often?" in err
         first, second = model.questions
         assert first == QUESTION
         # The follow-up reads the history, under its heading.

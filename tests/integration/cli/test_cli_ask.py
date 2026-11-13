@@ -32,6 +32,13 @@ class FakeModel:
     def __init__(self, covered: bool = True) -> None:
         self.covered = covered
         self.questions: list[str] = []
+        self.queries: list[tuple[str, str]] = []
+
+    def query(self, question, history):
+        from ish.application.ports.language_model import Query
+
+        self.queries.append((question, history))
+        return Query(f"watchdog {question}")
 
     def answer(self, question, sources):
         self.questions.append(question)

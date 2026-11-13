@@ -24,6 +24,7 @@ from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
+    Query,
     Reply,
     Selection,
     Source,
@@ -181,6 +182,18 @@ class ClaudeCliLanguageModel:
             output_tokens=wrote,
         )
         return replace(selection, cost_usd=cost)
+
+    def query(self, question: str, history: str) -> Query:
+        """Write one search query, in the JSON the schema fixes."""
+        structured, read, wrote, cost = self._run(
+            self._prompts.query,
+            _grounded.QUERY_SCHEMA,
+            _grounded.query_prompt(question, history),
+        )
+        query = _grounded.parse_query(
+            json.dumps(structured), f"claude {self.model_name}", read, wrote
+        )
+        return replace(query, cost_usd=cost)
 
     def _run(
         self, system: str, schema: dict[str, object], prompt: str

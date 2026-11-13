@@ -215,6 +215,29 @@ class TestStep:
         assert reply.searches == ("where is it handled",)
 
 
+class TestQuery:
+    def test_query_runs_the_query_prompt_and_schema(self, runner) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"query": "watchdog reset"},
+                "usage": {"input_tokens": 90, "output_tokens": 5},
+                "total_cost_usd": 0.0003,
+            }
+        )
+        query = ClaudeCliLanguageModel("haiku", timeout=5).query("and it?", "Q: w")
+        call = runner.calls[0]
+        assert call["args"] == command(
+            "/usr/bin/claude", "haiku", PROMPTS.query, _grounded.QUERY_SCHEMA
+        )
+        assert call["input"] == _grounded.query_prompt("and it?", "Q: w")
+        assert (query.text, query.input_tokens, query.cost_usd) == (
+            "watchdog reset",
+            90,
+            0.0003,
+        )
+
+
 class TestCost:
     """claude says what each call would cost at the prices of the API."""
 

@@ -310,3 +310,31 @@ class TestTerms:
 
     def test_the_prompt_never_lets_a_term_be_invented(self) -> None:
         assert "never expand a term from your own knowledge" in PROMPTS.answer
+
+
+class TestQuery:
+    def test_the_prompt_holds_the_history_and_the_question(self) -> None:
+        assert _grounded.query_prompt("and it?", "Q: a\nA: b") == (
+            "Earlier turns:\n\nQ: a\nA: b\n\nNew question: and it?"
+        )
+
+    def test_a_query_keeps_one_line(self) -> None:
+        query = _grounded.parse_query('{"query": " watchdog \\n reset "}', "m", 9, 2)
+        assert (query.text, query.input_tokens, query.output_tokens) == (
+            "watchdog reset",
+            9,
+            2,
+        )
+
+    @pytest.mark.parametrize("text", ["nope", "{}", "[]"])
+    def test_the_wrong_shape_names_the_backend(self, text: str) -> None:
+        with pytest.raises(LanguageModelError, match="m did not reply with a search"):
+            _grounded.parse_query(text, "m")
+
+    def test_an_empty_query_is_an_error(self) -> None:
+        with pytest.raises(LanguageModelError, match="m wrote an empty search query"):
+            _grounded.parse_query('{"query": "  "}', "m")
+
+    def test_the_shipped_instruction_asks_for_a_short_query(self) -> None:
+        text = " ".join(PROMPTS.query.split())
+        assert "at most 15 words" in text and "Do not answer the question" in text

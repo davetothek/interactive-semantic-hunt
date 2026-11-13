@@ -31,8 +31,10 @@ finishes a filter word. Nothing else is added.
   `Chat` use case. Each reply goes through `ask` with a `Reading`, so the
   grounding of an answer holds for each turn. The history never reaches
   disk, or the model as a source. Only the parts of an answer that cite a
-  chunk enter it. A server gets a query of the last question with the new
-  one, as it gets any query, and never an answer.
+  chunk enter it. A follow-up searches for the query the rerank model
+  writes from the history, through `query_for()` of the session, and the
+  last question with the new one when no model can write it. A server
+  gets that query, as it gets any query, and never an answer.
 - Write the refresh line to stderr, rewritten in place and cleared at the
   end. stdout holds only results. The line lives in `interfaces/busy.py`,
   the one place a step is rendered with a rate and a time left, and

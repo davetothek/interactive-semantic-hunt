@@ -17,6 +17,7 @@ from ish.application.ports.language_model import (
     Block,
     LanguageModelError,
     Passage,
+    Query,
     Reply,
     Row,
     Selection,
@@ -208,6 +209,38 @@ SELECT_SCHEMA: dict[str, object] = {
     "required": ["ids"],
     "additionalProperties": False,
 }
+
+
+QUERY_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {"query": {"type": "string"}},
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+
+def query_prompt(question: str, history: str) -> str:
+    """Return the user message that asks for one search query."""
+    return f"Earlier turns:\n\n{history}\n\nNew question: {question}"
+
+
+def parse_query(
+    text: str, backend: str, input_tokens: int = 0, output_tokens: int = 0
+) -> Query:
+    """Turn the JSON a model wrote into a search query.
+
+    Raise ``LanguageModelError`` naming *backend* when the text is not the
+    JSON the schema asks for, or when the query is empty.
+    """
+    try:
+        query = " ".join(str(json.loads(text)["query"]).split())
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise LanguageModelError(
+            f"{backend} did not reply with a search query: {exc}"
+        ) from exc
+    if not query:
+        raise LanguageModelError(f"{backend} wrote an empty search query.")
+    return Query(query, input_tokens, output_tokens)
 
 
 def select_prompt(question: str, candidates: Sequence[Source], limit: int) -> str:

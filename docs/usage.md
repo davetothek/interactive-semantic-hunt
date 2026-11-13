@@ -227,9 +227,13 @@ questions asked before. No question is written to a history file.
 The chat keeps what was asked and answered while it runs, so a follow-up
 can say "it" and "that register". The model reads that history as context
 for the question, under a heading that says it is no source: a claim still
-needs a chunk. A follow-up is searched alone and together with the question
-before it, and the chunks the last answer cited are offered again beside
-the results. Past about 4,000 tokens, the history keeps the recent turns
+needs a chunk. For a follow-up, the rerank model writes one search query
+from the history, such as "LDAP sign-in on the server" for "cool, what
+about ldap?", and the chat names it on a line of its own. Without a
+rerank model the model of the answer writes it. When no model can write
+it, the follow-up is searched alone and together with the question before
+it. The chunks the last answer cited are offered again beside the
+results. Past about 4,000 tokens, the history keeps the recent turns
 whole and only the questions of the older ones. No model summarizes it, so
 the history holds nothing that no answer said.
 
@@ -238,8 +242,8 @@ the model never reads back a claim that no chunk made. It stays in memory,
 and the chat writes none of it to disk. Ctrl-C stops the reply that runs,
 and the chat goes on. `ish remote chat` chats about the tree of a server the
 same way: the server returns chunks, and the answers and the model stay on
-this machine. The server gets the searches, so it sees each question and
-the one before it, as it sees any query.
+this machine. The server gets the searches, so it sees each query the
+model wrote, as it sees any query, and never an answer.
 
 ### Ask a server
 

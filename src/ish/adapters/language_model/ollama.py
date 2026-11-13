@@ -17,6 +17,7 @@ from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
+    Query,
     Reply,
     Selection,
     Source,
@@ -102,6 +103,17 @@ class OllamaLanguageModel:
         )
         return _grounded.parse_ids(
             text, f"Ollama model {self.model_name}", limit, read, wrote
+        )
+
+    def query(self, question: str, history: str) -> Query:
+        """Write one search query, in the JSON the schema fixes."""
+        text, read, wrote = self._chat(
+            self._prompts.query,
+            _grounded.QUERY_SCHEMA,
+            _grounded.query_prompt(question, history),
+        )
+        return _grounded.parse_query(
+            text, f"Ollama model {self.model_name}", read, wrote
         )
 
     def _chat(

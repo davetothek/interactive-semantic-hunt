@@ -279,3 +279,26 @@ class TestStep:
         )
         assert reply.covered and reply.passages[0].source_ids == ("1",)
         assert (reply.input_tokens, reply.output_tokens) == (90, 7)
+
+
+class TestQuery:
+    def test_query_fixes_the_reply_to_the_schema(self, recorder) -> None:
+        recorder.reply = {
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 80, "output_tokens": 7},
+            "content": [{"type": "text", "text": '{"query": "watchdog reset"}'}],
+        }
+        query = _model().query("and its reset?", "Q: watchdog")
+        body = recorder.body
+        assert body["system"] == PROMPTS.query
+        assert body["output_config"] == {
+            "format": {"type": "json_schema", "schema": _grounded.QUERY_SCHEMA}
+        }
+        assert body["messages"][0]["content"] == _grounded.query_prompt(
+            "and its reset?", "Q: watchdog"
+        )
+        assert (query.text, query.input_tokens, query.output_tokens) == (
+            "watchdog reset",
+            80,
+            7,
+        )

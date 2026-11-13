@@ -805,3 +805,35 @@ class TestAChatReading:
         ish = _ish(project)
         ish.prepare(brief=True)
         assert ish._models[True] is model
+
+
+class TestQueryFor:
+    """A chat asks the session for the search query of a follow-up."""
+
+    class Writer:
+        def __init__(self, name: str) -> None:
+            self.model_name = name
+            self.asked: list[tuple[str, str]] = []
+
+        def query(self, question, history):
+            from ish.application.ports.language_model import Query
+
+            self.asked.append((question, history))
+            return Query(f"{self.model_name}: {question}", input_tokens=9)
+
+    def test_the_rerank_model_writes_it(self, project: Path, monkeypatch) -> None:
+        answer, rerank = self.Writer("answer"), self.Writer("rerank")
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: answer)
+        monkeypatch.setattr(bootstrap, "build_reranker", lambda s: rerank)
+        with Ish(project, settings=Settings(no_cache=True, git=False)) as ish:
+            assert ish.query_for("and it?", "Q: a") == "rerank: and it?"
+        assert (rerank.asked, answer.asked) == ([("and it?", "Q: a")], [])
+
+    def test_the_answer_model_writes_it_with_no_rerank_model(
+        self, project: Path, monkeypatch
+    ) -> None:
+        answer = self.Writer("answer")
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: answer)
+        monkeypatch.setattr(bootstrap, "build_reranker", lambda s: None)
+        with Ish(project, settings=Settings(no_cache=True, git=False)) as ish:
+            assert ish.query_for("and it?", "Q: a") == "answer: and it?"

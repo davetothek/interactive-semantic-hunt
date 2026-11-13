@@ -21,6 +21,8 @@ class Session:
         self.asked: list[tuple[str, bool, object]] = []
         self.prepared: list[bool] = []
         self.no_model = False
+        self.queried: list[tuple[str, str]] = []
+        self.query_failure: Exception | None = None
 
     def prepare(self, brief: bool = False) -> None:
         if self.no_model:
@@ -41,6 +43,12 @@ class Session:
             covered=True,
             sources=(WATCHDOG,),
         )
+
+    def query_for(self, question: str, history: str) -> str:
+        self.queried.append((question, history))
+        if self.query_failure is not None:
+            raise self.query_failure
+        return f"the watchdog: {question}"
 
     def link(self, chunk: Chunk) -> str:
         return "https://docs.example.invalid/tree/docs/boot.md#L1-3"
@@ -430,3 +438,37 @@ class TestOpen:
         monkeypatch.setattr("subprocess.run", fail)
         assert _chat(session, "why", "/open 1") == 0
         assert "Cannot start no-such-editor-EXAMPLE" in caplog.text
+
+
+class TestTheSearchOfAFollowUp:
+    """A person sees what a follow-up searched for, so a reply can be judged."""
+
+    def test_a_follow_up_names_its_search_and_the_first_question_does_not(
+        self, capsys
+    ) -> None:
+        session = Session()
+        _chat(session, "what does the watchdog do", "and how often?")
+        err = capsys.readouterr().err
+        assert err.count("Searched for:") == 1
+        assert "Searched for: the watchdog: and how often?\n" in err
+        assert session.queried[0][0] == "and how often?"
+        assert session.queried[0][1].startswith("Q: what does the watchdog do")
+
+    def test_with_color_the_search_is_grey(self, capsys) -> None:
+        from ish.interfaces.cli.terminal import grey
+
+        converse(
+            Session(),
+            brief=True,
+            report=lambda t, s: None,
+            read_line=_lines("one", "two"),
+            color=True,
+            terminal=False,
+        )
+        assert grey("Searched for: the watchdog: two") in capsys.readouterr().err
+
+    def test_a_model_that_cannot_write_it_leaves_the_two_searches(self, capsys) -> None:
+        session = Session()
+        session.query_failure = LanguageModelError("claude did not answer.")
+        _chat(session, "one", "two")
+        assert "Searched for: two | one two" in capsys.readouterr().err

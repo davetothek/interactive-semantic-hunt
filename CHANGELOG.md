@@ -119,6 +119,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A follow-up in a chat searches for one query that the rerank model
+  writes from the history, and the chat names it. A follow-up such as
+  "cool, what about ldap?" otherwise searched for its own words and for
+  the question before it.
 - A config file in a tree cannot set `prompt_dir`, `answer_notes`, or
   `rerank_notes`. A tree you cloned would otherwise choose what the model
   is told. Set them in the user config file.

@@ -6,18 +6,22 @@ asked and answered while it lasts, and gives it to the model as context
 for reading the next question. The history is never a source: the model
 reads it under a heading that says so, and a claim still needs a chunk.
 
-No model rewrites a question or summarizes the history. A follow-up such
-as "and its reset value?" is searched alone and together with the
-question before it, and the chunks the last answer cited are offered
-again beside the results. Past its budget, the history keeps the recent
-turns whole and only the questions of the older ones.
+A follow-up such as "and its reset value?" names little to search for.
+A model writes one search query for it from the history, which names
+the subject the question leans on. Without that model, or when it fails,
+the follow-up is searched alone and together with the question before
+it. Either way, the chunks the last answer cited are offered again
+beside the results. No model summarizes the history: past its budget,
+it keeps the recent turns whole and only the questions of the older
+ones.
 """
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from ish.application.answer import Answer
-from ish.application.ports.language_model import LanguageModel
+from ish.application.ports.language_model import LanguageModel, LanguageModelError
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 
@@ -27,6 +31,12 @@ HISTORY_TOKENS = 4_000
 
 # How many characters make a token, to count the history without a model.
 CHARS_PER_TOKEN = 4
+
+# The history the model that writes a search query reads. The last turn
+# or two name the subject of a follow-up, and a short prompt is cheap.
+QUERY_HISTORY_TOKENS = 1_000
+
+log = logging.getLogger(__name__)
 
 # What the model reads above the history, so it reads the turns as context.
 HISTORY_HEADING = (
@@ -61,27 +71,45 @@ class Reading:
 
 @dataclass(frozen=True, slots=True)
 class Turn:
-    """One question of a chat, its answer, and the text the model read."""
+    """One question of a chat, its answer, and the text the model read.
+
+    *searched* holds the queries the first search ran, and is empty when
+    the answer ran no search.
+    """
 
     question: str
     answer: Answer
     asked: str
     brief: bool
+    searched: tuple[str, ...] = ()
 
 
 # Answer the text the model reads, find the sources as the reading says,
 # and write the short answer when the flag is set.
 Ask = Callable[[str, Reading, bool], Answer]
 
+# Write one search query for a question, read in the light of the history.
+WriteQuery = Callable[[str, str], str]
+
 
 class Chat:
     """Hold one conversation, and answer each question of it."""
 
     def __init__(
-        self, ask: Ask, *, brief: bool = True, budget_tokens: int = HISTORY_TOKENS
+        self,
+        ask: Ask,
+        *,
+        brief: bool = True,
+        budget_tokens: int = HISTORY_TOKENS,
+        write_query: WriteQuery | None = None,
     ) -> None:
-        """Answer through *ask*, briefly unless *brief* is False."""
+        """Answer through *ask*, briefly unless *brief* is False.
+
+        Search for a follow-up with the query *write_query* writes, when
+        it is given.
+        """
         self._ask = ask
+        self._write_query = write_query
         self.brief = brief
         self._budget = budget_tokens * CHARS_PER_TOKEN
         self._turns: list[Turn] = []
@@ -99,9 +127,9 @@ class Chat:
     def ask(self, question: str) -> Turn:
         """Answer *question* in the light of the chat so far.
 
-        Search for the question alone, and with the question before it,
-        and offer the chunks the last answer cited beside the results.
-        Raise ``ValueError`` for an empty question.
+        Search for a follow-up as ``_queries`` says, and offer the chunks
+        the last answer cited beside the results. Raise ``ValueError``
+        for an empty question.
         """
         question = question.strip()
         if not question:
@@ -110,11 +138,11 @@ class Chat:
         queries = (question,)
         carry: tuple[Chunk, ...] = ()
         if previous is not None:
-            queries = (question, f"{previous.question} {question}")
+            queries = self._queries(question, previous)
             carry = cited(previous.answer)
         asked = self._with_history(question)
         answer = self._ask(asked, Reading(queries, carry), self.brief)
-        turn = Turn(question, answer, asked, self.brief)
+        turn = Turn(question, answer, asked, self.brief, queries)
         self._turns.append(turn)
         return turn
 
@@ -133,6 +161,23 @@ class Chat:
         turn = Turn(last.question, answer, last.asked, False)
         self._turns[-1] = turn
         return turn
+
+    def _queries(self, question: str, previous: Turn) -> tuple[str, ...]:
+        """Return the searches of a follow-up *question*.
+
+        Search for the query the model writes from the history. Without a
+        model, or when it fails, search for the question alone and with
+        the question before it, so a chat goes on without the model.
+        """
+        joined = (question, f"{previous.question} {question}")
+        if self._write_query is None:
+            return joined
+        budget = QUERY_HISTORY_TOKENS * CHARS_PER_TOKEN
+        try:
+            return (self._write_query(question, history_text(self._turns, budget)),)
+        except LanguageModelError as exc:
+            log.warning("%s Searching for the question and the one before it.", exc)
+            return joined
 
     def new(self) -> None:
         """Forget the history, as if the chat started now."""

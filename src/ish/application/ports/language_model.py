@@ -142,6 +142,24 @@ class Selection:
     cost_usd: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class Query:
+    """Hold the search query a model wrote for a question, and what it cost.
+
+    Attributes:
+        text: The query, a question that stands alone.
+        input_tokens: Tokens the model read.
+        output_tokens: Tokens the model wrote.
+        cost_usd: What the backend says the call cost, in US dollars, or 0
+            when it does not say.
+    """
+
+    text: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+
+
 @runtime_checkable
 class LanguageModel(Protocol):
     """Contract for answering a question from given sources."""
@@ -182,5 +200,14 @@ class LanguageModel(Protocol):
         Each candidate holds the start of a source, not all of it, so a
         wide search costs few tokens to sort. Raise ``LanguageModelError``
         when the model does not reply.
+        """
+        ...
+
+    def query(self, question: str, history: str) -> Query:
+        """Write one search query for *question*, read in the light of *history*.
+
+        *history* is the earlier turns of a chat. The query names what the
+        question asks about, so it stands alone. Raise
+        ``LanguageModelError`` when the model does not reply.
         """
         ...

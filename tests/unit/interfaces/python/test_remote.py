@@ -423,3 +423,22 @@ class TestTheTextsKeptAreThoseOfTheLastAnswer:
         assert set(remote._texts) == {EXPOSURE}
         remote.ask("second")
         assert set(remote._texts) == {GAIN}
+
+
+class TestQueryFor:
+    def test_the_model_of_this_machine_writes_it(
+        self, server: Server, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Query
+
+        class Writer:
+            model_name = "writer"
+
+            def query(self, question, history):
+                return Query(f"written: {question}")
+
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: Writer())
+        monkeypatch.setattr(bootstrap, "build_reranker", lambda s: None)
+        assert RemoteIsh(_settings()).query_for("and it?", "Q: a") == "written: and it?"
+        # Writing a query asks the server nothing.
+        assert server.calls == []
