@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.10.0 - 2026-11-14
+
 ### Added
 
 - A full answer of `ish ask` and `ish remote ask`, and a full reply of a
