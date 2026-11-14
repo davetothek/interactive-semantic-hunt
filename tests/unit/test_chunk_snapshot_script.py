@@ -143,3 +143,18 @@ class TestCommandLine:
     def test_nothing_to_do_is_an_error(self) -> None:
         with pytest.raises(SystemExit):
             snap.main([])
+
+
+class TestTheLogsGoOnAfterASnapshot:
+    """A snapshot left logging off for the rest of the process.
+
+    Run in the process of the suite, it silenced every later log line,
+    and 43 tests that read a warning on stderr failed when the unit
+    tests ran first.
+    """
+
+    def test_main_leaves_logging_on(self, tree: Path, tmp_path: Path) -> None:
+        import logging
+
+        assert snap.main(["--out", str(tmp_path / "s.jsonl"), str(tree)]) == 0
+        assert logging.root.manager.disable == logging.NOTSET
