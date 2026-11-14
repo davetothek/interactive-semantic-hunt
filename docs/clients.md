@@ -349,6 +349,22 @@ nginx passes the `Authorization` header of the request on to `/auth`.
 Keep `/auth` inside the network of the two: the reverse proxy forwards
 `/mcp` and `/login` only.
 
+A reverse proxy can ask instead, so the web server checks nothing. With
+the forward authentication of Traefik, as labels of the container that
+serves the files:
+
+```yaml
+- "traefik.http.middlewares.ish-auth.forwardauth.address=http://ish:8765/auth"
+- "traefik.http.middlewares.ish-auth.forwardauth.authResponseHeaders=X-Ish-User,X-Ish-Method"
+- "traefik.http.routers.docs.middlewares=ish-auth"
+```
+
+A 204 names the user in `X-Ish-User` and the method in `X-Ish-Method`,
+which the proxy passes on to the web server, so its log can name who
+read a file. A name that is not printable ASCII is left out, so no name
+can add a header of its own. The web server must then be reachable only
+through the proxy.
+
 The server keeps the SHA-256 of each login token, never the token, in
 `~/.local/share/ish/logins.jsonl`, one login a line: the hash, the user,
 the method, and the expiry. A copy of the file opens nothing. To end a

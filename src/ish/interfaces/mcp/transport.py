@@ -104,8 +104,13 @@ MCP_PATH = "/mcp"
 # Beside `/mcp`, so a reverse proxy that forwards one forwards both.
 LOGIN_PATH = "/login"
 # Where another service asks whether a token is admitted, such as the web
-# server of the documents, through its auth_request.
+# server of the documents through auth_request, or a reverse proxy through
+# its forward authentication.
 AUTH_PATH = "/auth"
+# The headers of an answer of /auth that say who was admitted, so the
+# service that asked can pass them on and log them.
+USER_HEADER = "X-Ish-User"
+METHOD_HEADER = "X-Ish-Method"
 
 # A JSON-RPC message from a client is small. A body beyond this is not
 # one, and reading it would let a client fill the memory of the server.
@@ -115,6 +120,20 @@ MAX_BODY_BYTES = 1_000_000
 # send nothing.
 MAX_CONNECTIONS = 64
 SOCKET_SECONDS = 30
+
+
+def _who(identity: Identity) -> dict[str, str]:
+    """Return the headers that name *identity*, with each value safe in a header.
+
+    A user name comes from a sign-in. A name with a character that is no
+    printable ASCII, such as a line break, could end the header and start
+    another, so it is left out.
+    """
+    headers = {}
+    for name, value in ((USER_HEADER, identity.user), (METHOD_HEADER, identity.method)):
+        if value and value.isascii() and value.isprintable():
+            headers[name] = value
+    return headers
 
 
 class HttpTransport:
@@ -136,8 +155,10 @@ class HttpTransport:
     of a log holds the body.
 
     A GET of ``/auth`` gets 204 for a token *admit* admits and 401 for any
-    other, and runs nothing. A web server in front of other files asks it,
-    so they need the token that ``/mcp`` needs.
+    other, and runs nothing. A web server or a reverse proxy in front of
+    other files asks it, so they need the token that ``/mcp`` needs. The
+    204 names the user and the method in ``X-Ish-User`` and
+    ``X-Ish-Method``, for the one that asked to pass on.
 
     With *trusted* networks, a request from an address outside all of
     them gets 403 and runs nothing, so a password comes only through the
@@ -259,8 +280,9 @@ class HttpTransport:
                     self._json(200, {"methods": desk.methods()})
                     return
                 if self.path == AUTH_PATH:
-                    if self._admitted() is not None:
-                        self._reply(204)
+                    identity = self._admitted()
+                    if identity is not None:
+                        self._reply(204, headers=_who(identity))
                     return
                 self._reply(405, headers={"Allow": "POST"})
 

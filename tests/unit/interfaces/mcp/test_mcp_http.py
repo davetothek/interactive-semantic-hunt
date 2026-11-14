@@ -838,8 +838,30 @@ class TestAuthCheck:
     """A web server asks /auth whether a token is admitted, for files beside /mcp."""
 
     def test_an_admitted_token_gets_204_and_runs_nothing(self, running) -> None:
-        assert running.get("/auth")[0] == 204
+        status, headers = running.get("/auth")
+        assert status == 204
         assert running.calls == []
+        # The service that asked passes on who it was.
+        assert headers["X-Ish-Method"] == "token"
+        assert headers["X-Ish-User"]
+
+    @pytest.mark.parametrize(
+        ("user", "named"),
+        [("alice", "alice"), ("bad\r\nX-Admin: yes", None), ("Åsa", None), ("", None)],
+    )
+    def test_a_user_name_is_passed_on_only_when_safe_in_a_header(
+        self, user, named
+    ) -> None:
+        from ish.application.ports.authenticator import Identity
+
+        made = Running(HELLO, admit=lambda bearer: Identity(user, "ldap"))
+        try:
+            status, headers = made.get("/auth")
+            assert status == 204
+            assert headers.get("X-Ish-User") == named
+            assert "X-Admin" not in headers
+        finally:
+            made.close()
 
     @pytest.mark.parametrize("token", [None, "wrong-token-EXAMPLE"])
     def test_any_other_gets_401(self, running, token) -> None:
