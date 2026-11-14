@@ -122,7 +122,12 @@ finishes a filter word. Nothing else is added.
   `password_problem()` allows it, and keeps no password. A command of
   `ish remote` sends `ISH_MCP_TOKEN`, or else the login token of the URL.
 - A server with a sign-in method listens on a loopback address only.
-  `server.main` refuses another before it serves.
+  `server.main` refuses another before it serves, unless
+  `trusted_proxy` names the networks of the proxy. The transport then
+  answers 403 to every request from another address, before it reads
+  anything.
+- `/auth` answers 204 or 401 for the bearer token of a GET, through the
+  same `admit` as `/mcp`, and runs nothing.
 - Each tool call over HTTP writes one line to the `ish.audit` logger: the
   user and the tool, never the arguments. `ish mcp --http` shows it at
   every verbosity.

@@ -10,11 +10,13 @@ To add a transport, write a class with a ``serve(server)`` method beside
 ``ish.interfaces.mcp.server.main``.
 """
 
+import ipaddress
 import json
 import logging
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from ipaddress import IPv4Network, IPv6Address, IPv6Network
 from typing import Any, Protocol, TextIO, runtime_checkable
 
 from ish.application.ports.authenticator import (
@@ -101,6 +103,9 @@ TOKEN_VARIABLE = MCP_TOKEN_ENV_VAR
 MCP_PATH = "/mcp"
 # Beside `/mcp`, so a reverse proxy that forwards one forwards both.
 LOGIN_PATH = "/login"
+# Where another service asks whether a token is admitted, such as the web
+# server of the documents, through its auth_request.
+AUTH_PATH = "/auth"
 
 # A JSON-RPC message from a client is small. A body beyond this is not
 # one, and reading it would let a client fill the memory of the server.
@@ -129,6 +134,14 @@ class HttpTransport:
     methods and needs no token. A POST carries the method, the user name,
     and the password in its body, and gets a login token back. No line
     of a log holds the body.
+
+    A GET of ``/auth`` gets 204 for a token *admit* admits and 401 for any
+    other, and runs nothing. A web server in front of other files asks it,
+    so they need the token that ``/mcp`` needs.
+
+    With *trusted* networks, a request from an address outside all of
+    them gets 403 and runs nothing, so a password comes only through the
+    reverse proxy that holds the certificate.
     """
 
     def __init__(
@@ -137,12 +150,15 @@ class HttpTransport:
         port: int,
         admit: Callable[[str], Identity | None],
         desk: Desk | None = None,
+        *,
+        trusted: Sequence[IPv4Network | IPv6Network] = (),
     ) -> None:
         """Listen on *host* and *port*, and run a request *admit* admits."""
         self._host = host
         self._port = port
         self._admit = admit
         self._desk = desk
+        self._trusted = tuple(trusted)
         self._httpd: Any = None
         self.address: tuple[str, int] | None = None
         # Set once the socket is bound, so a caller that asked for port 0
@@ -206,6 +222,7 @@ class HttpTransport:
 
         admit = self._admit
         desk = self._desk
+        trusted = self._trusted
 
         class _Request(BaseHTTPRequestHandler):
             # A client that sends nothing for this long loses its
@@ -213,25 +230,16 @@ class HttpTransport:
             timeout = SOCKET_SECONDS
 
             def do_POST(self) -> None:
+                if not self._from_trusted():
+                    return
                 if self.path == LOGIN_PATH and desk is not None:
                     self._sign_in(desk)
                     return
                 if self.path != MCP_PATH:
                     self._reply(404)
                     return
-                scheme, _, bearer = (self.headers.get("Authorization") or "").partition(
-                    " "
-                )
-                try:
-                    identity = admit(bearer) if scheme == "Bearer" else None
-                except Exception as exc:
-                    log.error(
-                        "The check of a token failed with %s.", type(exc).__name__
-                    )
-                    self._json(500, {"error": SERVER_FAILED})
-                    return
+                identity = self._admitted()
                 if identity is None:
-                    self._reply(401, headers={"WWW-Authenticate": "Bearer"})
                     return
                 body = self._body()
                 if body is None:
@@ -245,10 +253,56 @@ class HttpTransport:
                 self._reply(200, json.dumps(reply).encode())
 
             def do_GET(self) -> None:
+                if not self._from_trusted():
+                    return
                 if self.path == LOGIN_PATH and desk is not None:
                     self._json(200, {"methods": desk.methods()})
                     return
+                if self.path == AUTH_PATH:
+                    if self._admitted() is not None:
+                        self._reply(204)
+                    return
                 self._reply(405, headers={"Allow": "POST"})
+
+            def _from_trusted(self) -> bool:
+                """Return True for a request the server may read, or reply 403.
+
+                With no trusted network, every address may ask. An IPv4
+                address that IPv6 carries counts as the IPv4 address.
+                """
+                if not trusted:
+                    return True
+                try:
+                    peer = ipaddress.ip_address(self.client_address[0])
+                except ValueError:
+                    peer = None
+                if isinstance(peer, IPv6Address) and peer.ipv4_mapped is not None:
+                    peer = peer.ipv4_mapped
+                if peer is not None and any(peer in net for net in trusted):
+                    return True
+                self._reply(403)
+                return False
+
+            def _admitted(self) -> Identity | None:
+                """Return who the bearer token of the request is, or reply and None.
+
+                Reply 401 for no token, or one *admit* does not know, and
+                500 when the check itself fails.
+                """
+                scheme, _, bearer = (self.headers.get("Authorization") or "").partition(
+                    " "
+                )
+                try:
+                    identity = admit(bearer) if scheme == "Bearer" else None
+                except Exception as exc:
+                    log.error(
+                        "The check of a token failed with %s.", type(exc).__name__
+                    )
+                    self._json(500, {"error": SERVER_FAILED})
+                    return None
+                if identity is None:
+                    self._reply(401, headers={"WWW-Authenticate": "Bearer"})
+                return identity
 
             def _body(self) -> bytes | None:
                 """Return the body of the request, or reply and return None.

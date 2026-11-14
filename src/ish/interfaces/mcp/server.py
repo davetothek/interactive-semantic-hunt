@@ -14,7 +14,8 @@ import logging
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import Any
 
@@ -880,16 +881,20 @@ def _warn_of_a_tree_that_sets_sign_in(root: Path) -> None:
             )
 
 
-def _refuse_a_password_from_the_network(host: str, methods: list[str]) -> None:
+def _refuse_a_password_from_the_network(
+    host: str, methods: list[str], trusted: Sequence[object] = ()
+) -> None:
     """Raise ``ValueError`` when a server that signs users in listens on a network.
 
     ish holds no certificate. A password reaches a server that signs
-    users in through a reverse proxy on this machine that holds one, so
-    the server listens on the loopback address only.
+    users in through a reverse proxy that holds one, so the server listens
+    on the loopback address only. With *trusted* networks, the networks
+    of that proxy, it may listen on a network, because the transport then
+    refuses each request from another address.
     """
     import ipaddress
 
-    if not methods or host == "localhost":
+    if not methods or host == "localhost" or trusted:
         return
     try:
         if ipaddress.ip_address(host.strip("[]")).is_loopback:
@@ -899,8 +904,28 @@ def _refuse_a_password_from_the_network(host: str, methods: list[str]) -> None:
     raise ValueError(
         f"A server that signs users in with {', '.join(methods)} listens on this "
         "machine only, behind a reverse proxy that holds the certificate. "
-        "Give --http 127.0.0.1:PORT."
+        "Give --http 127.0.0.1:PORT, or name the networks of the proxy in "
+        "trusted_proxy."
     )
+
+
+def _trusted(networks: Sequence[str]) -> tuple[IPv4Network | IPv6Network, ...]:
+    """Return the networks that *networks* names.
+
+    Raise ``ValueError`` for a text that names no network.
+    """
+    import ipaddress
+
+    found = []
+    for text in networks:
+        try:
+            found.append(ipaddress.ip_network(text.strip(), strict=False))
+        except ValueError:
+            raise ValueError(
+                f"trusted_proxy {text!r} is no network. Write one such as "
+                "172.18.0.0/16."
+            ) from None
+    return tuple(found)
 
 
 def _address(text: str) -> tuple[str, int]:
@@ -929,8 +954,9 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
         try:
             address = _address(args.http)
             access = bootstrap.build_access(settings)
-            _refuse_a_password_from_the_network(address[0], access.methods())
-            transport = HttpTransport(*address, access.admit, access)
+            trusted = _trusted(settings.trusted_proxy)
+            _refuse_a_password_from_the_network(address[0], access.methods(), trusted)
+            transport = HttpTransport(*address, access.admit, access, trusted=trusted)
         except ValueError as exc:
             log.error("%s", exc)
             return 1

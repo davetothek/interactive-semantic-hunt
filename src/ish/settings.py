@@ -592,6 +592,17 @@ class Settings:
             metavar="METHOD",
         ),
     )
+    trusted_proxy: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            SERVER,
+            "Networks of the reverse proxy that holds the certificate, such "
+            "as 172.18.0.0/16. A server that signs users in may then listen "
+            "on a network, and refuses each request from another address.",
+            nargs="+",
+            metavar="CIDR",
+        ),
+    )
 
 
 def option_names() -> tuple[str, ...]:
@@ -719,8 +730,10 @@ def _file_options(path: Path) -> Mapping[str, Any]:
 # server of `ish remote` chooses where the token of the user goes. A tree
 # that sets how a server signs users in chooses the directory that gets
 # each password, and how long a login lasts. A tree that sets what a
-# model is told can tell it to answer from outside the sources.
+# model is told can tell it to answer from outside the sources. A tree
+# that names a trusted proxy lets a password come from the network.
 NOT_FROM_A_TREE = (
+    "trusted_proxy",
     "prompt_dir",
     "answer_notes",
     "rerank_notes",

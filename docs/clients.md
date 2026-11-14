@@ -303,6 +303,17 @@ certificate. ish holds no certificate, so a password that reaches it over
 the network would cross the network in plain text. The server refuses to
 start on another address.
 
+When the proxy reaches the server over a network of its own, as a proxy
+in another container does, name that network in `trusted_proxy`. The
+server may then listen on it, and answers 403 to a request from any
+other address, so a password still comes only through the proxy:
+
+```sh
+ISH_TRUSTED_PROXY=172.18.0.0/16 ish-mcp --http 0.0.0.0:8765
+```
+
+A config file in the tree cannot set `trusted_proxy` either.
+
 Five failed sign-ins for one user name in 15 minutes stop more attempts
 for that name for 15 minutes. A sign-in still in flight counts, so
 guesses sent at once do not pass the limit. The server answers 429 and
@@ -314,6 +325,29 @@ The server lists the methods at `/login`, beside `/mcp`, with no token.
 `ish remote login` posts a user name and a password there, and the server
 sends back a login token that lasts `login_days`. Forward `/login` with
 `/mcp` in the reverse proxy.
+
+`/auth` answers a GET with 204 for a token the server admits, the static
+token or a login token, and with 401 for any other. It runs nothing. A
+web server that serves the files of the tree asks it, so the files need
+the token `/mcp` needs. With nginx:
+
+```nginx
+location /docs/ {
+    auth_request /_auth;
+    alias /srv/docs/;
+}
+
+location = /_auth {
+    internal;
+    proxy_pass http://ish:8765/auth;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+}
+```
+
+nginx passes the `Authorization` header of the request on to `/auth`.
+Keep `/auth` inside the network of the two: the reverse proxy forwards
+`/mcp` and `/login` only.
 
 The server keeps the SHA-256 of each login token, never the token, in
 `~/.local/share/ish/logins.jsonl`, one login a line: the hash, the user,
