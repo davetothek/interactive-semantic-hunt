@@ -479,6 +479,20 @@ class TestAFileInATreeTellsTheModelNothing:
         )
 
 
+class TestAFileInATreeTrustsNoProxy:
+    """A tree that names a trusted proxy would let a password come from a network."""
+
+    def test_a_project_file_does_not_set_it(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / CONFIG_FILENAME, 'trusted_proxy = ["0.0.0.0/0"]\n')
+        assert load_settings(start=tmp_path, environ={}).trusted_proxy == ()
+
+    def test_the_environment_sets_it(self, tmp_path) -> None:
+        environ = {"ISH_TRUSTED_PROXY": "172.18.0.0/16,10.0.0.0/8"}
+        settings = load_settings(start=tmp_path, environ=environ)
+        assert settings.trusted_proxy == ("172.18.0.0/16", "10.0.0.0/8")
+
+
 class TestAFileInATreeNamesNoServer:
     """A tree that names the server of `ish remote` chooses where the token goes."""
 

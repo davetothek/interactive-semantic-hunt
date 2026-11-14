@@ -28,8 +28,8 @@ ADMIT = StaticToken(TOKEN, TOKEN_VARIABLE).admit
 class Running:
     """A server on a free port, served from a thread."""
 
-    def __init__(self, tools: list[Tool]) -> None:
-        self.transport = HttpTransport("127.0.0.1", 0, ADMIT)
+    def __init__(self, tools: list[Tool], trusted=(), admit=ADMIT) -> None:
+        self.transport = HttpTransport("127.0.0.1", 0, admit, trusted=trusted)
         self.calls: list[str] = []
         server = Server("test", "0", tools)
         original = server.handle_line
@@ -65,6 +65,16 @@ class Running:
                 return response.status, json.loads(body) if body else None
         except urllib.error.HTTPError as exc:
             return exc.code, None
+
+    def get(self, path: str, token: str | None = TOKEN) -> tuple[int, dict]:
+        request = urllib.request.Request(f"{self.url}{path}", method="GET")
+        if token is not None:
+            request.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, dict(response.headers)
+        except urllib.error.HTTPError as exc:
+            return exc.code, dict(exc.headers)
 
     def close(self) -> None:
         self.transport.stop()
@@ -282,7 +292,8 @@ class TestEntryPoint:
         assert caplog.messages[-1] == (
             "A server that signs users in with directory listens on this machine "
             "only, behind a reverse proxy that holds the certificate. "
-            "Give --http 127.0.0.1:PORT."
+            "Give --http 127.0.0.1:PORT, or name the networks of the proxy in "
+            "trusted_proxy."
         )
 
     def test_a_server_with_the_static_token_alone_may_listen_on_a_network(
@@ -818,3 +829,128 @@ class TestStalledClients:
             connection.endheaders()
             assert connection.getresponse().status == 400
             connection.close()
+
+
+HELLO = [Tool("hello", "Say hello.", {"type": "object"}, lambda a: "hi")]
+
+
+class TestAuthCheck:
+    """A web server asks /auth whether a token is admitted, for files beside /mcp."""
+
+    def test_an_admitted_token_gets_204_and_runs_nothing(self, running) -> None:
+        status, headers = running.get("/auth")
+        assert status == 204
+        assert running.calls == []
+        # The service that asked passes on who it was.
+        assert headers["X-Ish-Method"] == "token"
+        assert headers["X-Ish-User"]
+
+    @pytest.mark.parametrize(
+        ("user", "named"),
+        [("alice", "alice"), ("bad\r\nX-Admin: yes", None), ("Åsa", None), ("", None)],
+    )
+    def test_a_user_name_is_passed_on_only_when_safe_in_a_header(
+        self, user, named
+    ) -> None:
+        from ish.application.ports.authenticator import Identity
+
+        made = Running(HELLO, admit=lambda bearer: Identity(user, "ldap"))
+        try:
+            status, headers = made.get("/auth")
+            assert status == 204
+            assert headers.get("X-Ish-User") == named
+            assert "X-Admin" not in headers
+        finally:
+            made.close()
+
+    @pytest.mark.parametrize("token", [None, "wrong-token-EXAMPLE"])
+    def test_any_other_gets_401(self, running, token) -> None:
+        status, headers = running.get("/auth", token=token)
+        assert status == 401
+        assert headers.get("WWW-Authenticate") == "Bearer"
+
+    def test_a_check_that_fails_gets_500(self) -> None:
+        def broken(bearer: str):
+            raise RuntimeError("directory down")
+
+        made = Running(HELLO, admit=broken)
+        try:
+            assert made.get("/auth")[0] == 500
+        finally:
+            made.close()
+
+    def test_another_path_is_refused(self, running) -> None:
+        assert running.get("/other")[0] == 405
+
+
+class TestTrustedProxy:
+    """With trusted networks, a request from another address runs nothing."""
+
+    def test_an_address_outside_them_gets_403(self) -> None:
+        import ipaddress
+
+        made = Running(HELLO, trusted=(ipaddress.ip_network("10.9.0.0/16"),))
+        try:
+            assert made.post(_call("hello"))[0] == 403
+            assert made.get("/auth")[0] == 403
+            assert made.get("/login")[0] == 403
+            assert made.calls == []
+        finally:
+            made.close()
+
+    def test_an_address_inside_them_is_served(self) -> None:
+        import ipaddress
+
+        made = Running(HELLO, trusted=(ipaddress.ip_network("127.0.0.0/8"),))
+        try:
+            assert made.post(_call("hello"))[0] == 200
+            assert made.get("/auth")[0] == 204
+        finally:
+            made.close()
+
+    @pytest.mark.parametrize(
+        ("peer", "served"),
+        [("::ffff:172.18.0.3", True), ("::1", False), ("not an address", False)],
+    )
+    def test_an_ipv4_address_in_ipv6_counts_as_ipv4(self, peer, served) -> None:
+        import ipaddress
+
+        transport = HttpTransport(
+            "127.0.0.1", 0, ADMIT, trusted=(ipaddress.ip_network("172.18.0.0/16"),)
+        )
+        handler = transport._handler_for(Server("test", "0", HELLO))
+        request = object.__new__(handler)
+        request.client_address = (peer, 4000)
+        replied: list[int] = []
+        request._reply = lambda status, *rest, **named: replied.append(status)
+        assert request._from_trusted() is served
+        assert replied == ([] if served else [403])
+
+
+class TestAProxyLetsASignInListenOnANetwork:
+    def _signing_in(self, monkeypatch, tmp_path) -> None:
+        TestEntryPoint()._with_a_sign_in(monkeypatch, tmp_path)
+
+    def test_trusted_networks_let_it_listen_and_reach_the_transport(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        self._signing_in(monkeypatch, tmp_path)
+        monkeypatch.setenv("ISH_TRUSTED_PROXY", "172.18.0.0/16")
+        built: list = []
+
+        def serve(self, server) -> None:
+            built.append(self._trusted)
+
+        monkeypatch.setattr(HttpTransport, "serve", serve)
+        assert server_module.main(["--http", "0.0.0.0:8765"]) == 0
+        assert [str(net) for net in built[0]] == ["172.18.0.0/16"]
+
+    def test_a_text_that_is_no_network_is_named(
+        self, monkeypatch, tmp_path, caplog
+    ) -> None:
+        self._signing_in(monkeypatch, tmp_path)
+        monkeypatch.setenv("ISH_TRUSTED_PROXY", "the proxy")
+        assert server_module.main(["--http", "0.0.0.0:8765"]) == 1
+        assert caplog.messages[-1] == (
+            "trusted_proxy 'the proxy' is no network. Write one such as 172.18.0.0/16."
+        )

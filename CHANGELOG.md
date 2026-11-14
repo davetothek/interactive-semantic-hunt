@@ -8,6 +8,18 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `/auth` beside `/mcp` answers a GET with 204 for a token the server
+  admits, and 401 for any other. A web server that serves the files of
+  the tree asks it, or a reverse proxy through its forward
+  authentication, so the files need the token `/mcp` needs, a login
+  token included. A 204 names the user in `X-Ish-User` and the method in
+  `X-Ish-Method`.
+- `trusted_proxy` names the networks of the reverse proxy. A server that
+  signs users in may then listen on a network, and answers 403 to a
+  request from any other address. A config file in a tree cannot set it.
+
 ## 0.10.0 - 2026-11-14
 
 ### Added
