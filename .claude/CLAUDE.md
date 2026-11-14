@@ -393,6 +393,17 @@ something broke. This is that record, so a rule is never argued from taste.
   with brief replies, 13 of the 17 follow-ups cited the expected
   section and 14 read it, at $0.048 a follow-up. Two of the misses have
   labels that no query found. Hence `query.md` and `query_for()`.
+- 41 questions, answered by claude-haiku-5-5 in place of
+  claude-sonnet-5-5: 37 of 37 cited, 4 of 4 refused, at $0.0074 an
+  answer against $0.0699, and 36.3 s against 26.0, median, because haiku
+  thinks for about half of what it writes. A judge that read both
+  answers to 10 questions beside the expected section scored sonnet 20
+  of 20 correct and 19 of 20 complete, and haiku 19 and 18. Accuracy
+  comes first, so sonnet answers, and haiku reranks and writes the
+  query of a follow-up.
+- Answers that say in one or two sentences what code does or what a
+  test checks: 37 of 37 cited on the same 41, 1,959 output tokens
+  against 2,409, $0.0605 against $0.0699, 23.6 s against 26.0.
 - 10 more questions over six topics, whose answers sit in code or tests,
   scored 10 of 10 with the candidates of each type, after one label
   that named one function of two that answer was widened. $0.068 and
