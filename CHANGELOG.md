@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.10.1 - 2026-11-14
+
 ### Added
 
 - `/auth` beside `/mcp` answers a GET with 204 for a token the server
