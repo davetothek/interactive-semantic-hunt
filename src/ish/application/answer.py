@@ -209,6 +209,7 @@ class AnswerQuestion:
         clock: Callable[[], float] = time.monotonic,
         glossary: Glossary | None = None,
         kind_of: Callable[[Chunk], str] | None = None,
+        on_block: Callable[["AnswerBlock"], None] | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -239,6 +240,11 @@ class AnswerQuestion:
         the model can tell a specification from a test or code. Read one
         copy of a text that several chunks hold, and name the others in
         its title.
+
+        Give *on_block* each block of the answer as the model writes it,
+        with its citations as chunks, when the backend streams. The
+        answer holds every block again, and a block of a turn that then
+        asks for a search is no part of the answer.
         """
         self._search = search
         self._model = model
@@ -252,6 +258,7 @@ class AnswerQuestion:
         self._spent: dict[str, float] = {}
         self._glossary = Glossary() if glossary is None else glossary
         self._kind_of = kind_of
+        self._on_block = on_block
         # What one answer has read, so no chunk is read twice. Each text
         # is keyed by its words alone, to find a copy in another file.
         self._texts: dict[Chunk, str | None] = {}
@@ -259,11 +266,13 @@ class AnswerQuestion:
         self._copies: dict[Chunk, list[Chunk]] = {}
         self._rerank_cost = 0.0
 
-    def _timed(self, stage: str, call: Callable[..., object], *args: object):
+    def _timed(
+        self, stage: str, call: Callable[..., object], *args: object, **named: object
+    ):
         """Run *call* with *args*, and add the seconds it took to *stage*."""
         start = self._clock()
         try:
-            return call(*args)
+            return call(*args, **named)
         finally:
             self._spent[stage] = self._spent.get(stage, 0.0) + self._clock() - start
 
@@ -317,7 +326,13 @@ class AnswerQuestion:
         else:
             sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
             self._on_step(AnswerStep(WRITING, model=self._model.model_name))
-            reply = self._timed(WRITING, self._model.answer, question, sources)
+            reply = self._timed(
+                WRITING,
+                self._model.answer,
+                question,
+                sources,
+                **self._streaming(texts),
+            )
             searched, turns = [], 1
         kept = [chunk for chunk, _ in texts]
         by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
@@ -371,6 +386,19 @@ class AnswerQuestion:
             if found is not None:
                 named[short] = AnswerTerm(short, found.meaning, (found.chunk,))
         return tuple(named[t] for t in sorted(named, key=str.casefold))
+
+    def _streaming(self, texts: list[tuple[Chunk, str]]) -> dict[str, object]:
+        """Return what asks the model to stream, with the sources of *texts*.
+
+        Map the ids of a streamed block to its chunks as the answer maps
+        them, so a block reads the same streamed and in the answer. Ask a
+        model nothing more when no one takes the blocks.
+        """
+        if self._on_block is None:
+            return {}
+        by_id = {str(n): chunk for n, (chunk, _) in enumerate(texts, 1)}
+        give = self._on_block
+        return {"on_block": lambda block: give(_block(block, by_id))}
 
     def _read_kept(self, chunk: Chunk) -> str | None:
         """Read *chunk* once, and add what its text defines to the glossary."""
@@ -438,7 +466,13 @@ class AnswerQuestion:
                 )
             )
             reply = self._timed(
-                WRITING, self._model.step, question, sources, searched, turns_left
+                WRITING,
+                self._model.step,
+                question,
+                sources,
+                searched,
+                turns_left,
+                **self._streaming(texts),
             )
             turns += 1
             read_in += reply.input_tokens

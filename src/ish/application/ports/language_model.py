@@ -8,7 +8,7 @@ do not support is not an answer, so a reply says whether the sources
 covered the question at all.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -160,6 +160,10 @@ class Query:
     cost_usd: float = 0.0
 
 
+# Take one block of an answer as soon as the model has written it.
+OnBlock = Callable[[Block], None]
+
+
 @runtime_checkable
 class LanguageModel(Protocol):
     """Contract for answering a question from given sources."""
@@ -167,11 +171,19 @@ class LanguageModel(Protocol):
     model_name: str
     """Name of the model that writes the answer."""
 
-    def answer(self, question: str, sources: Sequence[Source]) -> Reply:
+    def answer(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        on_block: OnBlock | None = None,
+    ) -> Reply:
         """Answer *question* from *sources* only.
 
-        Raise ``LanguageModelError`` when the model does not answer. Never
-        answer from knowledge outside *sources*.
+        Give *on_block* each block of the layout as the model writes it,
+        in reading order, when the backend can stream. The reply holds
+        every block again. A backend that cannot stream gives none.
+        Raise ``LanguageModelError`` when the model does not answer.
+        Never answer from knowledge outside *sources*.
         """
         ...
 
@@ -181,14 +193,15 @@ class LanguageModel(Protocol):
         sources: Sequence[Source],
         searched: Sequence[str],
         turns_left: int,
+        on_block: OnBlock | None = None,
     ) -> Reply:
         """Answer from *sources*, or ask for more searches first.
 
         Return a reply with ``searches`` to have them run, and their
         results added to *sources* on the next call. *searched* holds the
         queries already run. With no turns left, answer, or say the
-        sources do not cover the question. Never answer from knowledge
-        outside *sources*.
+        sources do not cover the question. Give *on_block* each block as
+        ``answer`` does. Never answer from knowledge outside *sources*.
         """
         ...
 

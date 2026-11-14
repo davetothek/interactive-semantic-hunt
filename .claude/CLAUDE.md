@@ -112,7 +112,8 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Adapter | `src/ish/adapters/language_model/anthropic.py` | Messages API with native citations |
 | Adapter | `src/ish/adapters/language_model/ollama.py` | A generation model on the local daemon |
 | Adapter | `src/ish/adapters/language_model/claude_cli.py` | The Claude Code CLI in print mode |
-| Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
+| Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations, and `BlockStream` |
+| Adapter | `src/ish/adapters/language_model/_json_stream.py` | Each JSON object of a streamed reply, once it is whole |
 | Adapter | `src/ish/adapters/language_model/_prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
 | Adapter | `src/ish/adapters/authenticator/__init__.py` | `AUTHENTICATORS` — every way a server admits a request, and the recipe for adding one |
@@ -141,6 +142,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Interface | `src/ish/interfaces/cli/main.py` | The search program: search, ask, pick, list |
 | Interface | `src/ish/interfaces/cli/remote.py` | The remote program: search a server, or answer from it |
 | Interface | `src/ish/interfaces/cli/chat.py` | The loop of `ish chat` and `ish remote chat` |
+| Interface | `src/ish/interfaces/cli/stream.py` | An answer shown on a terminal a block at a time, as the model writes it |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/cli/terminal.py` | An answer rendered for a terminal, and the grey of the timing table |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |

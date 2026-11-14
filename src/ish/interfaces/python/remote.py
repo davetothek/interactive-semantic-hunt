@@ -12,11 +12,16 @@ same use case and the same model rules as an answer from a local tree.
 """
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ish import bootstrap
-from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
+from ish.application.answer import (
+    Answer,
+    AnswerBlock,
+    AnswerCallback,
+    AnswerQuestion,
+)
 from ish.application.candidates import candidates
 from ish.application.glossary import Glossary
 from ish.application.ports.language_model import LanguageModel
@@ -104,6 +109,7 @@ class RemoteIsh:
         brief: bool = False,
         turns: int | None = None,
         reading: "Reading | None" = None,
+        on_block: Callable[[AnswerBlock], None] | None = None,
     ) -> Answer:
         """Answer *question* from the chunks the server finds.
 
@@ -112,7 +118,8 @@ class RemoteIsh:
         ``LanguageModelError`` when no model is set or allowed. Run the
         rerank and the answer here, and send each follow-up search to
         the server. The model reads the text the server sent, and no
-        file of this machine. A chat gives a *reading*, as for ``Ish.ask``.
+        file of this machine. A chat gives a *reading*, and a terminal an
+        *on_block*, as for ``Ish.ask``.
         """
         self.prepare(brief)
         limit = self.settings.rerank_candidates if self._reranker else ASK_LIMIT
@@ -147,6 +154,7 @@ class RemoteIsh:
             read=self._texts.get,
             glossary=self._glossary,
             kind_of=self.kind_of,
+            on_block=on_block,
             **({"on_step": on_step} if on_step else {}),
         )
         answer = use_case.answer(question)

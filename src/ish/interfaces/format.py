@@ -191,16 +191,53 @@ def answer_text(
     list, as a chat shows them.
     """
     mark = footnote if footnotes else spaced
-    lines = [f"# {_one_line(question)}", ""]
     numbers: dict[Chunk, int] = {}
+    lines = answer_head(question)
     if answer.covered and answer.blocks:
         for block in answer.blocks:
-            lines += _render(block, numbers, mark) + [""]
+            lines += block_lines(block, numbers, mark)
     elif answer.covered:
         text, _ = number_citations(answer, numbers, mark=mark)
         for paragraph in text.split("\n\n"):
             if paragraph.strip():
                 lines += [_fill(paragraph), ""]
+    tail, cited = answer_tail(answer, numbers, link, base, kind_of, footnotes=footnotes)
+    return "\n".join(lines + tail), cited
+
+
+def answer_head(question: str) -> list[str]:
+    """Return the lines an answer starts with: the question as its heading."""
+    return [f"# {_one_line(question)}", ""]
+
+
+def block_lines(
+    block: AnswerBlock, numbers: dict[Chunk, int], mark: Callable[[int], str]
+) -> list[str]:
+    """Return the lines of one block of an answer, numbering new citations.
+
+    The numbers continue *numbers*, so blocks written one by one number
+    their citations as the whole answer does.
+    """
+    return [*_render(block, numbers, mark), ""]
+
+
+def answer_tail(
+    answer: Answer,
+    numbers: dict[Chunk, int],
+    link: Callable[[Chunk], str],
+    base: Path | None = None,
+    kind_of: Callable[[Chunk], str] | None = None,
+    *,
+    footnotes: bool = True,
+) -> tuple[list[str], list[Chunk]]:
+    """Return the lines after the text of an answer, and its sources by number.
+
+    Name the acronyms and list the sources of a covered answer, with the
+    numbers its text gave them in *numbers*. For a question the documents
+    do not cover, list the closest sources. End with the follow-up searches.
+    """
+    mark = footnote if footnotes else spaced
+    lines: list[str] = []
     if answer.covered:
         lines += _render_terms(answer.terms, numbers, mark)
         cited = list(numbers)
@@ -230,7 +267,7 @@ def answer_text(
     if answer.searches:
         lines += ["", "## Follow-up searches", ""]
         lines += [_fill(query, "- ", "  ") for query in answer.searches]
-    return "\n".join(lines), cited
+    return lines, cited
 
 
 def format_brief(answer: Answer) -> str:

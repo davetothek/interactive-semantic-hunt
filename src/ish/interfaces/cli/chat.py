@@ -28,6 +28,7 @@ from ish.application.answer import Answer
 from ish.application.chat import Chat, Reading, Turn
 from ish.domain.chunk import Chunk
 from ish.interfaces.busy import Ticker
+from ish.interfaces.cli.stream import StreamedAnswer
 from ish.interfaces.cli.terminal import MAX_WIDTH, grey, rendered
 from ish.interfaces.format import display_path, format_chat
 
@@ -117,10 +118,17 @@ class _Loop:
         self.render = render
         # The sources of the last reply, in the order of their numbers.
         self.cited: list[Chunk] = []
+        # What shows the full reply that runs as the model writes it.
+        self.stream: StreamedAnswer | None = None
 
-    def reply(self, run: Callable[[], Turn]) -> None:
-        """Run one reply behind a busy line, and print it, or why it failed."""
+    def reply(self, run: Callable[[], Turn], *, question: str, full: bool) -> None:
+        """Run one reply behind a busy line, and print it, or why it failed.
+
+        On a terminal, show a *full* reply to *question* block by block as
+        the model writes it.
+        """
         self.ticker[:] = [Ticker()]
+        self.stream = self._streamed(question) if full and self.render else None
         try:
             turn = run()
         except KeyboardInterrupt:
@@ -142,22 +150,36 @@ class _Loop:
             # person can tell why the reply read what it read.
             line = f"Searched for: {' | '.join(turn.searched)}"
             sys.stderr.write(f"{grey(line) if self.color else line}\n")
-        text, self.cited = format_chat(
-            turn.answer,
-            turn.question,
-            self.session.link,
-            brief=turn.brief,
-            kind_of=self.session.kind_of,
-        )
-        if self.render:
-            text = rendered(
-                text,
-                width=min(shutil.get_terminal_size().columns, MAX_WIDTH),
-                color=self.color,
-                grey_sources=True,
+        if self.stream is not None and self.stream.shown:
+            text = self.stream.rest(turn.answer, kind_of=self.session.kind_of)
+            self.cited = self.stream.cited
+        else:
+            text, self.cited = format_chat(
+                turn.answer,
+                turn.question,
+                self.session.link,
+                brief=turn.brief,
+                kind_of=self.session.kind_of,
             )
+        if self.render:
+            text = self._drawn(text)
         sys.stdout.write(f"{text}\n\n")
         sys.stdout.flush()
+
+    def _drawn(self, text: str) -> str:
+        """Return the Markdown *text* drawn for the terminal, its sources grey."""
+        width = min(shutil.get_terminal_size().columns, MAX_WIDTH)
+        return rendered(text, width=width, color=self.color, grey_sources=True)
+
+    def _streamed(self, question: str) -> StreamedAnswer:
+        """Return what shows a full reply to *question* above the busy line."""
+        return StreamedAnswer(
+            question,
+            self.session.link,
+            write=self.ticker[0].above,
+            render=self._drawn,
+            footnotes=False,
+        )
 
     def sources(self) -> None:
         """List the chunks the last answer read, or say there is none yet."""
@@ -240,11 +262,13 @@ def converse(
     ticker: list[Ticker] = []
 
     def ask(asked: str, reading: Reading, short: bool) -> Answer:
+        stream = loop.stream
         return session.ask(
             asked,
             on_step=lambda step: report(ticker[0], step),
             brief=short,
             reading=reading,
+            **({"on_block": stream.block} if stream and not short else {}),
         )
 
     chat = Chat(ask, brief=brief, write_query=session.query_for)
@@ -263,7 +287,11 @@ def converse(
         if terminal and color:
             loop.sent(line)
         if not line.startswith("/"):
-            loop.reply(lambda question=line: loop.chat.ask(question))
+            loop.reply(
+                lambda question=line: loop.chat.ask(question),
+                question=line,
+                full=not loop.chat.brief,
+            )
             continue
         words = line.split()
         word = words[0]
@@ -276,7 +304,10 @@ def converse(
             loop.cited = []
             sys.stderr.write("The chat starts again.\n")
         elif word == "/more":
-            loop.reply(loop.chat.more)
+            last = loop.chat.last
+            loop.reply(
+                loop.chat.more, question=last.question if last else "", full=True
+            )
         elif word == "/sources":
             loop.sources()
         elif word == "/open":

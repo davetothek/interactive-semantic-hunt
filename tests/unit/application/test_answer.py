@@ -859,3 +859,59 @@ class TestCost:
             read=lambda c: None,
         ).answer("q")
         assert result.cost_usd == 0.0
+
+
+class TestStreamedBlocks:
+    """A block streams with its citations as chunks, as the answer holds it."""
+
+    class Streaming:
+        model_name = "streaming"
+
+        def __init__(self, turns: int = 0) -> None:
+            from ish.application.ports.language_model import Block
+
+            self.block = Block("summary", passages=(Passage("Boot.", ("1", "9")),))
+
+        def _reply(self, searches=()):
+            return Reply(
+                passages=self.block.passages,
+                covered=True,
+                blocks=(self.block,),
+                searches=searches,
+            )
+
+        def answer(self, question, sources, on_block=None):
+            if on_block is not None:
+                on_block(self.block)
+            return self._reply()
+
+        def step(self, question, sources, searched, turns_left, on_block=None):
+            if on_block is not None:
+                on_block(self.block)
+            return self._reply()
+
+    @pytest.mark.parametrize("turns", [0, 1])
+    def test_a_streamed_block_is_the_block_of_the_answer(self, turns) -> None:
+        boot = make_chunk("boot")
+        shown: list = []
+        result = AnswerQuestion(
+            search=searching(boot),
+            model=self.Streaming(),
+            turns=turns,
+            on_block=shown.append,
+        ).answer("q")
+        # The id the model was not given leaves the citation, as it does
+        # in the answer.
+        assert shown == list(result.blocks)
+        assert shown[0].parts[0].cites == (boot,)
+
+    def test_no_reader_asks_the_model_for_no_stream(self) -> None:
+        calls: list = []
+
+        class Model(self.Streaming):
+            def answer(self, question, sources, **named):
+                calls.append(named)
+                return self._reply()
+
+        AnswerQuestion(search=searching(make_chunk("a")), model=Model()).answer("q")
+        assert calls == [{}]

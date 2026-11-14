@@ -27,7 +27,12 @@ from types import TracebackType
 from typing import TYPE_CHECKING
 
 from ish import bootstrap
-from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
+from ish.application.answer import (
+    Answer,
+    AnswerBlock,
+    AnswerCallback,
+    AnswerQuestion,
+)
 from ish.application.candidates import candidates
 from ish.application.filters import Filters, parse_query
 from ish.application.glossary import Glossary
@@ -303,6 +308,7 @@ class Ish:
         brief: bool = False,
         turns: int | None = None,
         reading: "Reading | None" = None,
+        on_block: Callable[[AnswerBlock], None] | None = None,
     ) -> Answer:
         """Answer *question* from the chunks a search of this tree returns.
 
@@ -320,6 +326,9 @@ class Ish:
         the chunks to offer beside the results. With its ``only``, the
         answer reads those chunks, with no search, no rerank, and no
         follow-up search.
+
+        Give *on_block* each block of the answer as the model writes it,
+        when the backend streams, so a terminal can show it at once.
         """
         self.prepare(brief)
         read = self._reader_for_answers()
@@ -352,6 +361,7 @@ class Ish:
             read=read,
             glossary=self._glossary,
             kind_of=self.kind_of,
+            on_block=on_block,
             **({"on_step": on_step} if on_step else {}),
         )
         return use_case.answer(question)

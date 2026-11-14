@@ -19,6 +19,7 @@ from ish.adapters.language_model._prompts import NOT_COVERED, Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
+    OnBlock,
     Passage,
     Query,
     Reply,
@@ -59,8 +60,16 @@ class AnthropicLanguageModel:
         self._prompts = prompts or load_prompts()
         self._timeout = timeout
 
-    def answer(self, question: str, sources: Sequence[Source]) -> Reply:
-        """Answer *question* from *sources*, with a citation per claim."""
+    def answer(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        on_block: OnBlock | None = None,
+    ) -> Reply:
+        """Answer *question* from *sources*, with a citation per claim.
+
+        Stream nothing: *on_block* gets no block, and the reply holds them all.
+        """
         body = self._post(
             _request(self.model_name, self._prompts.answer_cited, question, sources)
         )
@@ -87,6 +96,7 @@ class AnthropicLanguageModel:
         sources: Sequence[Source],
         searched: Sequence[str],
         turns_left: int,
+        on_block: OnBlock | None = None,
     ) -> Reply:
         """Answer, or ask for searches, with structured output.
 

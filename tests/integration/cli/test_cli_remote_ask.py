@@ -138,3 +138,22 @@ class TestRemoteFailures:
         monkeypatch.setattr(RemoteClient, "call", interrupted)
         assert main(["--ask", QUESTION, "--remote", flagged.url]) == 130
         assert "interrupted" in capsys.readouterr().err
+
+
+class TestStreamedRemoteAnswer:
+    def test_a_terminal_gets_what_a_pipe_gets(
+        self, flagged: Served, monkeypatch, capsys
+    ) -> None:
+        import sys
+
+        from tests.integration.cli.test_cli_ask import StreamingModel
+
+        model = StreamingModel()
+        _model(monkeypatch, model)
+        assert main(["--ask", QUESTION, "--remote", flagged.url]) == 0
+        piped = capsys.readouterr().out
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        assert main(["--ask", QUESTION, "--remote", flagged.url]) == 0
+        assert model.streamed is True
+        assert capsys.readouterr().out == piped
+        assert "It resets the board." in piped

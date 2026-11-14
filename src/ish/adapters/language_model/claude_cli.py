@@ -16,7 +16,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+import threading
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 from ish.adapters.language_model import _grounded
@@ -24,6 +25,7 @@ from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
+    OnBlock,
     Query,
     Reply,
     Selection,
@@ -81,9 +83,23 @@ def environment(source: Mapping[str, str]) -> dict[str, str]:
 
 
 def command(
-    executable: str, model: str, system: str, schema: dict[str, object]
+    executable: str,
+    model: str,
+    system: str,
+    schema: dict[str, object],
+    *,
+    stream: bool = False,
 ) -> list[str]:
-    """Return the argument list that asks one question with nothing else loaded."""
+    """Return the argument list that asks one question with nothing else loaded.
+
+    With *stream*, claude writes one JSON event a line as the reply grows,
+    and the reply itself as the last event.
+    """
+    output = (
+        ["stream-json", "--verbose", "--include-partial-messages"]
+        if stream
+        else ["json"]
+    )
     return [
         executable,
         "--print",
@@ -98,7 +114,7 @@ def command(
         "--system-prompt",
         system,
         "--output-format",
-        "json",
+        *output,
         "--json-schema",
         json.dumps(schema),
     ]
@@ -132,12 +148,22 @@ class ClaudeCliLanguageModel:
         self._executable = found
         self._timeout = timeout
 
-    def answer(self, question: str, sources: Sequence[Source]) -> Reply:
-        """Answer *question* from *sources* in the JSON the schema fixes."""
+    def answer(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        on_block: OnBlock | None = None,
+    ) -> Reply:
+        """Answer *question* from *sources* in the JSON the schema fixes.
+
+        With *on_block*, stream the reply, and give on each block of it
+        as soon as its JSON is whole.
+        """
         structured, read, wrote, cost = self._run(
             self._prompts.answer,
             _grounded.SCHEMA,
             _grounded.prompt(question, sources),
+            on_block,
         )
         reply = _grounded.parse(
             json.dumps(structured),
@@ -153,12 +179,14 @@ class ClaudeCliLanguageModel:
         sources: Sequence[Source],
         searched: Sequence[str],
         turns_left: int,
+        on_block: OnBlock | None = None,
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
         structured, read, wrote, cost = self._run(
             self._prompts.step,
             _grounded.STEP_SCHEMA,
             _grounded.step_prompt(question, sources, searched, turns_left),
+            on_block,
         )
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
@@ -196,36 +224,24 @@ class ClaudeCliLanguageModel:
         return replace(query, cost_usd=cost)
 
     def _run(
-        self, system: str, schema: dict[str, object], prompt: str
+        self,
+        system: str,
+        schema: dict[str, object],
+        prompt: str,
+        on_block: OnBlock | None = None,
     ) -> tuple[object, int, int, float]:
         """Run one call, and return its structured output, tokens, and cost.
 
         The cost is what claude says the call would cost at the prices of
-        the API, also when a subscription pays for it.
+        the API, also when a subscription pays for it. With *on_block*,
+        stream the reply and give on each block as it completes.
         """
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
-            try:
-                done = subprocess.run(
-                    command(self._executable, self.model_name, system, schema),
-                    input=prompt,
-                    capture_output=True,
-                    text=True,
-                    cwd=empty,
-                    env=environment(os.environ),
-                    timeout=self._timeout,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise LanguageModelError(
-                    f"claude did not answer within {self._timeout:g} s."
-                ) from exc
-        try:
-            body = json.loads(done.stdout)
-        except json.JSONDecodeError as exc:
-            detail = (done.stderr or done.stdout).strip()[:500]
-            raise LanguageModelError(
-                f"claude exited {done.returncode} without a JSON reply: {detail}"
-            ) from exc
+            if on_block is None:
+                body = self._whole(system, schema, prompt, empty)
+            else:
+                stream = _grounded.BlockStream(on_block)
+                body = self._streamed(system, schema, prompt, empty, stream.feed)
         if body.get("is_error") or "structured_output" not in body:
             raise LanguageModelError(f"claude did not answer: {body.get('result')}")
         usage = body.get("usage") or {}
@@ -240,3 +256,115 @@ class ClaudeCliLanguageModel:
         wrote = int(usage.get("output_tokens") or 0)
         cost = float(body.get("total_cost_usd") or 0.0)
         return body["structured_output"], read, wrote, cost
+
+    def _whole(
+        self, system: str, schema: dict[str, object], prompt: str, cwd: str
+    ) -> dict:
+        """Run one call in *cwd*, and return the reply claude writes at its end."""
+        try:
+            done = subprocess.run(
+                command(self._executable, self.model_name, system, schema),
+                input=prompt,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                env=environment(os.environ),
+                timeout=self._timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise LanguageModelError(
+                f"claude did not answer within {self._timeout:g} s."
+            ) from exc
+        try:
+            return json.loads(done.stdout)
+        except json.JSONDecodeError as exc:
+            detail = (done.stderr or done.stdout).strip()[:500]
+            raise LanguageModelError(
+                f"claude exited {done.returncode} without a JSON reply: {detail}"
+            ) from exc
+
+    def _streamed(
+        self,
+        system: str,
+        schema: dict[str, object],
+        prompt: str,
+        cwd: str,
+        on_json: Callable[[str], None],
+    ) -> dict:
+        """Run one call in *cwd* and stream it, and return the reply at its end.
+
+        Give *on_json* each piece of the structured output as claude
+        writes it. Stop claude when the call takes longer than the timeout
+        or the reader stops it, so no process outlives the question.
+        """
+        late = threading.Event()
+        with tempfile.TemporaryFile("w+") as errors:
+            process = subprocess.Popen(
+                command(self._executable, self.model_name, system, schema, stream=True),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=errors,
+                text=True,
+                cwd=cwd,
+                env=environment(os.environ),
+            )
+            timer = threading.Timer(self._timeout, _stop, (process, late))
+            timer.start()
+            body: dict | None = None
+            try:
+                assert process.stdin is not None and process.stdout is not None
+                process.stdin.write(prompt)
+                process.stdin.close()
+                for line in process.stdout:
+                    event = _event(line)
+                    if event.get("type") == "result":
+                        body = event
+                    elif piece := _structured_piece(event):
+                        on_json(piece)
+                process.wait()
+            finally:
+                timer.cancel()
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            if late.is_set():
+                raise LanguageModelError(
+                    f"claude did not answer within {self._timeout:g} s."
+                )
+            if body is None:
+                errors.seek(0)
+                detail = errors.read().strip()[:500]
+                raise LanguageModelError(
+                    f"claude exited {process.returncode} without a JSON reply: {detail}"
+                )
+        return body
+
+
+def _stop(process: subprocess.Popen, late: threading.Event) -> None:
+    """Stop *process*, which has run past its time, and say so."""
+    late.set()
+    process.kill()
+
+
+def _event(line: str) -> dict:
+    """Return one event of a stream, or an empty one for a line that is none."""
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return {}
+    return event if isinstance(event, dict) else {}
+
+
+def _structured_piece(event: dict) -> str:
+    """Return the piece of the structured output an event of a stream holds.
+
+    claude writes the reply a schema fixes as the input of a tool call,
+    and streams that input in pieces of JSON.
+    """
+    if event.get("type") != "stream_event":
+        return ""
+    delta = (event.get("event") or {}).get("delta") or {}
+    if delta.get("type") != "input_json_delta":
+        return ""
+    return str(delta.get("partial_json") or "")

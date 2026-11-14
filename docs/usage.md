@@ -124,6 +124,14 @@ source is a link that opens the file at its lines:
    tests/
 ```
 
+On a terminal, the answer shows as the model writes it: the question,
+then each part of the answer once it is whole, then the terms and the
+sources. Most of the wait is the writing, so the first part shows about
+when the rerank ends. What shows is the text the whole answer is, so a
+copy of it reads the same. A pipe gets the whole answer at its end, as
+does `--brief`. The `claude-cli` backend streams. The `anthropic` and
+`ollama` backends show the answer when it is whole.
+
 It reads well in a terminal, and an editor shows it as a document:
 
 ```sh
@@ -209,6 +217,8 @@ ish> and its reset value?
 A reply is short, with its `[n]` markers and one numbered line for each
 source. `ish chat --full` replies with the full answer. A reply is
 Markdown. A terminal shows it rendered, and a pipe gets the Markdown.
+A full reply shows on a terminal as the model writes it, as an answer
+of `ish ask` does.
 With color, a question turns grey once it is sent, and so do the
 sources. Each marker and each source is a link that opens the file at
 its lines, in a terminal that follows links. In the chat:

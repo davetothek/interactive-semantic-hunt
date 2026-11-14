@@ -31,7 +31,9 @@ class Session:
             )
         self.prepared.append(brief)
 
-    def ask(self, question, *, on_step=None, brief=False, reading=None) -> Answer:
+    def ask(
+        self, question, *, on_step=None, brief=False, reading=None, on_block=None
+    ) -> Answer:
         self.asked.append((question, brief, reading))
         if on_step:
             on_step(AnswerStep(SEARCHING))
@@ -472,3 +474,73 @@ class TestTheSearchOfAFollowUp:
         session.query_failure = LanguageModelError("claude did not answer.")
         _chat(session, "one", "two")
         assert "Searched for: two | one two" in capsys.readouterr().err
+
+
+class StreamingSession(Session):
+    """A session whose model streams each block of a full answer."""
+
+    def ask(
+        self, question, *, on_step=None, brief=False, reading=None, on_block=None
+    ) -> Answer:
+        from ish.application.answer import AnswerBlock
+
+        self.asked.append((question, brief, reading))
+        self.streamed = on_block is not None
+        blocks = (
+            AnswerBlock("summary", parts=(AnswerPart("It resets.", (WATCHDOG,)),)),
+            AnswerBlock(
+                "prose", heading="When", parts=(AnswerPart("At boot.", (WATCHDOG,)),)
+            ),
+        )
+        for block in blocks if on_block else ():
+            on_block(block)
+        return Answer(
+            parts=tuple(p for b in blocks for p in b.parts),
+            covered=True,
+            sources=(WATCHDOG,),
+            blocks=blocks,
+        )
+
+
+class TestAFullReplyStreams:
+    """A full reply shows on a terminal block by block, as it is written."""
+
+    def _converse(self, session, *typed, brief: bool) -> None:
+        converse(
+            session,
+            brief=brief,
+            report=lambda t, s: None,
+            read_line=_lines(*typed),
+            render=True,
+            terminal=False,
+        )
+
+    def test_a_full_reply_streams_and_reads_as_one_drawn_whole(self, capsys) -> None:
+        session = StreamingSession()
+        self._converse(session, "why", brief=False)
+        out = capsys.readouterr().out
+        assert session.streamed is True
+        assert out.count("It resets. [1]") == 1
+        assert out.index("It resets.") < out.index("At boot.") < out.index("Sources")
+
+    def test_more_streams_and_open_finds_the_streamed_sources(
+        self, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.delenv("VISUAL", raising=False)
+        monkeypatch.delenv("EDITOR", raising=False)
+        session = StreamingSession()
+        self._converse(session, "why", "/more", "/open 1", brief=True)
+        out = capsys.readouterr().out
+        assert session.streamed is True
+        assert out.rstrip().endswith(
+            "https://docs.example.invalid/tree/docs/boot.md#L1-3"
+        )
+
+    def test_a_brief_reply_does_not_stream(self, capsys) -> None:
+        session = StreamingSession()
+        self._converse(session, "why", brief=True)
+        assert session.streamed is False
+
+    def test_a_model_that_streams_nothing_replies_as_before(self, capsys) -> None:
+        self._converse(Session(), "why", brief=False)
+        assert "The watchdog resets the board. [1]" in capsys.readouterr().out

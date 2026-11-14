@@ -338,3 +338,79 @@ class TestQuery:
     def test_the_shipped_instruction_asks_for_a_short_query(self) -> None:
         text = " ".join(PROMPTS.query.split())
         assert "at most 15 words" in text and "Do not answer the question" in text
+
+
+class TestBlockStream:
+    """Each block streams as the final parse builds it, in reading order."""
+
+    ANSWER = {
+        "covered": True,
+        "summary": {"text": "It resets.", "source_ids": ["1"]},
+        "sections": [
+            {
+                "heading": "How",
+                "style": "steps",
+                "passages": [{"text": "Write CTRL.", "source_ids": ["2"]}],
+                "columns": [],
+                "rows": [],
+            },
+            {
+                "heading": "Empty",
+                "style": "prose",
+                "passages": [],
+                "columns": [],
+                "rows": [],
+            },
+            {
+                "heading": "Values",
+                "style": "table",
+                "passages": [],
+                "columns": ["Register", "Reset"],
+                "rows": [{"cells": ["CTRL", "0x0"], "source_ids": ["1"]}],
+            },
+        ],
+        "gaps": [{"text": "No source names the delay.", "source_ids": []}],
+        "terms": [],
+    }
+
+    def _streamed(self, answer: dict, size: int = 7) -> list:
+        blocks: list = []
+        stream = _grounded.BlockStream(blocks.append)
+        text = json.dumps(answer)
+        for start in range(0, len(text), size):
+            stream.feed(text[start : start + size])
+        return blocks
+
+    def test_the_streamed_blocks_are_the_blocks_of_the_reply(self) -> None:
+        reply = _grounded.parse(json.dumps(self.ANSWER), "m")
+        assert tuple(self._streamed(self.ANSWER)) == reply.blocks
+        assert [b.kind for b in reply.blocks] == ["summary", "steps", "table", "gaps"]
+
+    def test_an_empty_summary_streams_nothing_and_the_sections_still_do(self) -> None:
+        answer = {**self.ANSWER, "summary": {"text": " ", "source_ids": []}}
+        assert [b.kind for b in self._streamed(answer)] == ["steps", "table", "gaps"]
+
+    def test_sections_before_the_summary_stream_nothing(self) -> None:
+        answer = {
+            "covered": True,
+            "sections": self.ANSWER["sections"],
+            "summary": self.ANSWER["summary"],
+            "gaps": [],
+            "terms": [],
+        }
+        assert self._streamed(answer) == []
+
+    def test_gaps_before_the_sections_stop_the_stream(self) -> None:
+        answer = {
+            "covered": True,
+            "summary": self.ANSWER["summary"],
+            "gaps": self.ANSWER["gaps"],
+            "sections": self.ANSWER["sections"],
+            "terms": [],
+        }
+        assert [b.kind for b in self._streamed(answer)] == ["summary"]
+
+    def test_a_section_of_the_wrong_shape_stops_the_stream(self) -> None:
+        broken = {"heading": "Bad", "style": "table", "rows": [{"cells": 3}]}
+        answer = {**self.ANSWER, "sections": [broken, *self.ANSWER["sections"]]}
+        assert [b.kind for b in self._streamed(answer)] == ["summary"]

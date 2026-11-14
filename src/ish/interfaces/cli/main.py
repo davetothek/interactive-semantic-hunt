@@ -9,9 +9,12 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from ish import bootstrap
 from ish.application.answer import FOLLOWING, AnswerStep
+from ish.domain.chunk import Chunk
 from ish.interfaces.busy import ProgressLine, Ticker
 from ish.interfaces.cli.args import CHAT, INDEX, CliArgs
 from ish.interfaces.format import (
@@ -25,6 +28,9 @@ from ish.interfaces.format import (
 from ish.interfaces.log import resolve_color, setup_logging
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings
+
+if TYPE_CHECKING:
+    from ish.interfaces.cli.stream import StreamedAnswer
 
 log = logging.getLogger("ish.cli")
 
@@ -78,6 +84,7 @@ def _run_ask(args: CliArgs) -> int:
     line = ProgressLine()
     ticker = Ticker()
     with Ish(args.path, settings=args.settings) as ish:
+        stream = streamed(args.settings, args.query, ish.link, ticker, brief=args.brief)
         try:
             ish.index(on_progress=line.show)
             line.clear()
@@ -85,6 +92,7 @@ def _run_ask(args: CliArgs) -> int:
                 args.query,
                 on_step=lambda step: report_step(ticker, step),
                 brief=args.brief,
+                **({"on_block": stream.block} if stream else {}),
             )
         except KeyboardInterrupt:
             # Ctrl-C reaches a claude child as well, which stops with it.
@@ -95,11 +103,12 @@ def _run_ask(args: CliArgs) -> int:
             return 130
         finally:
             ticker.stop()
-        text = (
-            format_brief(answer)
-            if args.brief
-            else format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
-        )
+        if stream:
+            text = stream.rest(answer, kind_of=ish.kind_of)
+        elif args.brief:
+            text = format_brief(answer)
+        else:
+            text = format_answer(answer, args.query, ish.link, kind_of=ish.kind_of)
         usage = format_usage(answer_usage(answer), versions=versions())
         show_answer(args.settings, text, usage, brief=args.brief)
     return 0 if answer.covered else 2
@@ -116,6 +125,36 @@ def versions(server: str = "", host: str = "") -> str:
 
     mine = f"ish {installed_version()}"
     return f"{mine} · server {server} at {host}" if host else mine
+
+
+def streamed(
+    settings: Settings,
+    question: str,
+    link: Callable[[Chunk], str],
+    ticker: Ticker,
+    *,
+    brief: bool,
+) -> "StreamedAnswer | None":
+    """Return what shows a full answer on a terminal as it is written, or None.
+
+    A pipe and a brief answer get the whole text at its end, as before.
+    Write each block above the busy line, and draw it as ``show_answer``
+    draws the rest of the answer.
+    """
+    if brief or not sys.stdout.isatty():
+        return None
+    from ish.interfaces.cli.stream import StreamedAnswer
+    from ish.interfaces.cli.terminal import MAX_WIDTH, rendered
+
+    render = None
+    if settings.render:
+        color = resolve_color(settings.color, sys.stdout)
+
+        def render(text: str) -> str:
+            width = min(shutil.get_terminal_size().columns, MAX_WIDTH)
+            return rendered(text, width=width, color=color)
+
+    return StreamedAnswer(question, link, write=ticker.above, render=render)
 
 
 def show_answer(settings: Settings, answer: str, usage: str, *, brief: bool) -> None:

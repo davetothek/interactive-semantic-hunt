@@ -17,6 +17,7 @@ from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
+    OnBlock,
     Query,
     Reply,
     Selection,
@@ -66,8 +67,16 @@ class OllamaLanguageModel:
         self.host = chosen
         self._timeout = timeout
 
-    def answer(self, question: str, sources: Sequence[Source]) -> Reply:
-        """Answer *question* from *sources* in the JSON the schema fixes."""
+    def answer(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        on_block: OnBlock | None = None,
+    ) -> Reply:
+        """Answer *question* from *sources* in the JSON the schema fixes.
+
+        Stream nothing: *on_block* gets no block, and the reply holds them all.
+        """
         text, read, wrote = self._chat(
             self._prompts.answer,
             _grounded.SCHEMA,
@@ -81,6 +90,7 @@ class OllamaLanguageModel:
         sources: Sequence[Source],
         searched: Sequence[str],
         turns_left: int,
+        on_block: OnBlock | None = None,
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
         text, read, wrote = self._chat(

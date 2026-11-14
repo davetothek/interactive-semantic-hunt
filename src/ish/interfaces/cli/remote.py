@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ish.interfaces.busy import Ticker
 from ish.interfaces.cli.args import add_settings_options
-from ish.interfaces.cli.main import report_step, show_answer, versions
+from ish.interfaces.cli.main import report_step, show_answer, streamed, versions
 from ish.interfaces.format import (
     answer_usage,
     format_answer,
@@ -258,8 +258,10 @@ def ask(
     the server. Return 130 on Ctrl-C, with no traceback.
     """
     ticker = Ticker()
+    stream = None
     try:
         remote = RemoteIsh(settings)
+        stream = streamed(settings, question, remote.link, ticker, brief=brief)
         answer = remote.ask(
             question,
             lang=lang,
@@ -267,6 +269,7 @@ def ask(
             type=type,
             on_step=lambda step: report_step(ticker, step),
             brief=brief,
+            **({"on_block": stream.block} if stream else {}),
         )
     except KeyboardInterrupt:
         ticker.stop()
@@ -277,11 +280,12 @@ def ask(
         return _failed(exc)
     finally:
         ticker.stop()
-    text = (
-        format_brief(answer)
-        if brief
-        else format_answer(answer, question, remote.link, kind_of=remote.kind_of)
-    )
+    if stream:
+        text = stream.rest(answer, kind_of=remote.kind_of)
+    elif brief:
+        text = format_brief(answer)
+    else:
+        text = format_answer(answer, question, remote.link, kind_of=remote.kind_of)
     usage = format_usage(
         answer_usage(answer), versions=versions(remote.version, remote.host)
     )

@@ -10,6 +10,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A full answer of `ish ask` and `ish remote ask`, and a full reply of a
+  chat, shows on a terminal as the model writes it, one part at a time,
+  with the backend `claude-cli`. A pipe and `--brief` get the whole
+  answer at its end, as before.
 - `answer_notes` and `rerank_notes`: text the answering model and the
   rerank model read after their instructions. A note adds to the
   instructions and replaces none of them.
