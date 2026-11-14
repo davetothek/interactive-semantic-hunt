@@ -119,6 +119,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A search filtered by type takes about half the time: 465 ms against
+  871 for code on a tree of 74,000 chunks. An answer with a rerank runs
+  three of them.
 - An answer says in one or two sentences what a source of code does or
   what a test checks, and writes paragraphs of two to three sentences.
   It costs 13 % less and takes 2.4 s less, with the same citations.

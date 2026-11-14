@@ -59,6 +59,25 @@ def _is_test_path(path: str) -> bool:
     return name.startswith("test_") and "." in name[6:-1]
 
 
+def _remembered(categorize: Categorizer) -> Categorizer:
+    """Return *categorize*, which keeps the type of each path and language.
+
+    The type of a chunk depends on its path and its language alone, and
+    the chunks of one file share both. A search filtered by type asks
+    about every chunk it walks, tens of thousands on a large tree.
+    """
+    known: dict[tuple[object, str], str] = {}
+
+    def remembered(chunk: Chunk) -> str:
+        key = (chunk.path, chunk.language)
+        found = known.get(key)
+        if found is None:
+            found = known[key] = categorize(chunk)
+        return found
+
+    return remembered
+
+
 def by_language(languages: Mapping[str, str]) -> Categorizer:
     """Return the built-in reading: a test path, then what the language holds.
 
@@ -72,7 +91,7 @@ def by_language(languages: Mapping[str, str]) -> Categorizer:
             return TEST
         return languages.get(chunk.language, CODE)
 
-    return category_of
+    return _remembered(category_of)
 
 
 category_of = by_language({})
@@ -126,4 +145,4 @@ def compile_categories(
                 return name
         return fallback(chunk)
 
-    return categorize
+    return _remembered(categorize)

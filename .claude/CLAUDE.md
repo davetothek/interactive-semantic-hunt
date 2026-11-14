@@ -499,6 +499,13 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   way, and alone or in a request of 8 the vectors differ by 0.0.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
+- A search filtered by type walks the order until enough chunks pass,
+  89,126 for `type:code` on a firmware tree of ten indexes, and built a
+  path and read the type of each again: 871 ms against 57 ms unfiltered,
+  median of 5. With one Path for each file and the type of each path and
+  language kept, 465 ms for code, 338 for test, and 299 for doc, the same
+  results in all 15 searches. Reading the rows in larger slices saved
+  nothing more, 465 against 468 ms, because the cost is in each row.
 - Rich takes 61 ms to import, median of 7, against about 380 ms for a
   whole CLI query. Hence its import inside `rendered()`, which only an
   answer with `--render` on a terminal reaches.
