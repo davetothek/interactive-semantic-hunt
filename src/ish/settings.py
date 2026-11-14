@@ -48,6 +48,23 @@ It is a secret, not an option. A secret must not sit in a config file
 or show as a flag, so the name stays out of the option set.
 """
 
+LDAP_PASSWORD_ENV_VAR = ENV_PREFIX + "LDAP_BIND_PASSWORD"
+"""The environment variable that holds the password of the LDAP service account.
+
+It is a secret, not an option, as ``ISH_MCP_TOKEN`` is.
+"""
+
+LDAP_PASSWORD_FILE_ENV_VAR = LDAP_PASSWORD_ENV_VAR + "_FILE"
+"""The environment variable that names a file with that password, as Docker
+mounts a secret."""
+
+REMOTE_ENV_VAR = ENV_PREFIX + "REMOTE"
+"""The environment variable that names the server of ``ish remote``.
+
+It is the ``remote`` setting, read as every setting is. The name is here
+for an error that tells the user to set it.
+"""
+
 DEFAULT_EMBEDDER = "ollama"
 DEFAULT_IGNORE = (".git", ".venv", "venv", "__pycache__")
 
@@ -67,7 +84,18 @@ EMBEDDING = "embedding"
 STORAGE = "where the index lives"
 MAINTENANCE = "maintenance"
 PICKER = "interactive picker (-i)"
-SECTIONS = (SEARCH, ANSWERS, OUTPUT, INDEXED, EMBEDDING, STORAGE, MAINTENANCE, PICKER)
+SERVER = "server over HTTP (ish mcp --http)"
+SECTIONS = (
+    SEARCH,
+    ANSWERS,
+    OUTPUT,
+    INDEXED,
+    EMBEDDING,
+    STORAGE,
+    MAINTENANCE,
+    PICKER,
+    SERVER,
+)
 
 
 def _opt(
@@ -345,7 +373,8 @@ class Settings:
         default="",
         metadata=_opt(
             ANSWERS,
-            "MCP server URL that answers --ask and --brief. Empty answers here.",
+            "URL of the MCP server that `ish remote` searches. Also: ISH_REMOTE. "
+            "A config file in a tree cannot set it.",
             metavar="URL",
         ),
     )
@@ -425,6 +454,26 @@ class Settings:
             metavar="DIR",
         ),
     )
+    answer_notes: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Text the answering model reads after its instructions, such as "
+            "the language to answer in or what the names of a tree mean. It "
+            "adds to the instructions and replaces none.",
+            metavar="TEXT",
+        ),
+    )
+    rerank_notes: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Text the rerank model reads after its instructions, such as "
+            "which directories hold the specifications. It adds to the "
+            "instructions and replaces none.",
+            metavar="TEXT",
+        ),
+    )
     allowed_language_models: tuple[str, ...] = field(
         default=(),
         metadata=_opt(
@@ -465,6 +514,82 @@ class Settings:
             "Delete the vectors no index of the path's repository references, "
             "and stop.",
             action="store_true",
+        ),
+    )
+    login_days: int = field(
+        default=30,
+        metadata=_opt(
+            SERVER,
+            "Days a login token from ish remote login lasts.",
+            type=int,
+            metavar="DAYS",
+        ),
+    )
+    ldap_url: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "URL of the LDAP directory that ldap in auth signs users in to.",
+            metavar="URL",
+        ),
+    )
+    ldap_user_dn: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Name a user binds as, with {user} for the user name.",
+            metavar="DN",
+        ),
+    )
+    ldap_bind_dn: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Service account that searches the directory for each user. "
+            "Its password is in ISH_LDAP_BIND_PASSWORD.",
+            metavar="DN",
+        ),
+    )
+    ldap_base: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Part of the directory the service account searches for users.",
+            metavar="DN",
+        ),
+    )
+    ldap_user_filter: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Filter that finds a user, with {user}. Empty means (uid={user}).",
+            metavar="FILTER",
+        ),
+    )
+    ldap_group: str = field(
+        default="",
+        metadata=_opt(
+            SERVER,
+            "Give a login token only to a member of this LDAP group.",
+            metavar="DN",
+        ),
+    )
+    ldap_starttls: bool = field(
+        default=False,
+        metadata=_opt(
+            SERVER,
+            "Start TLS on a plain ldap:// URL before the password goes out.",
+            action="store_true",
+        ),
+    )
+    auth: tuple[str, ...] = field(
+        default=("token",),
+        metadata=_opt(
+            SERVER,
+            "Ways the server admits a request. token admits the token in "
+            "ISH_MCP_TOKEN.",
+            nargs="+",
+            metavar="METHOD",
         ),
     )
 
@@ -563,6 +688,11 @@ def _options_in(path: Path, raw: dict[str, Any]) -> Mapping[str, Any]:
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
+    """Read the options of one config file, and warn for an unknown key."""
+    return _accept(str(path), _file_options(path))
+
+
+def _file_options(path: Path) -> Mapping[str, Any]:
     """Read one config file. Return an empty mapping when it is absent.
 
     Treat anything that is not a file as absent, so a directory of that
@@ -582,7 +712,85 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise ConfigError(f"Cannot parse {path}: {exc}") from exc
 
     log.debug("Read config from %s", path)
-    return _accept(str(path), _options_in(path, raw))
+    return _options_in(path, raw)
+
+
+# Options that a file in a tree may not set. A tree that names the
+# server of `ish remote` chooses where the token of the user goes. A tree
+# that sets how a server signs users in chooses the directory that gets
+# each password, and how long a login lasts. A tree that sets what a
+# model is told can tell it to answer from outside the sources.
+NOT_FROM_A_TREE = (
+    "prompt_dir",
+    "answer_notes",
+    "rerank_notes",
+    "remote",
+    "auth",
+    "login_days",
+    "ldap_url",
+    "ldap_user_dn",
+    "ldap_bind_dn",
+    "ldap_base",
+    "ldap_user_filter",
+    "ldap_group",
+    "ldap_starttls",
+)
+
+
+def _from_a_tree(path: Path) -> dict[str, Any]:
+    """Read the project config file *path*, without what a tree may not set.
+
+    Drop each such option with no word. Only a command that reads a
+    server names the file, through ``tree_files_naming_a_server``, so a
+    local command prints what it printed before.
+    """
+    options = _read_toml(path)
+    for name in NOT_FROM_A_TREE:
+        options.pop(name, None)
+    return options
+
+
+def tree_files_naming_a_server(
+    start: Path,
+    *,
+    config: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[Path]:
+    """Return each project config file at or above *start* that sets ``remote``.
+
+    The loader ignores ``remote`` in each one. Return nothing when
+    *config* or ``ISH_CONFIG`` names a file, because the loader then
+    reads no project file.
+    """
+    return [
+        path
+        for path, names in tree_files_setting(start, config=config, environ=environ)
+        if "remote" in names
+    ]
+
+
+def tree_files_setting(
+    start: Path,
+    *,
+    config: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[tuple[Path, list[str]]]:
+    """Return each project config file at or above *start* that sets an
+    option of ``NOT_FROM_A_TREE``, with the names of those it sets.
+
+    The loader ignores each one. Return nothing when *config* or
+    ``ISH_CONFIG`` names a file, because the loader then reads no project
+    file.
+    """
+    environ = environ if environ is not None else os.environ
+    if config or environ.get(CONFIG_ENV_VAR):
+        return []
+    found = []
+    for path in project_configs(start):
+        names = [name for name in NOT_FROM_A_TREE if name in _file_options(path)]
+        if names:
+            found.append((path, names))
+    return found
 
 
 def _read_named(path: Path) -> dict[str, Any]:
@@ -647,14 +855,21 @@ def project_configs(start: Path) -> list[Path]:
 def _from_env(environ: Mapping[str, str]) -> dict[str, Any]:
     """Read options from ``ISH_*`` environment variables.
 
-    Pass over ``ISH_CONFIG`` and ``ISH_MCP_TOKEN``. One names a file to
-    read and the other holds a secret. Neither is an option, and
-    reporting one as unknown would be wrong.
+    Pass over ``ISH_CONFIG``, ``ISH_MCP_TOKEN``, and the two variables of
+    the LDAP password. One names a file to read, and the others hold a
+    secret or name its file. None is an option, and reporting one as
+    unknown would be wrong.
     """
+    skipped = (
+        CONFIG_ENV_VAR,
+        MCP_TOKEN_ENV_VAR,
+        LDAP_PASSWORD_ENV_VAR,
+        LDAP_PASSWORD_FILE_ENV_VAR,
+    )
     raw = {
         key.removeprefix(ENV_PREFIX).lower(): value
         for key, value in environ.items()
-        if key.startswith(ENV_PREFIX) and key not in (CONFIG_ENV_VAR, MCP_TOKEN_ENV_VAR)
+        if key.startswith(ENV_PREFIX) and key not in skipped
     }
     return _accept("the environment", raw)
 
@@ -688,7 +903,7 @@ def load_settings(
     else:
         # Outermost first, so the nearest file wins key by key.
         for project in project_configs(start):
-            settings = replace(settings, **_read_toml(project))
+            settings = replace(settings, **_from_a_tree(project))
 
     settings = replace(settings, **_from_env(environ))
 

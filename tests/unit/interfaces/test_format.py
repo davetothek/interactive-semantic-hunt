@@ -551,24 +551,20 @@ class TestFormatUsage:
             ]
         )
 
-    def test_a_remote_answer_says_what_the_server_spent(self) -> None:
+    def test_the_total_names_the_cost_claude_reports(self) -> None:
         from ish.interfaces.format import format_usage
 
-        lines = format_usage(USAGE, 36.04).splitlines()
-        assert lines[-1] == "total   36.0 s  34.6 s on the server"
-        # The note overhangs the model column, so the tokens stay where
-        # they are.
-        assert lines[3] == "rerank   5.1 s  claude-haiku-5-5    9,448     60"
+        lines = format_usage({**USAGE, "cost_usd": 0.01234}).splitlines()
+        assert lines[-1].split() == ["total", "34.6", "s", "about", "$0.0123"]
 
-    def test_a_server_too_old_for_timings_shows_its_tokens(self) -> None:
+    def test_a_stage_with_a_model_and_no_time_shows_its_tokens(self) -> None:
         from ish.interfaces.format import format_usage
 
-        old = {k: v for k, v in USAGE.items() if k not in ("timings", "seconds")}
-        assert format_usage(old, 30.0).splitlines() == [
-            "stage     time  model                  in    out",
-            "rerank          claude-haiku-5-5    9,448     60",
-            "answer          claude-sonnet-5-5  24,422  1,642",
-            "total   30.0 s",
+        untimed = {k: v for k, v in USAGE.items() if k not in ("timings", "seconds")}
+        assert format_usage(untimed).splitlines() == [
+            "stage   time  model                  in    out",
+            "rerank        claude-haiku-5-5    9,448     60",
+            "answer        claude-sonnet-5-5  24,422  1,642",
         ]
 
     def test_follow_up_searches_and_turns_are_counted(self) -> None:
@@ -681,3 +677,88 @@ class TestTermsSection:
         answer, _a, _b = self._answer()
         text = format_answer(replace(answer, terms=()), "q", lambda c: "file:///x")
         assert "## Terms" not in text
+
+
+class TestFormatChat:
+    """A chat reply is short and cited, or the full answer."""
+
+    @staticmethod
+    def _answer(*parts, sources=(), blocks=(), covered=True):
+        from ish.application.answer import Answer
+
+        return Answer(parts=parts, covered=covered, sources=sources, blocks=blocks)
+
+    def test_a_brief_reply_keeps_its_markers_and_names_each_source(self) -> None:
+        from ish.application.answer import AnswerBlock, AnswerPart
+        from ish.interfaces.format import format_chat
+
+        a = Chunk(Path("spec/a.adoc"), "t", "section", "asciidoc", "a", 10, 20)
+        b = Chunk(Path("spec/b.adoc"), "t", "section", "asciidoc", "b", 3, 4)
+        answer = self._answer(
+            sources=(a, b),
+            blocks=(
+                AnswerBlock(
+                    "summary",
+                    parts=(
+                        AnswerPart("It is 49 ms", (a,)),
+                        AnswerPart(" in mode B.", (b,)),
+                    ),
+                ),
+                AnswerBlock(
+                    "prose", heading="More", parts=(AnswerPart("Detail.", (a,)),)
+                ),
+            ),
+        )
+        link = lambda c: f"file:///{c.path}"  # noqa: E731
+        assert format_chat(answer, "why", link, brief=True) == (
+            "It is 49 ms [1] in mode B. [2]\n\n"
+            "1. [spec/a.adoc:10-20](file:///spec/a.adoc)\n"
+            "2. [spec/b.adoc:3-4](file:///spec/b.adoc)",
+            [a, b],
+        )
+
+    def test_a_brief_reply_with_no_summary_uses_its_parts(self) -> None:
+        from ish.application.answer import AnswerPart
+        from ish.interfaces.format import format_chat
+
+        a = Chunk(Path("spec/a.adoc"), "t", "section", "asciidoc", "a", 1, 2)
+        answer = self._answer(AnswerPart("Yes.", (a,)), sources=(a,))
+        assert format_chat(answer, "why", lambda c: "u", brief=True) == (
+            "Yes. [1]\n\n1. [spec/a.adoc:1-2](u)",
+            [a],
+        )
+
+    def test_a_brief_reply_that_cites_nothing_is_its_text(self) -> None:
+        from ish.application.answer import AnswerPart
+        from ish.interfaces.format import format_chat
+
+        answer = self._answer(AnswerPart("Yes."))
+        assert format_chat(answer, "why", lambda c: "", brief=True) == ("Yes.", [])
+
+    def test_an_uncovered_question_says_so_in_one_line(self) -> None:
+        from ish.interfaces.format import format_chat
+
+        answer = self._answer(covered=False)
+        reply = format_chat(answer, "why", lambda c: "", brief=True)
+        assert reply == ("The documents do not answer this.", [])
+        assert format_chat(answer, "why", lambda c: "", brief=False) == reply
+
+    def test_a_full_reply_is_the_answer_with_plain_markers(self) -> None:
+        from ish.application.answer import Answer, AnswerPart, AnswerTerm
+        from ish.interfaces.format import answer_text, format_chat
+
+        a = chunk()
+        answer = Answer(
+            parts=(AnswerPart("Long.", (a,)),),
+            covered=True,
+            sources=(a,),
+            terms=(AnswerTerm("AE", "Auto Exposure", (a,)),),
+        )
+        link = lambda c: "file:///x"  # noqa: E731
+        text, cited = format_chat(answer, "why", link, brief=False)
+        assert (text, cited) == answer_text(answer, "why", link, footnotes=False)
+        assert "[^" not in text
+        assert "Long. [1]" in text
+        assert "- **AE**: Auto Exposure [1]" in text
+        place = f"{a.path.name}{a.location.render()}"
+        assert f"## Sources\n\n1. [{place}](file:///x)\n   " in text

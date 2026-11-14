@@ -914,6 +914,23 @@ class TestScoredMatrixCache:
             writer.close()
 
 
+class TestTheChunksOfAFileShareOnePath:
+    """A filtered search builds a chunk for each row it walks, 89,172 for one.
+
+    Parsing the path of each again cost 0.34 s of a search of 1.7 s.
+    """
+
+    def test_two_chunks_of_one_file_hold_the_same_path(self, tmp_path: Path) -> None:
+        store = TestFetchDepth()._store(tmp_path)
+        try:
+            found = store.search([1.0, 0.0], limit=3)
+            assert len(found) == 3
+            assert found[0].chunk.path is found[1].chunk.path is found[2].chunk.path
+            assert found[0].chunk.path == Path("/p/a.py")
+        finally:
+            store.close()
+
+
 class TestFetchDepth:
     """Verify the store reads no more chunk detail than it needs.
 
@@ -952,11 +969,11 @@ class TestFetchDepth:
         built = {"n": 0}
         original = SqliteVectorStore._to_chunk
 
-        def counted(row):
+        def counted(self, row):
             built["n"] += 1
-            return original(row)
+            return original(self, row)
 
-        monkeypatch.setattr(SqliteVectorStore, "_to_chunk", staticmethod(counted))
+        monkeypatch.setattr(SqliteVectorStore, "_to_chunk", counted)
         try:
             assert len(store.search([1.0, 0.0], limit=10)) == 10
             assert built["n"] == 10
@@ -969,11 +986,11 @@ class TestFetchDepth:
         built = {"n": 0}
         original = SqliteVectorStore._to_chunk
 
-        def counted(row):
+        def counted(self, row):
             built["n"] += 1
-            return original(row)
+            return original(self, row)
 
-        monkeypatch.setattr(SqliteVectorStore, "_to_chunk", staticmethod(counted))
+        monkeypatch.setattr(SqliteVectorStore, "_to_chunk", counted)
         try:
             store.search([1.0, 0.0], limit=10, keep=lambda chunk: True)
             assert built["n"] > 10

@@ -88,10 +88,10 @@ nvim $(ish -i src/)
 
 ## Ask a question
 
-`--ask` answers the query as a question, from the chunks a search finds:
+`ish ask` answers a question from the chunks a search finds:
 
 ```sh
-ish --ask "how does the release branch get its version" docs/
+ish ask "how does the release branch get its version" docs/
 ```
 
 ish prints Markdown a person reads from the top down: a short answer, a
@@ -124,10 +124,18 @@ source is a link that opens the file at its lines:
    tests/
 ```
 
+On a terminal, the answer shows as the model writes it: the question,
+then each part of the answer once it is whole, then the terms and the
+sources. Most of the wait is the writing, so the first part shows about
+when the rerank ends. What shows is the text the whole answer is, so a
+copy of it reads the same. A pipe gets the whole answer at its end, as
+does `--brief`. The `claude-cli` backend streams. The `anthropic` and
+`ollama` backends show the answer when it is whole.
+
 It reads well in a terminal, and an editor shows it as a document:
 
 ```sh
-ish --ask "how does the release branch get its version" docs/ | nvim -c 'set ft=markdown' -
+ish ask "how does the release branch get its version" docs/ | nvim -c 'set ft=markdown' -
 ```
 
 In Neovim, `gx` on a link opens the source. With `link_base` set, the
@@ -184,42 +192,154 @@ and nothing else, and ish prints it as plain text with no citations, which
 suits a script or a shell prompt:
 
 ```sh
-ish --brief "how long is the watchdog period while streaming" docs/
+ish ask --brief "how long is the watchdog period while streaming" docs/
 ```
 
 Ask again without `--brief` for the sources. A brief answer costs about a
 third of the output tokens and half the time.
 
-### Ask a server
+### Chat about the files
 
-`--ask` and `--brief` can ask an `ish-mcp --http` server instead of the
-tree on this machine. Name the server with `--remote`, or with `remote` in
-the config file, and put its token in `ISH_MCP_TOKEN`:
+`ish chat` is a conversation about a tree. Each line is a question, and
+each reply answers from the chunks a search finds, as `ish ask` does,
+with a citation for each claim:
 
-```sh
-export ISH_MCP_TOKEN="<the token of the server>"
-ish --remote https://docs.example.com/mcp --ask "how is the watchdog configured"
+```text
+$ ish chat docs/
+ish> how is the watchdog configured
+The watchdog period is set in WDT_CTRL. [1]
+
+ 1 spec/watchdog.adoc:40-62
+
+ish> and its reset value?
 ```
 
-The server searches its own tree and writes the answer with its own
-language model, so this machine needs no index and no model. The filter
-words and the `--lang`, `--under`, and `--type` flags travel with the
-question, and so does `--ask-turns N` when you give it: `0` answers from the
-first search, and up to `5` lets the model search again before it answers.
-Without the flag the server uses its own `ask_turns`. The path argument does not, because a path on this machine
-means nothing to the server. The exit codes are the same as for a local
-answer. A plain search and `-i` still read the local tree.
+A reply is short, with its `[n]` markers and one numbered line for each
+source. `ish chat --full` replies with the full answer. A reply is
+Markdown. A terminal shows it rendered, and a pipe gets the Markdown.
+A full reply shows on a terminal as the model writes it, as an answer
+of `ish ask` does.
+With color, a question turns grey once it is sent, and so do the
+sources. Each marker and each source is a link that opens the file at
+its lines, in a terminal that follows links. In the chat:
 
-The total is the seconds you waited, and beside it the seconds the server
-spent. The rest is the network and the queue. The last line names the
-version of the server as well. A server that sends no timings is too old
-to time its stages, and the table gives its tokens alone.
+| command | what it does |
+|---|---|
+| `/more` | the full answer of the last question, from the chunks it read, with no new search |
+| `/sources` | the chunks the last answer read |
+| `/open N` | open source N of the last reply in `$VISUAL` or `$EDITOR`, at its first line, or show its link |
+| `/new` | forget the chat so far |
+| `/quit` | end the chat, as Ctrl-D does |
+
+On a terminal, Tab finishes a command, and the arrow keys reach the
+questions asked before. No question is written to a history file.
+
+The chat keeps what was asked and answered while it runs, so a follow-up
+can say "it" and "that register". The model reads that history as context
+for the question, under a heading that says it is no source: a claim still
+needs a chunk. For a follow-up, the rerank model writes one search query
+from the history, such as "LDAP sign-in on the server" for "cool, what
+about ldap?", and the chat names it on a line of its own. Without a
+rerank model the model of the answer writes it. When no model can write
+it, the follow-up is searched alone and together with the question before
+it. The chunks the last answer cited are offered again beside the
+results. Past about 4,000 tokens, the history keeps the recent turns
+whole and only the questions of the older ones. No model summarizes it, so
+the history holds nothing that no answer said.
+
+The history holds only the parts of each answer that cite a source, so
+the model never reads back a claim that no chunk made. It stays in memory,
+and the chat writes none of it to disk. Ctrl-C stops the reply that runs,
+and the chat goes on. `ish remote chat` chats about the tree of a server the
+same way: the server returns chunks, and the answers and the model stay on
+this machine. The server gets the searches, so it sees each query the
+model wrote, as it sees any query, and never an answer.
+
+### Ask a server
+
+`ish remote` reads an `ish mcp --http` server, not a tree on this machine.
+Name the server with `--url`, with `ISH_REMOTE`, or with `remote` in your
+user config file, in that order, and put its token in `ISH_MCP_TOKEN`:
+
+```sh
+export ISH_REMOTE="https://docs.example.com/mcp"
+export ISH_MCP_TOKEN="<the token of the server>"
+ish remote search "watchdog period"
+ish remote ask "how is the watchdog configured"
+ish remote ask --brief "how long is the watchdog period"
+```
+
+A config file in a tree does not name a server. ish ignores its `remote`,
+and `ish remote` prints a warning that names the file, because a tree you
+cloned would choose where your token goes. A file you name with `--config` may name
+one.
+
+The token is the one secret, and it goes in the environment. ish refuses
+a URL that holds a user name or a password, because the URL names the
+server in each error and on stderr.
+
+#### Sign in
+
+A server that offers a sign-in gives a login token in place of a shared
+one:
+
+```sh
+export ISH_REMOTE="https://docs.example.com/mcp"
+ish remote login
+ish remote search "watchdog period"
+ish remote logout
+```
+
+`ish remote login` asks for your user name and your password. The
+password does not show as you type. `--user NAME` gives the name, and
+`--method NAME` picks a method when the server offers more than one. The
+password goes to the server in the body of one request, and ish keeps it
+nowhere. ish sends no password over plain http to another machine.
+
+The server sends back a login token that lasts 30 days, or what its
+operator sets. ish keeps it in `~/.config/ish/logins.json`, one token for
+each server URL, in a file only you can read. ish refuses the file when
+other users can read it, and names the file. Every command of `ish
+remote` sends the login token when `ISH_MCP_TOKEN` is not set. When the
+token expires, or the operator ends it, ish says to run `ish remote login`
+again. `ish remote logout` deletes the token of the server.
+
+`ish remote search` prints the result lines of the server. `--limit` and
+`--format` travel with the query.
+
+For `ish remote ask`, the server searches its own tree and returns the
+chunks with their text. The language model of this machine picks the chunks
+and writes the answer, so this machine needs no index and the server runs
+no model. Choose the model on this machine, as for a local answer. With
+`--ask-turns N`, the model can search the server again before it answers.
+
+The filter words in the query travel to the server, and so do the `--lang`,
+`--under`, and `--type` flags of the line. A filter from the environment or
+from a config file of this machine stays here, and so does a path: the
+server searches its own tree, and `ish remote` takes no path. The exit
+codes are the same as for a local answer.
+
+The table on stderr shows the stages of this machine. The last line names
+the version of ish here, the version of the server, and its host:
+
+```text
+ish 0.9.4 · server 0.9.4 at docs.example.com
+```
 
 The links in the answer are the ones the server makes. Set `link_base` on
 the server, so they point at a published tree rather than at its disk. When
 that tree is behind the same token, the [Neovim link
 opener](clients.md#use-from-neovim) sends `ISH_MCP_TOKEN` with each fetch.
-Set `ISH_REMOTE` rather than `--remote` so the opener knows the server.
+Set `ISH_REMOTE` rather than `--url` so the opener knows the server.
+
+For an agent or an editor, `ish remote mcp` serves the same search and
+answer on stdio, with the other tools that read the server. See [Give an agent the tree of a
+server](clients.md#give-an-agent-the-tree-of-a-server).
+
+Every line without the word `remote` reads the tree on this machine, with
+`ISH_REMOTE` set or not. One exception stays for one release: `--remote URL`
+with `--ask` or `--brief`, on a line with no command, asks that server and
+prints a warning that names `ish remote ask`.
 
 Answers are off until you choose a model. See
 [Answer questions](configuration.md#answer-questions). A plain search never
@@ -234,7 +354,7 @@ builds a language model and sends no text anywhere.
 | `--embedder {llama.cpp,ollama,st}` | Select the embedding backend (default: ollama) |
 | `-v`, `-vv` | Increase log detail |
 | `--color WHEN` | Color the logs, the timing table, and a rendered answer: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
-| `--render`, `--no-render` | Render the answer of `--ask` on a terminal. A pipe still gets the Markdown |
+| `--render`, `--no-render` | Render the answer of `ish ask` on a terminal. A pipe still gets the Markdown |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
 | `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
@@ -254,8 +374,8 @@ builds a language model and sends no text anywhere.
 | `--sweep` | Delete the vectors no index of the path's repository references, and stop |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |
-| `--ask` | Answer the query as a question, with the sources it cites |
-| `--brief` | Answer the query in a sentence or two, with no sources |
+| `--brief` | With `ish ask`, answer in a sentence or two, with no sources |
+| `--ask`, `--brief` with no command | The spelling of `ish ask` and `ish ask --brief` before the commands. They work for one release and print a warning |
 | `--language-model NAME` | Language model backend that writes answers: `anthropic`, `ollama`, `claude-cli` |
 | `--answer-model MODEL` | Model that backend runs. Required, there is no default |
 | `--allowed-language-models NAME ...` | Backends that may receive text. Empty allows none |
@@ -264,7 +384,7 @@ builds a language model and sends no text anywhere.
 | `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
 | `--prompt-dir DIR` | Instruction files that replace the shipped ones, file by file |
 | `--link-base URL` | Base URL where the tree is published, for the links of an answer |
-| `--remote URL` | MCP server that answers `--ask` and `--brief`, with its token in `ISH_MCP_TOKEN` |
+| `--remote URL` | Server that `--ask` and `--brief` read on a line with no command, for one release. Use `ish remote` with `--url URL` |
 
 Logs go to stderr, so you can pipe stdout safely. A file that cannot be read
 or parsed is counted in one line; `-v` names them.

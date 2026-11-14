@@ -8,6 +8,184 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- A full answer of `ish ask` and `ish remote ask`, and a full reply of a
+  chat, shows on a terminal as the model writes it, one part at a time,
+  with the backend `claude-cli`. A pipe and `--brief` get the whole
+  answer at its end, as before.
+- `answer_notes` and `rerank_notes`: text the answering model and the
+  rerank model read after their instructions. A note adds to the
+  instructions and replaces none of them.
+- The timing table of an answer ends with what the answer cost, when the
+  backend says so. claude-cli says what each call would cost at the
+  prices of the API, also when a subscription pays for it. The `ask`
+  tool sends it as `cost_usd`.
+- Commands. `ish search QUERY [PATH]` searches, `ish ask QUESTION [PATH]`
+  answers a question, and `ish pick [PATH]` opens the picker. `ish ask`
+  takes `--brief`. Each command takes every option, and `--help`.
+- `ish chat [PATH]` and `ish remote chat`: a conversation about the files.
+  Each reply answers from the chunks a search finds, with a citation for
+  each claim, and the chat keeps what was asked while it runs. A reply is
+  short, with its sources named. `/more` writes the full answer from what
+  the last answer read, `/sources` names those chunks, `/new` forgets the
+  chat, and `--full` replies in full. The history stays in memory, and
+  holds only what a source backs. A server gets the searches, and never
+  an answer.
+  On a terminal, a reply is rendered, a sent question and the sources
+  turn grey, and each marker and source links to its file. `/open N`
+  opens source N in the editor, and Tab finishes a command.
+- `ish index [PATH]` builds the index of a tree, or brings it up to date,
+  with no search, and says how many chunks it holds. When `ish-serve`
+  keeps the tree, it names the server and leaves the work to it.
+- `ish mcp`, `ish serve`, and `ish complete` start what `ish-mcp`,
+  `ish-serve`, and `ish-complete` start. The three old names stay.
+- A `sources` tool on a server over HTTP. It returns the chunks a search
+  finds with the text of each, and the meaning of each acronym the texts
+  use. A client reads it to write an answer with a model of its own. The
+  tool runs no language model. A stdio server does not list it.
+- `ish remote search QUERY` prints the results of a server over HTTP.
+  `--limit`, `--format`, `--lang`, `--under`, and `--type` travel with
+  the query.
+- `ish remote ask QUESTION` answers from the tree of a server with the
+  language model of this machine. The server returns chunks and runs no
+  model. `--brief` gives the short answer, and `--ask-turns N` lets the
+  model search the server again. The last line of stderr names the
+  server and its version.
+- `--url`, then `ISH_REMOTE`, then `remote` in the user config file names
+  the server of `ish remote`. Its token is in `ISH_MCP_TOKEN`.
+- `auth` names the ways a server over HTTP admits a request. `token`, the
+  default, admits the token in `ISH_MCP_TOKEN`, as before. An empty `auth`
+  stops the server with an error that names it.
+- `ish remote login` signs in to the server, and `ish remote logout` signs
+  out. A server that names a sign-in method in `auth` lists it at `/login`,
+  beside `/mcp`, and gives a login token that lasts `login_days`, 30 by
+  default. The client asks for the password with no echo, sends it in the
+  body of one request, and keeps it nowhere. It keeps the token in
+  `~/.config/ish/logins.json`, which only you can read, and every command
+  of `ish remote` sends it when `ISH_MCP_TOKEN` is not set. A password goes
+  only over https, or to a server on this machine.
+- `ldap` in `auth` signs users in against an LDAP directory, with
+  `ldap_url`, `ldap_user_dn`, and `ldap_starttls`. With `ldap_group`, only
+  a member of that group gets a login token. A directory has 10 s to
+  answer. It needs
+  the `ldap` extra, which installs python-ldap. The user name is escaped
+  before it reaches the directory, and an empty password never binds. A
+  plain `ldap://` URL with no StartTLS starts with one warning.
+- `ldap_bind_dn`, `ldap_base`, and `ldap_user_filter` sign users in
+  through a service account, for a directory such as an Active Directory.
+  The server binds as the account, finds the one entry of the user, checks
+  `ldap_group`, and then binds as the user. The password of the account is
+  in `ISH_LDAP_BIND_PASSWORD`, or in the file that
+  `ISH_LDAP_BIND_PASSWORD_FILE` names, as Docker mounts a secret. Every
+  option is also an `ISH_*` variable, so a container needs no config file.
+- A server that signs users in listens on this machine only, behind a
+  reverse proxy that holds the certificate, and refuses to start on
+  another address. Five failed sign-ins for one user name in 15 minutes
+  stop more attempts for 15 minutes, and the directory is not asked. A
+  sign-in still in flight counts, so guesses sent at once do not pass the
+  limit. The server answers 429 while it holds.
+- A command that sends a token or a password follows no redirect, so the
+  token goes only to the address you gave, and a plain http request goes
+  to no proxy. A server error names the type of the error in its log, and
+  never its text.
+- A config file in a tree cannot set `auth`, `login_days`, or an `ldap_*`
+  option, so a person who can commit to the tree cannot choose the
+  directory that gets each password. `ish mcp --http` names such a file.
+  The logins stay in the data directory whatever `cache_dir` says, and
+  the server refuses a login file that another user can write.
+- A server over HTTP serves at most 64 connections at once, closes one
+  that sends nothing for 30 s, and checks at most 8 sign-ins at once. A
+  user name has at most 256 characters, and a password 1024. A static
+  token of fewer than 32 characters starts the server with a warning.
+- A server keeps the SHA-256 of each login token, never the token, in
+  `~/.local/share/ish/logins.jsonl`. The operator ends a login by deleting
+  its line. Each tool call writes one line that names the user and the
+  tool, never the query.
+- The Neovim and VS Code clients search this tree, a server, or both:
+  `vim.g.ish_source` or `ish.source`, `auto` by default. `auto` reads the
+  local index when there is one, the server when one is set, and both when
+  both are, with each line of the server marked. A question goes to this
+  tree first and offers the server when the answer is not covered. With
+  no index and no server, a client asks once a tree before it builds an
+  index. `require('utils.ish').index()` and `ish: Refresh the index`
+  build one by name.
+- `index_exists` on `ish mcp` says whether a tree has an index, and starts
+  none.
+- `ish remote mcp` serves `search_code` and `ask` on stdio for the tree
+  of a server, as `ish remote search` and `ish remote ask` do. An agent or
+  an editor gets the tree of the server, and the language model of this
+  machine writes each answer. `--url` names the server, as for the other
+  commands of `ish remote`. A call takes no `path`. The reply of `ask`
+  names the host and the version of the server. `list_chunks`,
+  `index_status`, and `complete_filter` read the server as well.
+  `refresh_index` changes the server, so it stays with its operator.
+
+### Changed
+
+- A search filtered by type takes about half the time: 465 ms against
+  871 for code on a tree of 74,000 chunks. An answer with a rerank runs
+  three of them.
+- An answer says in one or two sentences what a source of code does or
+  what a test checks, and writes paragraphs of two to three sentences.
+  It costs 13 % less and takes 2.4 s less, with the same citations.
+- A follow-up in a chat searches for one query that the rerank model
+  writes from the history, and the chat names it. A follow-up such as
+  "cool, what about ldap?" otherwise searched for its own words and for
+  the question before it.
+- A config file in a tree cannot set `prompt_dir`, `answer_notes`, or
+  `rerank_notes`. A tree you cloned would otherwise choose what the model
+  is told. Set them in the user config file.
+- An answer with a rerank model chooses from the best docs, tests, and
+  code of the tree, a fifth of the candidates each, beside the best
+  overall. A question in prose otherwise found no code at all. A text
+  that several files hold word for word is read once, and its title names
+  the other files. Each source tells the model its type, and the model
+  explains from the docs and says what the code does and what a test
+  checks.
+- The first word of a command line is a command when it is `search`,
+  `ask`, `pick`, `index`, `chat`, `mcp`, `serve`, or `complete`. To search
+  for one of these words, use `ish search WORD` or `ish -- WORD`.
+- A line without the word `remote` reads the tree on this machine, also
+  when `ISH_REMOTE` or a config file names a server. `ish --ask` with
+  such a server answers here and prints a warning that names
+  `ish remote ask`.
+- The Neovim and VS Code clients ask through `ish ask`. An agent or an
+  editor reads a server through `ish remote mcp`.
+- A config file in a tree, at or above the working directory, does not
+  name a server. ish ignores its `remote`, and `ish remote` prints a
+  warning that names the file. A tree that named the server would choose
+  where your token goes. Set `remote` in the user config file, or in a
+  file you name with `--config`.
+- `--remote URL` with `--ask` or `--brief` gets chunks from the server,
+  and the language model of this machine writes the answer. This machine
+  needs a `language_model` for it.
+
+### Deprecated
+
+- `--ask` and `--brief` on a line with no command. They work as before
+  and print one warning that names `ish ask`. `-i` stays.
+- `--remote URL` on a line with no command. It prints one warning that
+  names `ish remote`. Use `ish remote` with `--url URL`.
+
+### Fixed
+
+- The picker marks the highlighted result in every theme. Under
+  `ansi-dark` and `ansi-light` it looked like every other row.
+- Ctrl-C stops `ish` with exit code 130 and the line `ish: stopped`, in
+  place of a traceback.
+- Quitting the picker while a search ran could fail on the way out with
+  an error that no node matches `OptionList`. A search that ends after
+  the picker closed now fills nothing.
+
+### Removed
+
+- The `ask` tool of `ish mcp --http`. A server over HTTP answers no
+  question and builds no language model, so it needs no model and no API
+  key. A client of an older release that calls `ask` gets "Unknown tool:
+  ask". Use `ish remote ask`, which answers with the model of the machine
+  that asks. A stdio server keeps its `ask`.
+
 ## 0.9.4 - 2026-11-10
 
 ### Added

@@ -1,10 +1,10 @@
 // Ask a question through the command line, and read what came back.
 //
-// `ish --ask` writes the answer as Markdown on stdout, with each source
+// `ish ask` writes the answer as Markdown on stdout, with each source
 // as a link. Running the command line keeps one set of settings: the
-// `remote` server, the language model, and the filters are the ones a
-// shell uses, so an answer here is the answer there. The resident
-// server answers only from the tree on this machine.
+// language model and the filters are the ones a shell uses, so an
+// answer here is the answer there. It answers from the tree on this
+// machine, as the resident server does.
 
 import { execFile } from "node:child_process";
 
@@ -33,8 +33,19 @@ export type Answer = { markdown: string } | { reason: string };
  * read as a flag.
  */
 export function askArgs(question: string, root: string): string[] {
-  return ["--ask", "--", question, root];
+  return ["ask", "--", question, root];
 }
+
+/**
+ * The arguments that ask the server *question*. A server answers from
+ * its own tree, so the arguments name no path.
+ */
+export function remoteAskArgs(question: string): string[] {
+  return ["remote", "ask", "--", question];
+}
+
+/** The exit code of an answer that the documents do not cover. */
+export const NOT_COVERED = 2;
 
 /**
  * Read an answer out of *outcome*.

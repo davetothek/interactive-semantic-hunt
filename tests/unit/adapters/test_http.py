@@ -79,3 +79,110 @@ class TestPostJson:
     def test_every_failure_is_an_http_failure(self) -> None:
         for kind in (_http.Timeout, _http.Refused, _http.Unreachable, _http.NotJson):
             assert issubclass(kind, _http.HttpFailure)
+
+
+class TestNoRedirect:
+    """A request with a token reaches the address the user gave, and no other."""
+
+    def test_a_redirect_comes_back_and_the_other_address_gets_nothing(self) -> None:
+        import threading
+        import urllib.error
+        import urllib.request
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from ish.adapters._http import open_without_redirects
+
+        reached: list[str | None] = []
+
+        class Other(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                reached.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, format, *args) -> None:
+                return None
+
+        other = HTTPServer(("127.0.0.1", 0), Other)
+        target = f"http://127.0.0.1:{other.server_address[1]}/mcp"
+
+        class Moved(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                self.send_response(307)
+                self.send_header("Location", target)
+                self.end_headers()
+
+            def log_message(self, format, *args) -> None:
+                return None
+
+        moved = HTTPServer(("127.0.0.1", 0), Moved)
+        servers = [other, moved]
+        threads = [
+            threading.Thread(target=s.serve_forever, daemon=True) for s in servers
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{moved.server_address[1]}/mcp",
+                data=b"{}",
+                headers={"Authorization": "Bearer test-token-EXAMPLE"},
+            )
+            with pytest.raises(urllib.error.HTTPError) as refused:
+                open_without_redirects(request, 10)
+        finally:
+            for server in servers:
+                server.shutdown()
+                server.server_close()
+        assert refused.value.code == 307
+        assert reached == []
+
+
+class TestNoProxyForPlainHttp:
+    """A proxy of the environment never reads a plain http request."""
+
+    def test_plain_http_goes_straight_to_the_server(self, monkeypatch) -> None:
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from ish.adapters._http import open_without_redirects
+
+        seen: dict[str, list[str]] = {"server": [], "proxy": []}
+
+        def handler(name: str):
+            class Recorded(BaseHTTPRequestHandler):
+                def do_POST(self) -> None:
+                    seen[name].append(self.path)
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"{}")
+
+                def log_message(self, format, *args) -> None:
+                    return None
+
+            return Recorded
+
+        server = HTTPServer(("127.0.0.1", 0), handler("server"))
+        proxy = HTTPServer(("127.0.0.1", 0), handler("proxy"))
+        threads = [
+            threading.Thread(target=s.serve_forever, daemon=True)
+            for s in (server, proxy)
+        ]
+        for thread in threads:
+            thread.start()
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_address[1]}")
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_address[1]}/login",
+                data=b'{"password": "hunter2-EXAMPLE"}',
+            )
+            with open_without_redirects(request, 10) as response:
+                assert response.read() == b"{}"
+        finally:
+            for each in (server, proxy):
+                each.shutdown()
+                each.server_close()
+        assert seen == {"server": ["/login"], "proxy": []}

@@ -43,9 +43,16 @@ nothing itself. `Ish` is the session the other three are built on. Nothing
 beyond these is built. `ish-mcp --http` serves the MCP tools over HTTP
 behind a bearer token, and a REST API stays out by decision.
 
-`ish --ask` and the `ask` MCP tool answer a question from the chunks a
+`ish ask` and the `ask` MCP tool answer a question from the chunks a
 search finds, with citations. A language model writes the answer, and
-only a backend that `allowed_language_models` names is ever built.
+only a backend that `allowed_language_models` names is ever built. Only
+the stdio server offers `ask`.
+
+`ish remote` searches the tree of an `ish-mcp --http` server, through
+the `RemoteIsh` session. For a question, the server returns chunks with
+their text and runs no model. The model of the machine that asks writes
+the answer, under the same allowlist. `ish remote mcp` serves the tools
+that read a server on stdio the same way, for an agent or an editor.
 
 ## Architecture
 
@@ -59,7 +66,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Domain | `src/ish/domain/chunk.py` | `Chunk`, one named region of a file |
 | Domain | `src/ish/domain/match.py` | `Match`, a chunk with its score |
 | Domain | `src/ish/domain/location.py` | `Location`, where a chunk sits: lines, pages, slides, cells, sections |
-| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the three registries |
+| Composition | `src/ish/bootstrap.py` | Composition root — wiring, selects from the four registries |
 | Composition | `src/ish/settings.py` | Option set — one source of truth for CLI flags and TOML keys |
 | Composition | `src/ish/runtime.py` | The directory where the processes of one user share files while they run |
 | Port | `src/ish/application/ports/parser.py` | `Parser` Protocol and `ParseError` |
@@ -67,6 +74,10 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Port | `src/ish/application/ports/vector_store.py` | `VectorReader` and `VectorStore` Protocols |
 | Port | `src/ish/application/ports/language_model.py` | `LanguageModel` Protocol, `Source`, `Reply` |
 | Port | `src/ish/application/ports/link.py` | `LinkResolver` Protocol |
+| Port | `src/ish/application/ports/chunk_source.py` | `ChunkSource` Protocol and `ChunkSourceError` |
+| Port | `src/ish/application/ports/authenticator.py` | `Authenticator` and `SignIn` Protocols, `Identity`, and the two refusals of a sign-in |
+| Port | `src/ish/application/ports/login_store.py` | `LoginStore` Protocol and `Login`, the hash of a login token as a server keeps it |
+| Port | `src/ish/application/ports/login.py` | `Login` Protocol, `SignedIn`, and `LoginError`: sign this machine in to a server |
 | Application | `src/ish/application/scan.py` | Scan use case: discover, accept, parse |
 | Application | `src/ish/application/index.py` | Index use case: staleness, orphans, embedding |
 | Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
@@ -77,6 +88,10 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |
 | Application | `src/ish/application/preview.py` | Read the source a chunk points at |
 | Application | `src/ish/application/answer.py` | Answer use case: search, read, fit the budget, ask the model |
+| Application | `src/ish/application/candidates.py` | The candidates of a reranked answer: the best overall, and the best of each type |
+| Application | `src/ish/application/access.py` | Access use case: admit a request, sign a user in, give a login token |
+| Application | `src/ish/application/sources.py` | Sources use case: the chunks a search found, with their text and terms |
+| Application | `src/ish/application/chat.py` | Chat use case: the history, the searches of a follow-up, and `/more` |
 | Adapter | `src/ish/adapters/_http.py` | One JSON request over HTTP, and the four ways it fails |
 | Adapter | `src/ish/adapters/_ollama.py` | The daemon host the Ollama embedder and language model share |
 | Adapter | `src/ish/adapters/parser/__init__.py` | `PARSERS` — every language, and the recipe for adding one |
@@ -97,15 +112,25 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Adapter | `src/ish/adapters/language_model/anthropic.py` | Messages API with native citations |
 | Adapter | `src/ish/adapters/language_model/ollama.py` | A generation model on the local daemon |
 | Adapter | `src/ish/adapters/language_model/claude_cli.py` | The Claude Code CLI in print mode |
-| Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations |
+| Adapter | `src/ish/adapters/language_model/_grounded.py` | Schema and parser for a backend without citations, and `BlockStream` |
+| Adapter | `src/ish/adapters/language_model/_json_stream.py` | Each JSON object of a streamed reply, once it is whole |
 | Adapter | `src/ish/adapters/language_model/_prompts.py`, `prompts/*.md` | The instructions a model receives, as files `prompt_dir` replaces |
 | Adapter | `src/ish/adapters/link/file_uri.py`, `base_url.py` | Link a chunk to its file, or to a published tree |
+| Adapter | `src/ish/adapters/authenticator/__init__.py` | `AUTHENTICATORS` — every way a server admits a request, and the recipe for adding one |
+| Adapter | `src/ish/adapters/authenticator/token.py` | The static token of the operator |
+| Adapter | `src/ish/adapters/authenticator/ldap.py` | A bind to an LDAP directory, by a name made from the user name or found by a service account, with python-ldap of the `ldap` extra |
+| Adapter | `src/ish/adapters/login_store/file.py` | The logins of a server, as a file of JSON lines in the data directory |
+| Adapter | `src/ish/adapters/login/http.py` | Sign in on the path beside `/mcp`, and keep the login token |
+| Adapter | `src/ish/adapters/_logins.py` | The login tokens of this machine, one for each server, in a file only the user can read |
+| Adapter | `src/ish/adapters/chunk_source/mcp.py` | Chunks from the index of an ish server, over MCP |
+| Adapter | `src/ish/adapters/chunk_source/_client.py` | One tool call to an MCP server over HTTP, and the ways it fails |
 | Adapter | `src/ish/adapters/vector_store/sqlite/` | Persistent vector store (default): `store.py`, its tables in `_schema.py`, its matrix file in `_matrix.py` |
 | Adapter | `src/ish/adapters/vector_store/pure_python.py` | In-memory vector store (`--no-cache`, tests) |
 | Adapter | `src/ish/adapters/vector_store/federated.py` | Read several indexes as one |
 | Adapter | `src/ish/adapters/vector_store/_catalog.py` | Which index file describes which tree |
 | Adapter | `src/ish/adapters/vcs/git.py` | Ask git what it ignores |
 | Interface | `src/ish/interfaces/python/api.py` | `Ish`, the session every interface shares |
+| Interface | `src/ish/interfaces/python/remote.py` | `RemoteIsh`, the session for the tree of a server |
 | Interface | `src/ish/interfaces/format.py` | Shared output formatting |
 | Interface | `src/ish/interfaces/log.py` | Logging setup, shared by every entry point |
 | Interface | `src/ish/interfaces/busy.py` | The busy line: spinner, step, rate, and time left |
@@ -113,13 +138,18 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Interface | `src/ish/interfaces/daemon.py` | `ish-serve`, the one process that fills an index |
 | Interface | `src/ish/interfaces/completion.py` | Finish a filter word |
 | Interface | `src/ish/interfaces/cli/args.py` | Argument parsing, derived from `Settings` |
-| Interface | `src/ish/interfaces/cli/main.py` | CLI entry point |
+| Interface | `src/ish/interfaces/cli/__init__.py` | `ish` entry point: hand the line to the program its first word names |
+| Interface | `src/ish/interfaces/cli/main.py` | The search program: search, ask, pick, list |
+| Interface | `src/ish/interfaces/cli/remote.py` | The remote program: search a server, or answer from it |
+| Interface | `src/ish/interfaces/cli/chat.py` | The loop of `ish chat` and `ish remote chat` |
+| Interface | `src/ish/interfaces/cli/stream.py` | An answer shown on a terminal a block at a time, as the model writes it |
 | Interface | `src/ish/interfaces/cli/complete.py` | `ish-complete` entry point |
 | Interface | `src/ish/interfaces/cli/terminal.py` | An answer rendered for a terminal, and the grey of the timing table |
 | Interface | `src/ish/interfaces/tui/app.py` | Textual TUI (`ish -i`) |
 | Interface | `src/ish/interfaces/mcp/protocol.py` | MCP JSON-RPC dispatch |
 | Interface | `src/ish/interfaces/mcp/transport.py` | MCP framing: stdio, and HTTP behind a token |
 | Interface | `src/ish/interfaces/mcp/server.py` | MCP tools (`ish-mcp`) |
+| Interface | `src/ish/interfaces/mcp/remote.py` | The tools that read a server, on stdio (`ish remote mcp`) |
 
 Languages: `python`, `markdown`, `asciidoc`, `cpp`, `yaml`, `json`. Backends: `ollama` (default), `llama.cpp`, `st`.
 Language models: `anthropic`, `ollama`, `claude-cli`, none by default.
@@ -342,6 +372,50 @@ something broke. This is that record, so a rule is never argued from taste.
   15 s to the 87.5 s that parsing the tree at start took. Hence
   `application/glossary.py`, and a meaning only from the results.
 
+- One search ranks every chunk on one scale. For a question about one
+  test mode of a firmware tree of ten indexes, the 50 candidates held 25
+  docs, 25 tests, and no code: the best code chunk scored 0.751 against
+  0.755 for the 50th, while 29 firmware files handle the mode. 15 of
+  the 50 repeated another candidate word for word, and the rerank was
+  told to prefer a rule over a test, so 6 answers of 6 read 10 docs.
+  With a fifth of the candidates kept for each of doc, test, and code,
+  one copy of each text, and the type in each title, the 25 questions
+  scored 21 of 21 cited against 20, 4 of 4 refused both times, and 6
+  questions that need code or tests 6 of 6 against 4. An answer wrote
+  2,223 tokens against 1,587, took 25.2 s against 18.3, median, and
+  cost $0.070 against $0.061, mean, as claude reports it. Hence
+  `application/candidates.py`.
+- 17 follow-ups of a chat, each labeled with a section of the tree:
+  searched alone, the expected section was among the 50 candidates for
+  8, joined to the question before it for 13 in two searches, and in
+  one search for a query that claude-haiku-5-5 wrote from the history
+  for 15, MRR 0.073, 0.222, and 0.269, for $0.0003 a follow-up. The
+  written query differs from run to run, and so does its rank: one
+  follow-up ranked 1st in one run and 11th in the next. Run as chats,
+  with brief replies, 13 of the 17 follow-ups cited the expected
+  section and 14 read it, at $0.048 a follow-up. Two of the misses have
+  labels that no query found. Hence `query.md` and `query_for()`.
+- 41 questions, answered by claude-haiku-5-5 in place of
+  claude-sonnet-5-5: 37 of 37 cited, 4 of 4 refused, at $0.0074 an
+  answer against $0.0699, and 36.3 s against 26.0, median, because haiku
+  thinks for about half of what it writes. A judge that read both
+  answers to 10 questions beside the expected section scored sonnet 20
+  of 20 correct and 19 of 20 complete, and haiku 19 and 18. Accuracy
+  comes first, so sonnet answers, and haiku reranks and writes the
+  query of a follow-up.
+- With a candidate of each type, 41 questions used one turn, except
+  one hard question and the four the tree does not cover. Those five
+  with `ask_turns = 1` against 3: the hard one cited in 41 s against
+  63, the four refused in 20 to 25 s against 22 to 40, and $0.369
+  against $0.553 for the five. Hence 1 in the example of the docs.
+- Answers that say in one or two sentences what code does or what a
+  test checks: 37 of 37 cited on the same 41, 1,959 output tokens
+  against 2,409, $0.0605 against $0.0699, 23.6 s against 26.0.
+- 10 more questions over six topics, whose answers sit in code or tests,
+  scored 10 of 10 with the candidates of each type, after one label
+  that named one function of two that answer was widened. $0.068 and
+  28.2 s an answer.
+
 ### Embedding
 
 - Task prefixes: measured on this repo with nomic-embed-text over 16 queries,
@@ -351,6 +425,11 @@ something broke. This is that record, so a rule is never argued from taste.
 
 ### Ranking
 
+- Removing filler words, such as "how", "the", and "please", from 27
+  labeled questions moved the expected section lower for 8 and higher
+  for 3: MRR 0.628 against 0.607, 25 against 24 in the top 50. The
+  embedding model reads those words as part of what is asked. So a
+  query keeps its words.
 - The result filter used to run after the top slice. `--type code` returned
   nothing at a limit of 20 and two results at 100, because no code chunk sat
   in the slice.
@@ -427,12 +506,22 @@ Profiled against a real 7,834-chunk index across three federated indexes:
   way, and alone or in a request of 8 the vectors differ by 0.0.
 - Returning a table to fzf-lua stopped Neovim redrawing for 160 ms a
   keystroke.
+- A search filtered by type walks the order until enough chunks pass,
+  89,126 for `type:code` on a firmware tree of ten indexes, and built a
+  path and read the type of each again: 871 ms against 57 ms unfiltered,
+  median of 5. With one Path for each file and the type of each path and
+  language kept, 465 ms for code, 338 for test, and 299 for doc, the same
+  results in all 15 searches. Reading the rows in larger slices saved
+  nothing more, 465 against 468 ms, because the cost is in each row.
 - Rich takes 61 ms to import, median of 7, against about 380 ms for a
   whole CLI query. Hence its import inside `rendered()`, which only an
   answer with `--render` on a terminal reaches.
 
 ### Interfaces
 
+- The Python that uv installs builds readline on libedit, which ignores
+  the GNU binding "tab: complete". In a pseudo-terminal, "/mo" and Tab
+  gave the line '/mo\t', and with "bind ^I rl_complete", '/more'.
 - A thread pool held the process open for as long as an index took, because
   it joins its threads at exit. Hence daemon threads the TUI owns.
 - A schema rebuild once left the picker at "Loading index..." with 274

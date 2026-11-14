@@ -8,7 +8,7 @@ do not support is not an answer, so a reply says whether the sources
 covered the question at all.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -110,6 +110,8 @@ class Reply:
             reader of the flat text misses no claim and no citation.
         terms: The acronyms the answer uses, as the model expanded them.
             The use case keeps only a meaning that a source writes.
+        cost_usd: What the backend says the call cost, in US dollars, or 0
+            when it does not say.
     """
 
     passages: tuple[Passage, ...]
@@ -119,6 +121,7 @@ class Reply:
     searches: tuple[str, ...] = ()
     blocks: tuple[Block, ...] = ()
     terms: tuple[Term, ...] = ()
+    cost_usd: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,11 +132,36 @@ class Selection:
         ids: Keys of the chosen sources, best first.
         input_tokens: Tokens the model read.
         output_tokens: Tokens the model wrote.
+        cost_usd: What the backend says the call cost, in US dollars, or 0
+            when it does not say.
     """
 
     ids: tuple[str, ...]
     input_tokens: int = 0
     output_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class Query:
+    """Hold the search query a model wrote for a question, and what it cost.
+
+    Attributes:
+        text: The query, a question that stands alone.
+        input_tokens: Tokens the model read.
+        output_tokens: Tokens the model wrote.
+        cost_usd: What the backend says the call cost, in US dollars, or 0
+            when it does not say.
+    """
+
+    text: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+# Take one block of an answer as soon as the model has written it.
+OnBlock = Callable[[Block], None]
 
 
 @runtime_checkable
@@ -143,11 +171,19 @@ class LanguageModel(Protocol):
     model_name: str
     """Name of the model that writes the answer."""
 
-    def answer(self, question: str, sources: Sequence[Source]) -> Reply:
+    def answer(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        on_block: OnBlock | None = None,
+    ) -> Reply:
         """Answer *question* from *sources* only.
 
-        Raise ``LanguageModelError`` when the model does not answer. Never
-        answer from knowledge outside *sources*.
+        Give *on_block* each block of the layout as the model writes it,
+        in reading order, when the backend can stream. The reply holds
+        every block again. A backend that cannot stream gives none.
+        Raise ``LanguageModelError`` when the model does not answer.
+        Never answer from knowledge outside *sources*.
         """
         ...
 
@@ -157,14 +193,15 @@ class LanguageModel(Protocol):
         sources: Sequence[Source],
         searched: Sequence[str],
         turns_left: int,
+        on_block: OnBlock | None = None,
     ) -> Reply:
         """Answer from *sources*, or ask for more searches first.
 
         Return a reply with ``searches`` to have them run, and their
         results added to *sources* on the next call. *searched* holds the
         queries already run. With no turns left, answer, or say the
-        sources do not cover the question. Never answer from knowledge
-        outside *sources*.
+        sources do not cover the question. Give *on_block* each block as
+        ``answer`` does. Never answer from knowledge outside *sources*.
         """
         ...
 
@@ -176,5 +213,14 @@ class LanguageModel(Protocol):
         Each candidate holds the start of a source, not all of it, so a
         wide search costs few tokens to sort. Raise ``LanguageModelError``
         when the model does not reply.
+        """
+        ...
+
+    def query(self, question: str, history: str) -> Query:
+        """Write one search query for *question*, read in the light of *history*.
+
+        *history* is the earlier turns of a chat. The query names what the
+        question asks about, so it stands alone. Raise
+        ``LanguageModelError`` when the model does not reply.
         """
         ...

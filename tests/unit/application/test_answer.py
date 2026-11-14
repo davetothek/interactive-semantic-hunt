@@ -12,10 +12,11 @@ from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 
 
-def make_chunk(name: str, text: str = "body", line: int = 1) -> Chunk:
+def make_chunk(name: str, text: str = "", line: int = 1) -> Chunk:
+    # A text of its own for each name: two chunks of one text are copies.
     return Chunk(
         path=Path(f"/docs/{name}.adoc"),
-        text=text,
+        text=text or f"The text of {name}.",
         kind="section",
         language="asciidoc",
         symbol=name,
@@ -527,11 +528,11 @@ class TestTimings:
             reranker=FakeReranker(("1",)),
             clock=Ticks(),
         ).answer("q")
-        # One second for each call. The rerank reads two previews, and the
-        # answer reads the one chunk chosen.
+        # One second for each call. Each chunk is read once, before the
+        # rerank, and the answer reads the chosen one from that text.
         assert result.timings == (
             ("searching", 1.0),
-            ("reading", 3.0),
+            ("reading", 2.0),
             ("choosing", 1.0),
             ("writing", 1.0),
         )
@@ -752,3 +753,165 @@ class TestTermsFromTheTree:
             glossary=glossary,
         ).answer("q")
         assert len(result.terms) == MAX_TERMS
+
+
+class TestOneCopyOfATextIsRead:
+    """A tree can hold one section in several files, word for word.
+
+    On a firmware tree, 15 of the 50 candidates for one question repeated
+    another candidate, so the rerank chose among fewer texts than it saw.
+    """
+
+    def test_a_copy_leaves_the_candidates_and_is_named_in_the_title(self) -> None:
+        first = make_chunk("imaging", "The mode  starts at reset.")
+        copy = make_chunk("structural", "the mode starts at RESET.")
+        other = make_chunk("other", "Another text.")
+        reranker = FakeReranker(("1", "2"))
+        model = FakeModel()
+        result = AnswerQuestion(
+            search=searching(first, copy, other), model=model, reranker=reranker
+        ).answer("q")
+        previews = reranker.calls[0][1]
+        assert [s.title.split(" ")[0] for s in previews] == [
+            "/docs/imaging.adoc:1-10",
+            "/docs/other.adoc:1-10",
+        ]
+        assert previews[0].title.endswith(
+            "(the same text is also in /docs/structural.adoc:1-10)"
+        )
+        assert result.sources == (first, other)
+
+    def test_a_follow_up_search_reads_no_copy_of_a_text_it_read(self) -> None:
+        start = make_chunk("start", "Spec.")
+        again = make_chunk("again", "spec.")
+        found = make_chunk("found", "Handler.")
+        agent = FakeAgent(("the handler",))
+        result = AnswerQuestion(
+            search=routed(start, the_handler=[again, found]), model=agent, turns=1
+        ).answer("q")
+        assert result.sources == (start, found)
+
+    def test_a_chunk_with_no_text_is_no_copy_of_another(self) -> None:
+        empty, blank = make_chunk("empty"), make_chunk("blank")
+        result = AnswerQuestion(
+            search=searching(empty, blank), model=FakeModel(), read=lambda c: None
+        ).answer("q")
+        assert result.dropped == 2
+
+
+class TestTheTitleNamesTheType:
+    def test_each_source_names_its_type_first(self) -> None:
+        doc, code = make_chunk("spec", "Spec."), make_chunk("main", "int main;")
+        model = FakeModel()
+        AnswerQuestion(
+            search=searching(doc, code),
+            model=model,
+            kind_of=lambda c: "code" if c is code else "doc",
+        ).answer("q")
+        assert [s.title for s in model.calls[0][1]] == [
+            "doc: /docs/spec.adoc:1-10 spec",
+            "code: /docs/main.adoc:1-10 main",
+        ]
+
+
+class TestCost:
+    """An answer adds up what the rerank and each turn of the model cost."""
+
+    def test_the_rerank_and_the_answer_add_up(self) -> None:
+        from dataclasses import replace
+
+        from ish.application.ports.language_model import Selection
+
+        class PricedReranker(FakeReranker):
+            def select(self, question, candidates, limit):
+                return Selection(ids=("1",), cost_usd=0.002)
+
+        model = FakeModel()
+        model.reply = replace(model.reply, cost_usd=0.01)
+        result = AnswerQuestion(
+            search=searching(make_chunk("a")),
+            model=model,
+            reranker=PricedReranker(()),
+        ).answer("q")
+        assert result.cost_usd == pytest.approx(0.012)
+
+    def test_each_turn_adds_its_cost(self) -> None:
+        from dataclasses import replace
+
+        class PricedAgent(FakeAgent):
+            def step(self, question, sources, searched, turns_left):
+                return replace(
+                    super().step(question, sources, searched, turns_left),
+                    cost_usd=0.01,
+                )
+
+        result = AnswerQuestion(
+            search=routed(make_chunk("x")), model=PricedAgent(("more",)), turns=2
+        ).answer("q")
+        assert result.turns == 2
+        assert result.cost_usd == pytest.approx(0.02)
+
+    def test_a_rerank_that_finds_nothing_readable_costs_nothing(self) -> None:
+        result = AnswerQuestion(
+            search=searching(make_chunk("a")),
+            model=FakeModel(),
+            reranker=FakeReranker(("1",)),
+            read=lambda c: None,
+        ).answer("q")
+        assert result.cost_usd == 0.0
+
+
+class TestStreamedBlocks:
+    """A block streams with its citations as chunks, as the answer holds it."""
+
+    class Streaming:
+        model_name = "streaming"
+
+        def __init__(self, turns: int = 0) -> None:
+            from ish.application.ports.language_model import Block
+
+            self.block = Block("summary", passages=(Passage("Boot.", ("1", "9")),))
+
+        def _reply(self, searches=()):
+            return Reply(
+                passages=self.block.passages,
+                covered=True,
+                blocks=(self.block,),
+                searches=searches,
+            )
+
+        def answer(self, question, sources, on_block=None):
+            if on_block is not None:
+                on_block(self.block)
+            return self._reply()
+
+        def step(self, question, sources, searched, turns_left, on_block=None):
+            if on_block is not None:
+                on_block(self.block)
+            return self._reply()
+
+    @pytest.mark.parametrize("turns", [0, 1])
+    def test_a_streamed_block_is_the_block_of_the_answer(self, turns) -> None:
+        boot = make_chunk("boot")
+        shown: list = []
+        result = AnswerQuestion(
+            search=searching(boot),
+            model=self.Streaming(),
+            turns=turns,
+            on_block=shown.append,
+        ).answer("q")
+        # The id the model was not given leaves the citation, as it does
+        # in the answer.
+        assert shown == list(result.blocks)
+        assert shown[0].parts[0].cites == (boot,)
+
+    def test_no_reader_asks_the_model_for_no_stream(self) -> None:
+        calls: list = []
+
+        class Model(self.Streaming):
+            def answer(self, question, sources, **named):
+                calls.append(named)
+                return self._reply()
+
+        AnswerQuestion(search=searching(make_chunk("a")), model=Model()).answer("q")
+        assert calls == [{}]

@@ -11,13 +11,21 @@ use. A search maps that file into memory instead of reading every vector out
 of SQLite, which is what a fresh process used to pay first. A file older than
 the index is read past and written again, so it can be deleted at any time.
 
+A search builds the index of its tree before it answers. `ish index`
+builds it, or brings it up to date, with no search, and says how many
+chunks it holds:
+
+```sh
+ish index project/docs
+```
+
 Each index records the tree it was built from, so searching a directory also
 searches every index below it. Index the parts of a large project separately and
 search the whole from its root:
 
 ```sh
-ish "warm" project/docs        # index one part
-ish "warm" project/firmware    # and another
+ish index project/docs         # index one part
+ish index project/firmware     # and another
 ish "how is exposure set" project    # searches both
 ```
 

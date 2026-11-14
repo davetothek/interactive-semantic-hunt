@@ -141,3 +141,39 @@ class TestConfigurableCategories:
     def test_the_type_name_is_case_insensitive(self) -> None:
         sort_into = compile_categories(("TEST:/x/",))
         assert sort_into(make_chunk("/p/x/a.py")) == "test"
+
+
+class TestTheTypeOfAFileIsReadOnce:
+    """A search filtered by type asked about each of 89,126 chunks it walked.
+
+    The type depends on the path and the language alone, and the chunks
+    of one file share both. Reading it again for each chunk took 0.87 s
+    of a search of 1.7 s on a firmware tree.
+    """
+
+    def _chunk(self, path: str, language: str = "c", line: int = 1) -> Chunk:
+        return Chunk(Path(path), "", "function", language, "f", line, line)
+
+    def test_each_path_and_language_is_judged_once(self, monkeypatch) -> None:
+        from ish.application import categories
+
+        judged: list[str] = []
+        original = categories._is_test_path
+
+        def counted(path: str) -> bool:
+            judged.append(path)
+            return original(path)
+
+        monkeypatch.setattr(categories, "_is_test_path", counted)
+        categorize = compile_categories([], {"markdown": "doc"})
+        chunks = [self._chunk("/t/src/a.c", line=n) for n in range(5)]
+        assert {categorize(c) for c in chunks} == {"code"}
+        assert categorize(self._chunk("/t/src/a.c", "markdown")) == "doc"
+        assert judged == ["/t/src/a.c", "/t/src/a.c"]
+
+    def test_a_rule_of_the_tree_is_read_once_a_path(self) -> None:
+        categorize = compile_categories(["test:/[0-9]+\\.verify/"])
+        first = self._chunk("/t/07.verify/x.c")
+        assert categorize(first) == categorize(self._chunk("/t/07.verify/x.c", line=9))
+        assert categorize(first) == "test"
+        assert categorize(self._chunk("/t/03.source/x.c")) == "code"

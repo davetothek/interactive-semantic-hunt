@@ -122,8 +122,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("give --out and at least one tree, or --compare")
     if args.source:
         sys.path.insert(0, str(args.source.resolve() / "src"))
+    # A parser warns about each odd file, which would bury the summary.
+    # Silence the logs for the snapshot alone: main runs in the process
+    # of a test as well, and the logs of that process must go on.
     logging.disable(logging.CRITICAL)
-    records = list(snapshot([tree.resolve() for tree in args.trees]))
+    try:
+        records = list(snapshot([tree.resolve() for tree in args.trees]))
+    finally:
+        logging.disable(logging.NOTSET)
     args.out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in records))
     print(_summary(records))
     return 0

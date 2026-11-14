@@ -292,3 +292,33 @@ def test_a_notice_to_a_pipe_writes_nothing(monkeypatch) -> None:
     monkeypatch.setattr(sys, "stderr", out)
     Ticker().note("Searching again: x")
     assert out.getvalue() == ""
+
+
+class TestAbove:
+    """Text on stdout shares the terminal with the line that turns on stderr."""
+
+    def test_the_line_clears_before_the_text_and_turns_on_after(
+        self, monkeypatch
+    ) -> None:
+        from ish.interfaces.busy import Ticker
+
+        screen = _Terminal()
+        monkeypatch.setattr(sys, "stderr", screen)
+        monkeypatch.setattr(sys, "stdout", screen)
+        ticker = Ticker(interval=60)
+        ticker.show("sonnet writing the answer")
+        ticker.above("# The question\n")
+        ticker.stop()
+        drawn = screen.getvalue()
+        text_at = drawn.index("# The question\n")
+        assert drawn[:text_at].endswith("\r\033[2K")
+        assert "sonnet writing the answer" in drawn[text_at:]
+
+    def test_with_no_terminal_only_the_text_is_written(self, monkeypatch) -> None:
+        from ish.interfaces.busy import Ticker
+
+        errors, out = io.StringIO(), io.StringIO()
+        monkeypatch.setattr(sys, "stderr", errors)
+        monkeypatch.setattr(sys, "stdout", out)
+        Ticker().above("text\n")
+        assert (out.getvalue(), errors.getvalue()) == ("text\n", "")

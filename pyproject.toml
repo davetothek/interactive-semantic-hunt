@@ -48,6 +48,8 @@ Issues = "https://github.com/davetothek/interactive-semantic-hunt/issues"
 # Runs the model in this process. It builds llama.cpp on install.
 llama = ["llama-cpp-python>=0.2.75", "huggingface-hub>=0.23.0"]
 st = ["sentence-transformers"]
+# Signs users in to a server against an LDAP directory.
+ldap = ["python-ldap>=3.4"]
 
 
 [dependency-groups]
@@ -63,7 +65,7 @@ docs = [
 ]
 
 [project.scripts]
-ish = "ish.interfaces.cli.main:main"
+ish = "ish.interfaces.cli:run"
 ish-mcp = "ish.interfaces.mcp.server:main"
 ish-serve = "ish.interfaces.daemon:main"
 ish-complete = "ish.interfaces.cli.complete:main"
@@ -125,12 +127,13 @@ check = ["lint", "typecheck", "test", "hooks"]
 release = "python scripts/release.py"
 
 [[tool.ty.overrides]]
-# These two backends are extras, so their imports resolve only where the
+# These backends are extras, so their imports resolve only where the
 # extra is installed. Each adapter reports the absence itself, and the
-# CLI turns it into a line naming the extra to install.
+# CLI or the server turns it into a line naming the extra to install.
 include = [
     "src/ish/adapters/embedder/llama_cpp.py",
     "src/ish/adapters/embedder/sentence_transformer.py",
+    "src/ish/adapters/authenticator/ldap.py",
 ]
 
 [tool.ty.overrides.rules]

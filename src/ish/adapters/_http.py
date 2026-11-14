@@ -9,6 +9,8 @@ The HTTP client costs 20 ms to import, which a search never pays, so the
 imports run inside the call.
 """
 
+from typing import Any
+
 
 class HttpFailure(Exception):
     """A request that brought back no usable reply."""
@@ -72,3 +74,33 @@ def post_json(
         raise Unreachable(exc.reason) from exc
     except json.JSONDecodeError as exc:
         raise NotJson(str(exc)) from exc
+
+
+# The status codes of a redirect.
+REDIRECTS = (301, 302, 303, 307, 308)
+
+
+def open_without_redirects(request: Any, timeout: float) -> Any:
+    """Open *request* and return the response. Follow no redirect.
+
+    A redirect sends the request again, with its headers, to an address
+    that the server chose. A request that carries a token or a password
+    must reach only the address the user gave, so a redirect comes back
+    as an ``HTTPError`` with its status. The default handler of https
+    checks the certificate of the server.
+
+    A plain http request goes to no proxy. A proxy of the environment
+    would read the token or the password in the clear, and a password
+    goes over plain http only to this machine. An https request may use
+    a proxy, which then carries the TLS of the server unread.
+    """
+    import urllib.request
+
+    class _Stay(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    handlers: list[Any] = [_Stay]
+    if request.type == "http":
+        handlers.append(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener(*handlers).open(request, timeout=timeout)

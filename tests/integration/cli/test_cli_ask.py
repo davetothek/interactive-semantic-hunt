@@ -32,8 +32,15 @@ class FakeModel:
     def __init__(self, covered: bool = True) -> None:
         self.covered = covered
         self.questions: list[str] = []
+        self.queries: list[tuple[str, str]] = []
 
-    def answer(self, question, sources):
+    def query(self, question, history):
+        from ish.application.ports.language_model import Query
+
+        self.queries.append((question, history))
+        return Query(f"watchdog {question}")
+
+    def answer(self, question, sources, on_block=None):
         self.questions.append(question)
         watchdog = next(s.id for s in sources if "watchdog" in s.text)
         return Reply(
@@ -202,16 +209,17 @@ class TestAsk:
         assert main(["--ask", "anything", str(project), *FLAGS]) == 1
         assert "within 5 s" in caplog.text
 
-    def test_a_plain_query_still_searches(
-        self, project: Path, monkeypatch, capsys
+    @pytest.mark.parametrize("line", [[*FLAGS, "--", "ask"], ["search", *FLAGS, "ask"]])
+    def test_the_word_ask_can_still_be_a_query(
+        self, line: list[str], project: Path, monkeypatch, capsys
     ) -> None:
-        """Without --ask the word "ask" is a query, as it always was."""
+        """The first word "ask" is a command. Two forms search for it."""
 
         def refuse(settings, **_):
             raise AssertionError("a search built a language model")
 
         monkeypatch.setattr(bootstrap, "build_language_model", refuse)
-        assert main(["ask", str(project), *FLAGS]) == 0
+        assert main([*line, str(project)]) == 0
         assert "docs/" in capsys.readouterr().out
 
 
@@ -395,3 +403,68 @@ class TestBrief:
         _model(monkeypatch, FakeModel(covered=False))
         assert main(["--brief", "what is the MTBF", str(project), *FLAGS]) == 2
         assert capsys.readouterr().out == "The documents do not answer this.\n"
+
+
+class StreamingModel(FakeModel):
+    """A model that writes a summary and a section, and streams each."""
+
+    def answer(self, question, sources, on_block=None):
+        from ish.application.ports.language_model import Block
+
+        self.streamed = on_block is not None
+        watchdog = next(s.id for s in sources if "watchdog" in s.text)
+        blocks = (
+            Block("summary", passages=(Passage("It resets the board.", (watchdog,)),)),
+            Block(
+                "prose", heading="When", passages=(Passage("At boot.", (watchdog,)),)
+            ),
+        )
+        for block in blocks if on_block else ():
+            on_block(block)
+        return Reply(
+            passages=tuple(p for b in blocks for p in b.passages),
+            covered=True,
+            blocks=blocks,
+        )
+
+
+class TestStreamedAnswer:
+    """A terminal sees each block as it is written, and the text a pipe gets."""
+
+    ARGS = ["--ask", "what does the watchdog do"]
+
+    def test_a_terminal_gets_what_a_pipe_gets(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        model = StreamingModel()
+        _model(monkeypatch, model)
+        assert main([*self.ARGS, str(project), *FLAGS]) == 0
+        piped = capsys.readouterr().out
+        assert model.streamed is False
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        assert main([*self.ARGS, str(project), *FLAGS]) == 0
+        assert model.streamed is True
+        assert capsys.readouterr().out == piped
+        assert "**Short answer:** It resets the board. [^1]" in piped
+
+    def test_a_brief_answer_does_not_stream(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        model = StreamingModel()
+        _model(monkeypatch, model)
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        main([*self.ARGS, str(project), *FLAGS, "--brief"])
+        assert model.streamed is False
+
+    def test_a_rendered_stream_draws_each_block(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        _model(monkeypatch, StreamingModel())
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        assert (
+            main([*self.ARGS, str(project), *FLAGS, "--render", "--color", "never"])
+            == 0
+        )
+        out = capsys.readouterr().out
+        assert "Short answer: It resets the board. [1]" in out
+        assert "#" not in out.replace("#L1-3", "") and "[^1]" not in out

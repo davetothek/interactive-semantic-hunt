@@ -177,8 +177,14 @@ class TestSelect:
         )
 
     def test_the_prompt_prefers_a_rule_over_a_test(self) -> None:
-        assert "test case" in PROMPTS.select
-        assert "bare numbers" in PROMPTS.select
+        text = " ".join(PROMPTS.select.split())
+        assert "over a test that only exercises it" in text
+        assert "bare numbers" in text
+
+    def test_the_prompt_also_chooses_the_code_and_the_test_it_needs(self) -> None:
+        text = " ".join(PROMPTS.select.split())
+        assert "A title starts with the type of its source" in text
+        assert "Also choose the code that does what the question asks" in text
 
     def test_ids_keep_their_order_drop_repeats_and_stop_at_the_limit(self) -> None:
         selection = _grounded.parse_ids(
@@ -304,3 +310,107 @@ class TestTerms:
 
     def test_the_prompt_never_lets_a_term_be_invented(self) -> None:
         assert "never expand a term from your own knowledge" in PROMPTS.answer
+
+
+class TestQuery:
+    def test_the_prompt_holds_the_history_and_the_question(self) -> None:
+        assert _grounded.query_prompt("and it?", "Q: a\nA: b") == (
+            "Earlier turns:\n\nQ: a\nA: b\n\nNew question: and it?"
+        )
+
+    def test_a_query_keeps_one_line(self) -> None:
+        query = _grounded.parse_query('{"query": " watchdog \\n reset "}', "m", 9, 2)
+        assert (query.text, query.input_tokens, query.output_tokens) == (
+            "watchdog reset",
+            9,
+            2,
+        )
+
+    @pytest.mark.parametrize("text", ["nope", "{}", "[]"])
+    def test_the_wrong_shape_names_the_backend(self, text: str) -> None:
+        with pytest.raises(LanguageModelError, match="m did not reply with a search"):
+            _grounded.parse_query(text, "m")
+
+    def test_an_empty_query_is_an_error(self) -> None:
+        with pytest.raises(LanguageModelError, match="m wrote an empty search query"):
+            _grounded.parse_query('{"query": "  "}', "m")
+
+    def test_the_shipped_instruction_asks_for_a_short_query(self) -> None:
+        text = " ".join(PROMPTS.query.split())
+        assert "at most 15 words" in text and "Do not answer the question" in text
+
+
+class TestBlockStream:
+    """Each block streams as the final parse builds it, in reading order."""
+
+    ANSWER = {
+        "covered": True,
+        "summary": {"text": "It resets.", "source_ids": ["1"]},
+        "sections": [
+            {
+                "heading": "How",
+                "style": "steps",
+                "passages": [{"text": "Write CTRL.", "source_ids": ["2"]}],
+                "columns": [],
+                "rows": [],
+            },
+            {
+                "heading": "Empty",
+                "style": "prose",
+                "passages": [],
+                "columns": [],
+                "rows": [],
+            },
+            {
+                "heading": "Values",
+                "style": "table",
+                "passages": [],
+                "columns": ["Register", "Reset"],
+                "rows": [{"cells": ["CTRL", "0x0"], "source_ids": ["1"]}],
+            },
+        ],
+        "gaps": [{"text": "No source names the delay.", "source_ids": []}],
+        "terms": [],
+    }
+
+    def _streamed(self, answer: dict, size: int = 7) -> list:
+        blocks: list = []
+        stream = _grounded.BlockStream(blocks.append)
+        text = json.dumps(answer)
+        for start in range(0, len(text), size):
+            stream.feed(text[start : start + size])
+        return blocks
+
+    def test_the_streamed_blocks_are_the_blocks_of_the_reply(self) -> None:
+        reply = _grounded.parse(json.dumps(self.ANSWER), "m")
+        assert tuple(self._streamed(self.ANSWER)) == reply.blocks
+        assert [b.kind for b in reply.blocks] == ["summary", "steps", "table", "gaps"]
+
+    def test_an_empty_summary_streams_nothing_and_the_sections_still_do(self) -> None:
+        answer = {**self.ANSWER, "summary": {"text": " ", "source_ids": []}}
+        assert [b.kind for b in self._streamed(answer)] == ["steps", "table", "gaps"]
+
+    def test_sections_before_the_summary_stream_nothing(self) -> None:
+        answer = {
+            "covered": True,
+            "sections": self.ANSWER["sections"],
+            "summary": self.ANSWER["summary"],
+            "gaps": [],
+            "terms": [],
+        }
+        assert self._streamed(answer) == []
+
+    def test_gaps_before_the_sections_stop_the_stream(self) -> None:
+        answer = {
+            "covered": True,
+            "summary": self.ANSWER["summary"],
+            "gaps": self.ANSWER["gaps"],
+            "sections": self.ANSWER["sections"],
+            "terms": [],
+        }
+        assert [b.kind for b in self._streamed(answer)] == ["summary"]
+
+    def test_a_section_of_the_wrong_shape_stops_the_stream(self) -> None:
+        broken = {"heading": "Bad", "style": "table", "rows": [{"cells": 3}]}
+        answer = {**self.ANSWER, "sections": [broken, *self.ANSWER["sections"]]}
+        assert [b.kind for b in self._streamed(answer)] == ["summary"]

@@ -589,6 +589,59 @@ class TestAskBrief:
         assert built == [True, False]
 
 
+class TestSources:
+    """Ish.sources searches the way Ish.search does, and reads each chunk."""
+
+    def test_each_chunk_carries_its_text_in_rank_order(
+        self, project: Path, offline
+    ) -> None:
+        with _ish(project) as ish:
+            ranked = [chunk for chunk, _ in ish.search("configure")]
+            found = ish.sources("configure")
+        assert [entry.chunk for entry in found.chunks] == ranked
+        texts = {entry.chunk.path.name: entry.text for entry in found.chunks}
+        assert "def parse_config():" in texts["app.py"]
+        assert "How to configure it." in texts["guide.md"]
+
+    def test_no_language_model_is_built(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        def refuse(settings, **_):
+            raise AssertionError("sources must not build a language model")
+
+        monkeypatch.setattr(bootstrap, "build_language_model", refuse)
+        monkeypatch.setattr(bootstrap, "build_reranker", refuse)
+        with _ish(project) as ish:
+            assert ish.sources("configure").chunks
+
+    def test_the_limit_and_the_filters_narrow_the_chunks(
+        self, project: Path, offline
+    ) -> None:
+        with _ish(project) as ish:
+            assert len(ish.sources("configure", 1).chunks) == 1
+            docs = ish.sources("configure", type=["doc"])
+            typed = ish.sources("lang:python configure")
+        assert [entry.chunk.path.name for entry in docs.chunks] == ["guide.md"]
+        assert {entry.chunk.language for entry in typed.chunks} == {"python"}
+
+    def test_a_term_takes_its_meaning_from_another_file_of_the_tree(
+        self, project: Path, offline
+    ) -> None:
+        (project / "docs" / "terms.md").write_text(
+            "# Terms\n\n| AGC | Automatic Gain Control |\n"
+        )
+        (project / "src" / "gain.py").write_text(
+            'def gain():\n    """Run the AGC loop."""\n'
+        )
+        with _ish(project) as ish:
+            ish.index()
+            ish.warm_reader()
+            found = ish.sources("gain loop", lang=["python"])
+        assert [(t.short, t.meaning, t.chunk.path.name) for t in found.terms] == [
+            ("AGC", "Automatic Gain Control", "terms.md")
+        ]
+
+
 class TestWarmReader:
     """A server parses its files before the first question, once.
 
@@ -653,3 +706,134 @@ class TestWarmReader:
     def test_the_plan_reads_what_is_stored(self, project: Path, offline) -> None:
         with _ish(project) as ish:
             assert ish.warm_reader_plan() == []
+
+
+class TestStored:
+    """Say whether a stored index reaches a tree, and open none to say it."""
+
+    def _settings(self, cache: Path) -> Settings:
+        return Settings(git=False, cache_dir=str(cache))
+
+    def test_a_tree_with_no_index_has_none_and_gets_no_file(
+        self, project: Path, tmp_path_factory
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        assert Ish(project, settings=self._settings(cache)).stored() is False
+        assert list(cache.iterdir()) == []
+
+    def test_the_index_of_the_tree(
+        self, project: Path, tmp_path_factory, offline
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        with Ish(project, settings=self._settings(cache)) as ish:
+            ish.index()
+        assert Ish(project, settings=self._settings(cache)).stored() is True
+
+    def test_an_index_below_the_tree(
+        self, project: Path, tmp_path_factory, offline
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        with Ish(project / "src", settings=self._settings(cache)) as ish:
+            ish.index()
+        assert Ish(project, settings=self._settings(cache)).stored() is True
+
+    def test_an_index_above_the_tree(
+        self, project: Path, tmp_path_factory, offline
+    ) -> None:
+        cache = tmp_path_factory.mktemp("idx")
+        with Ish(project, settings=self._settings(cache)) as ish:
+            ish.index()
+        assert Ish(project / "docs", settings=self._settings(cache)).stored() is True
+
+    def test_an_index_in_memory_is_never_stored(self, project: Path) -> None:
+        assert _ish(project).stored() is False
+
+
+class TestAChatReading:
+    """A chat tells an answer which queries to run, and what to read."""
+
+    def _model(self, monkeypatch) -> "TestAsk.Model":
+        model = TestAsk.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
+        return model
+
+    def test_the_queries_run_in_place_of_the_question(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.chat import Reading
+
+        model = self._model(monkeypatch)
+        ran: list[str] = []
+        with _ish(project) as ish:
+            search = ish.search
+            monkeypatch.setattr(
+                ish,
+                "search",
+                lambda text, *a, **k: ran.append(text) or search(text, *a, **k),
+            )
+            ish.ask(
+                "the history and the question", reading=Reading(("parse", "configure"))
+            )
+        assert ran == ["parse", "configure"]
+        assert model.sources
+
+    def test_only_reads_those_chunks_and_searches_nothing(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.chat import Reading
+
+        model = self._model(monkeypatch)
+        with _ish(project) as ish:
+            guide = next(c for c in ish.scan() if c.language == "markdown")
+
+            def refuse(*_a, **_k):
+                raise AssertionError("an answer of /more searched")
+
+            monkeypatch.setattr(ish, "search", refuse)
+            answer = ish.ask("why", reading=Reading(only=(guide,)))
+        assert len(model.sources) == 1
+        assert answer.sources == (guide,)
+
+    def test_prepare_builds_the_model_before_any_question(
+        self, project: Path, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import LanguageModelError
+
+        with pytest.raises(LanguageModelError, match="language_model"):
+            _ish(project).prepare()
+        model = self._model(monkeypatch)
+        ish = _ish(project)
+        ish.prepare(brief=True)
+        assert ish._models[True] is model
+
+
+class TestQueryFor:
+    """A chat asks the session for the search query of a follow-up."""
+
+    class Writer:
+        def __init__(self, name: str) -> None:
+            self.model_name = name
+            self.asked: list[tuple[str, str]] = []
+
+        def query(self, question, history):
+            from ish.application.ports.language_model import Query
+
+            self.asked.append((question, history))
+            return Query(f"{self.model_name}: {question}", input_tokens=9)
+
+    def test_the_rerank_model_writes_it(self, project: Path, monkeypatch) -> None:
+        answer, rerank = self.Writer("answer"), self.Writer("rerank")
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: answer)
+        monkeypatch.setattr(bootstrap, "build_reranker", lambda s: rerank)
+        with Ish(project, settings=Settings(no_cache=True, git=False)) as ish:
+            assert ish.query_for("and it?", "Q: a") == "rerank: and it?"
+        assert (rerank.asked, answer.asked) == ([("and it?", "Q: a")], [])
+
+    def test_the_answer_model_writes_it_with_no_rerank_model(
+        self, project: Path, monkeypatch
+    ) -> None:
+        answer = self.Writer("answer")
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: answer)
+        monkeypatch.setattr(bootstrap, "build_reranker", lambda s: None)
+        with Ish(project, settings=Settings(no_cache=True, git=False)) as ish:
+            assert ish.query_for("and it?", "Q: a") == "answer: and it?"

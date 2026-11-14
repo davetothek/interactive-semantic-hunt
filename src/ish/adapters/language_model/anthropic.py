@@ -19,7 +19,9 @@ from ish.adapters.language_model._prompts import NOT_COVERED, Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
     LanguageModelError,
+    OnBlock,
     Passage,
+    Query,
     Reply,
     Selection,
     Source,
@@ -58,8 +60,16 @@ class AnthropicLanguageModel:
         self._prompts = prompts or load_prompts()
         self._timeout = timeout
 
-    def answer(self, question: str, sources: Sequence[Source]) -> Reply:
-        """Answer *question* from *sources*, with a citation per claim."""
+    def answer(
+        self,
+        question: str,
+        sources: Sequence[Source],
+        on_block: OnBlock | None = None,
+    ) -> Reply:
+        """Answer *question* from *sources*, with a citation per claim.
+
+        Stream nothing: *on_block* gets no block, and the reply holds them all.
+        """
         body = self._post(
             _request(self.model_name, self._prompts.answer_cited, question, sources)
         )
@@ -86,6 +96,7 @@ class AnthropicLanguageModel:
         sources: Sequence[Source],
         searched: Sequence[str],
         turns_left: int,
+        on_block: OnBlock | None = None,
     ) -> Reply:
         """Answer, or ask for searches, with structured output.
 
@@ -142,6 +153,15 @@ class AnthropicLanguageModel:
             _grounded.select_prompt(question, candidates, limit),
         )
         return _grounded.parse_ids(text, self.model_name, limit, read, wrote)
+
+    def query(self, question: str, history: str) -> Query:
+        """Write one search query, with structured output."""
+        text, read, wrote = self._structured(
+            self._prompts.query,
+            _grounded.QUERY_SCHEMA,
+            _grounded.query_prompt(question, history),
+        )
+        return _grounded.parse_query(text, self.model_name, read, wrote)
 
     def _post(self, payload: dict[str, object]) -> dict:
         """Send one request and return the decoded reply."""

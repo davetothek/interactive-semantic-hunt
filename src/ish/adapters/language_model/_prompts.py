@@ -3,7 +3,8 @@
 Each instruction is one file in the ``prompts`` directory beside this
 module: ``answer.md`` for an answer in JSON, ``answer_cited.md`` for an
 answer with native citations, ``step.md`` for a turn that may ask for
-searches, ``select.md`` for a rerank, and ``brief.md``, which a brief
+searches, ``select.md`` for a rerank, ``query.md`` for the search query
+of a question in a chat, and ``brief.md``, which a brief
 answer adds to the instruction that writes it. A directory that an operator
 names holds files of the same names, and each one it holds replaces the
 default. A file it does not hold keeps the default.
@@ -16,6 +17,11 @@ dollar sign.
 
 The JSON schemas a reply must follow stay in code. They are a contract
 with the parser, and an instruction that changes one must change both.
+
+Notes add to the instructions and replace none: the notes of an answer
+come after each instruction that writes one, and the notes of a rerank
+after ``select.md``, each under a heading that says so. A note is sent as
+written, with no value filled in.
 """
 
 import logging
@@ -30,11 +36,16 @@ from ish.application.ports.language_model import SEARCHES_A_TURN, LanguageModelE
 
 log = logging.getLogger(__name__)
 
-NAMES = ("answer", "answer_cited", "step", "select", "brief")
+NAMES = ("answer", "answer_cited", "step", "select", "query", "brief")
 
 # The reply word a backend with native citations gives when the
 # documents do not answer. It cannot reply in JSON beside its citations.
 NOT_COVERED = "NOT_COVERED"
+
+# The heading above the notes, which tells the model what they are.
+NOTES_HEADING = (
+    "Notes for this tree. They add to the instructions above and change none of them:"
+)
 
 _WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight")
 
@@ -47,6 +58,7 @@ class Prompts:
     answer_cited: str
     step: str
     select: str
+    query: str = ""
     brief: str = ""
 
     def briefly(self) -> "Prompts":
@@ -63,11 +75,19 @@ class Prompts:
         )
 
 
-def load(directory: Path | None = None, **values: int | str) -> Prompts:
+def load(
+    directory: Path | None = None,
+    *,
+    answer_notes: str = "",
+    rerank_notes: str = "",
+    **values: int | str,
+) -> Prompts:
     """Read the instructions, from *directory* where it holds a file.
 
     Fill each ``$name`` from *values*, a number as a word, and
-    ``$answer`` in ``step.md`` with the answer instruction. Raise
+    ``$answer`` in ``step.md`` with the answer instruction. Add
+    *answer_notes* after each instruction that writes an answer, and
+    *rerank_notes* after the rerank instruction. Raise
     ``LanguageModelError`` that names the file for a value no code
     fills, or for a directory that does not exist.
     """
@@ -85,6 +105,12 @@ def load(directory: Path | None = None, **values: int | str) -> Prompts:
         for name in NAMES
         if name != "step"
     }
+    for name, notes in (
+        ("answer", answer_notes),
+        ("answer_cited", answer_notes),
+        ("select", rerank_notes),
+    ):
+        texts[name] = _noted(texts[name], notes)
     # Fill the step once, with the answer as one more value: a value is
     # never read again, so a dollar sign in the answer stays as written.
     texts["step"] = _fill(
@@ -100,6 +126,12 @@ def load(directory: Path | None = None, **values: int | str) -> Prompts:
                 ", ".join(NAMES),
             )
     return Prompts(**texts)
+
+
+def _noted(text: str, notes: str) -> str:
+    """Return *text* with *notes* after it, under their heading, when there are any."""
+    notes = notes.strip()
+    return f"{text}\n\n{NOTES_HEADING}\n\n{notes}" if notes else text
 
 
 def _read(name: str, directory: Path | None) -> str:

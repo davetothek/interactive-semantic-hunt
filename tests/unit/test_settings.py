@@ -19,6 +19,8 @@ from ish.settings import (
     load_settings,
     option_names,
     project_configs,
+    tree_files_naming_a_server,
+    user_config_path,
 )
 
 # The command line carries a few names that are not options: the two
@@ -444,3 +446,185 @@ class TestToolTable:
         _write(tmp_path / CONFIG_FILENAME, "tool = 'black'\n")
         with pytest.raises(ConfigError, match="'tool' is not a table"):
             load_settings(start=tmp_path, environ={})
+
+
+class TestAFileInATreeTellsTheModelNothing:
+    """A repository that sets what a model is told can make it answer from outside.
+
+    A tree config could name a prompt_dir of its own, or notes, and tell
+    the model to drop the rule that it answers only from the sources.
+    """
+
+    SET = 'prompt_dir = "prompts"\nanswer_notes = "x"\nrerank_notes = "y"\n'
+
+    def test_a_project_file_sets_no_instruction(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / CONFIG_FILENAME, self.SET + "limit = 9\n")
+        settings = load_settings(start=tmp_path, environ={})
+        assert (settings.prompt_dir, settings.answer_notes, settings.rerank_notes) == (
+            "",
+            "",
+            "",
+        )
+        assert settings.limit == 9
+
+    def test_the_user_file_sets_them(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / "cfg" / "ish" / CONFIG_FILENAME, self.SET)
+        settings = load_settings(start=tmp_path / "proj", environ={})
+        assert (settings.prompt_dir, settings.answer_notes, settings.rerank_notes) == (
+            "prompts",
+            "x",
+            "y",
+        )
+
+
+class TestAFileInATreeNamesNoServer:
+    """A tree that names the server of `ish remote` chooses where the token goes."""
+
+    URL = "https://docs.example.invalid/mcp"
+
+    def test_a_project_file_does_not_set_remote(self, tmp_path, caplog) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\nlimit = 9\n')
+        with caplog.at_level("WARNING"):
+            settings = load_settings(start=tmp_path, environ={})
+        assert settings.remote == ""
+        # The other options of the file still apply.
+        assert settings.limit == 9
+        # A local command prints what it printed before. `ish remote` names
+        # the file, through `tree_files_naming_a_server`.
+        assert caplog.messages == []
+
+    def test_each_file_that_names_a_server_is_listed(self, tmp_path) -> None:
+        outer = _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\n')
+        below = tmp_path / "docs"
+        _write(below / CONFIG_FILENAME, "limit = 3\n")
+        assert tree_files_naming_a_server(below, environ={}) == [outer]
+
+    def test_no_file_is_listed_when_a_config_file_is_named(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\n')
+        named = str(tmp_path / "docs.toml")
+        assert tree_files_naming_a_server(tmp_path, config=named, environ={}) == []
+        environ = {"ISH_CONFIG": named}
+        assert tree_files_naming_a_server(tmp_path, environ=environ) == []
+
+    def test_an_unknown_key_warns_once_on_a_line_of_ish_remote(
+        self, tmp_path, caplog
+    ) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\nnope = 1\n')
+        with caplog.at_level("WARNING"):
+            tree_files_naming_a_server(tmp_path, environ={})
+        assert caplog.messages == []
+
+    def test_the_user_config_file_sets_remote(self, tmp_path, caplog) -> None:
+        _write(user_config_path(), f'remote = "{self.URL}"\n')
+        with caplog.at_level("WARNING"):
+            assert load_settings(start=tmp_path, environ={}).remote == self.URL
+        assert caplog.messages == []
+
+    def test_a_named_config_file_sets_remote(self, tmp_path) -> None:
+        named = tmp_path / "docs.toml"
+        _write(named, f'remote = "{self.URL}"\n')
+        settings = load_settings({"config": str(named)}, start=tmp_path, environ={})
+        assert settings.remote == self.URL
+
+    def test_the_environment_and_the_line_set_remote(self, tmp_path) -> None:
+        environ = {"ISH_REMOTE": self.URL}
+        assert load_settings(start=tmp_path, environ=environ).remote == self.URL
+        line = load_settings({"remote": self.URL}, start=tmp_path, environ={})
+        assert line.remote == self.URL
+
+    def test_a_project_file_above_the_tree_does_not_set_it_either(
+        self, tmp_path
+    ) -> None:
+        _write(tmp_path / CONFIG_FILENAME, f'remote = "{self.URL}"\n')
+        below = tmp_path / "docs"
+        below.mkdir()
+        assert load_settings(start=below, environ={}).remote == ""
+
+
+class TestAuth:
+    def test_the_default_is_the_static_token(self, tmp_path) -> None:
+        assert load_settings(start=tmp_path, environ={}).auth == ("token",)
+
+    def test_the_environment_names_the_methods(self, tmp_path) -> None:
+        settings = load_settings(start=tmp_path, environ={"ISH_AUTH": "token,ldap"})
+        assert settings.auth == ("token", "ldap")
+
+
+class TestAFileInATreeSetsNoSignIn:
+    """A tree that set how a server signs users in would choose the directory."""
+
+    def test_the_sign_in_options_of_a_tree_are_dropped(self, tmp_path) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            'auth = ["ldap"]\nldap_url = "ldap://attacker.example.invalid"\n'
+            "ldap_starttls = false\nlogin_days = 999\n"
+            'ldap_user_dn = "uid={user}"\nldap_group = "cn=all"\nlimit = 4\n',
+        )
+        settings = load_settings(start=tmp_path, environ={})
+        assert settings.auth == ("token",)
+        assert (settings.ldap_url, settings.ldap_user_dn, settings.ldap_group) == (
+            "",
+            "",
+            "",
+        )
+        assert settings.login_days == 30
+        assert settings.limit == 4
+
+    def test_the_user_config_sets_them(self, tmp_path) -> None:
+        _write(user_config_path(), 'auth = ["token", "ldap"]\nlogin_days = 7\n')
+        settings = load_settings(start=tmp_path, environ={})
+        assert (settings.auth, settings.login_days) == (("token", "ldap"), 7)
+
+    def test_each_file_and_its_options_are_named(self, tmp_path) -> None:
+        from ish.settings import tree_files_setting
+
+        path = _write(tmp_path / CONFIG_FILENAME, 'ldap_url = "x"\nremote = "y"\n')
+        assert tree_files_setting(tmp_path, environ={}) == [
+            (path, ["remote", "ldap_url"])
+        ]
+
+
+class TestTheLdapPasswordIsNoOption:
+    @pytest.mark.parametrize(
+        "variable", ["ISH_LDAP_BIND_PASSWORD", "ISH_LDAP_BIND_PASSWORD_FILE"]
+    )
+    def test_the_variable_does_not_warn(self, variable: str, tmp_path, caplog) -> None:
+        with caplog.at_level("WARNING"):
+            load_settings(start=tmp_path, environ={variable: "service-EXAMPLE"})
+        assert caplog.text == ""
+
+    def test_a_server_is_set_up_from_the_environment_alone(self, tmp_path) -> None:
+        environ = {
+            "ISH_AUTH": "token,ldap",
+            "ISH_LDAP_URL": "ldaps://ldap.example.invalid",
+            "ISH_LDAP_BIND_DN": "cn=ish,ou=services,dc=example,dc=invalid",
+            "ISH_LDAP_BASE": "ou=people,dc=example,dc=invalid",
+            "ISH_LDAP_USER_FILTER": "(sAMAccountName={user})",
+            "ISH_LDAP_GROUP": "cn=ish,ou=groups,dc=example,dc=invalid",
+            "ISH_LDAP_STARTTLS": "false",
+            "ISH_LOGIN_DAYS": "7",
+        }
+        settings = load_settings(start=tmp_path, environ=environ)
+        assert settings.auth == ("token", "ldap")
+        assert settings.ldap_bind_dn == "cn=ish,ou=services,dc=example,dc=invalid"
+        assert settings.ldap_user_filter == "(sAMAccountName={user})"
+        assert (settings.ldap_starttls, settings.login_days) == (False, 7)
+
+    def test_a_tree_sets_no_service_account(self, tmp_path) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            'ldap_bind_dn = "cn=x"\nldap_base = "dc=x"\n'
+            'ldap_user_filter = "(cn={user})"\n',
+        )
+        settings = load_settings(start=tmp_path, environ={})
+        assert (
+            settings.ldap_bind_dn,
+            settings.ldap_base,
+            settings.ldap_user_filter,
+        ) == (
+            "",
+            "",
+            "",
+        )

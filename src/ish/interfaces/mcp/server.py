@@ -11,15 +11,15 @@ that process writes, and passes a request for a refresh on to it.
 
 import json
 import logging
-import os
 import sys
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from ish import bootstrap
+from ish.application.answer import Answer
 from ish.application.categories import TYPES
 from ish.application.progress import Progress
 from ish.domain.chunk import Chunk
@@ -150,15 +150,6 @@ class IshTools:
         if not path.exists():
             raise ValueError(f"Path does not exist: {path}")
         return path
-
-    @staticmethod
-    def _narrowing(arguments: Mapping[str, Any]) -> dict[str, Any]:
-        """Return the query-scope filters a call passed, as keyword arguments."""
-        return {
-            "lang": tuple(str(item) for item in arguments.get("lang") or ()),
-            "under": str(arguments.get("under") or ""),
-            "type": tuple(str(item) for item in arguments.get("type") or ()),
-        }
 
     def _keep_current(self, root: Path, session: Ish) -> None:
         """Keep the index for *root* current behind the questions.
@@ -318,7 +309,7 @@ class IshTools:
         self._keep_current(root, session)
         # The session reads `lang:cpp type:doc` out of the query itself,
         # so an editor can pass the line as typed.
-        results = session.search(query, limit, **self._narrowing(arguments))
+        results = session.search(query, limit, **narrowing_of(arguments))
         if not results:
             return f"{NO_RESULTS} {query!r} under {root}."
 
@@ -348,54 +339,77 @@ class IshTools:
         answer = session.ask(
             question,
             brief=brief,
-            turns=_turns(arguments.get("ask_turns")),
-            **self._narrowing(arguments),
+            turns=turns_of(arguments.get("ask_turns")),
+            **narrowing_of(arguments),
         )
+        reply = answer_data(
+            answer, question, brief, session.link, session.kind_of, base=root
+        )
+        return json.dumps(reply, ensure_ascii=False)
 
-        def described(chunk: Chunk, number: int | None = None) -> dict[str, Any]:
-            entry: dict[str, Any] = {} if number is None else {"n": number}
-            entry |= {
+    def sources(self, arguments: Mapping[str, Any]) -> str:
+        """Return the chunks a search finds with the text of each, as JSON.
+
+        A client that writes the answer with a model of its own reads
+        this in place of ``ask``. Each chunk carries what a citation
+        needs and its text. Each term carries the meaning of an acronym
+        the texts use, and the chunk that spells it out.
+        """
+        query = str(arguments.get("query") or "").strip()
+        if not query:
+            raise ValueError("The 'query' argument is required.")
+        root = self._resolve(arguments.get("path"))
+        limit = _limit(arguments.get("limit"), self._settings.limit)
+        session = self._session_for(root)
+        self._keep_current(root, session)
+        found = session.sources(query, limit, **narrowing_of(arguments))
+
+        def described(chunk: Chunk) -> dict[str, Any]:
+            return {
                 "path": str(display_path(chunk.path, root)),
                 "type": session.kind_of(chunk),
                 "location": chunk.location.to_dict(),
                 "kind": chunk.kind,
-                "symbol": symbol_of(chunk),
+                "symbol": chunk.symbol,
+                "language": chunk.language,
                 "url": session.link(chunk),
             }
-            return entry
 
-        # What the answer cost: the models, their tokens, and the seconds
-        # of each stage, so a client can show where the time went.
-        reply: dict[str, Any] = {
-            "covered": answer.covered,
-            "dropped": answer.dropped,
-            **answer_usage(answer),
-        }
-        if brief:
-            reply["answer"] = format_brief(answer)
-            return json.dumps(reply, ensure_ascii=False)
-        if answer.covered:
-            text, cited = number_citations(answer)
-            layout, _ = layout_data(answer)
-            terms, cited = terms_data(answer, cited)
-            reply["answer"] = text
-            reply["layout"] = layout
-            reply["terms"] = terms
-            reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
-        else:
-            reply["answer"] = NOT_COVERED_TEXT
-            reply["sources"] = [described(c) for c in answer.sources]
-        # The text `ish --ask` prints, so a client in a terminal shows
-        # the answer the way a local run does.
-        reply["markdown"] = format_answer(
-            answer, question, session.link, base=root, kind_of=session.kind_of
+        return json.dumps(
+            {
+                "sources": [
+                    described(entry.chunk) | {"score": entry.score, "text": entry.text}
+                    for entry in found.chunks
+                ],
+                "terms": [
+                    {
+                        "term": term.short,
+                        "meaning": term.meaning,
+                        "source": described(term.chunk),
+                    }
+                    for term in found.terms
+                ],
+            },
+            ensure_ascii=False,
         )
-        return json.dumps(reply, ensure_ascii=False)
+
+    def index_exists(self, arguments: Mapping[str, Any]) -> str:
+        """Say whether a stored index holds chunks for a path, as JSON.
+
+        Count what is stored, and start no index, no refresh, and no
+        watch. A tree with no index gets no file. An editor asks before it
+        chooses between this tree and a server, and an index that the
+        question started would cost the hours the choice was to save.
+        """
+        root = self._resolve(arguments.get("path"))
+        session = self._session_for(root)
+        chunks = session.held() if session.stored() else 0
+        return json.dumps({"exists": chunks > 0, "chunks": chunks})
 
     def list_chunks(self, arguments: Mapping[str, Any]) -> str:
         """List every chunk the parsers find under a path."""
         root = self._resolve(arguments.get("path"))
-        chunks = self._session_for(root).scan(**self._narrowing(arguments))
+        chunks = self._session_for(root).scan(**narrowing_of(arguments))
         if not chunks:
             return f"No source files found under {root}."
         shape = str(arguments.get("format") or self._settings.format)
@@ -467,114 +481,19 @@ class IshTools:
             {"text": session.complete(query), "candidates": session.candidates(query)}
         )
 
-    def tools(self) -> list[Tool]:
-        """Describe every tool this server offers."""
-        return [
-            Tool(
-                name="search_code",
-                description=(
-                    "Search a codebase by meaning rather than by literal text. "
-                    "Returns ranked chunks (functions, classes, methods, and "
-                    "sections) with their file, line range, and score. Use it "
-                    "for questions such as 'where is authentication handled' "
-                    "or 'what computes the ranking', where the wording of the "
-                    "question will not appear in the code."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "What to look for, in plain language.",
-                        },
-                        "path": _PATH_PROPERTY,
-                        **_QUERY_PROPERTIES,
-                    },
-                    "required": ["query"],
-                },
-                handler=self.search,
-            ),
-            Tool(
-                name="ask",
-                description=(
-                    "Answer a question from the documents and code under a "
-                    "path, with a citation for each claim. Returns JSON: the "
-                    "answer with [n] markers, its layout (a short answer, "
-                    "sections of prose, steps, or tables, and what the "
-                    "documents leave open), and per citation the path, the "
-                    "type, the location, and a link that opens the source, and "
-                    "the whole answer as Markdown, and what it cost: the "
-                    "models, their tokens, and the seconds of each stage in "
-                    "'timings'. When the "
-                    "documents do not answer the question, 'covered' is "
-                    "false and 'sources' lists the closest chunks. Use it "
-                    "for questions such as 'how is the watchdog configured'."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "The question, in plain language.",
-                        },
-                        "path": _PATH_PROPERTY,
-                        "brief": {
-                            "type": "boolean",
-                            "description": (
-                                "Answer in a sentence or two with no citations. "
-                                "Ask again without it for the sources."
-                            ),
-                        },
-                        "ask_turns": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": MAX_ASK_TURNS,
-                            "description": (
-                                "Follow-up searches the model may ask for "
-                                "before it answers. Leave it out for the "
-                                "server's own setting."
-                            ),
-                        },
-                        "lang": _QUERY_PROPERTIES["lang"],
-                        "under": _QUERY_PROPERTIES["under"],
-                        "type": _QUERY_PROPERTIES["type"],
-                    },
-                    "required": ["question"],
-                },
-                handler=self.ask,
-            ),
-            Tool(
-                name="list_chunks",
-                description=(
-                    "List every definition under a path, with its kind, "
-                    "qualified name, and line range. Use it to survey a file "
-                    "or package without reading the source."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "path": _PATH_PROPERTY,
-                        "lang": _QUERY_PROPERTIES["lang"],
-                        "under": _QUERY_PROPERTIES["under"],
-                        "type": _QUERY_PROPERTIES["type"],
-                        "format": _QUERY_PROPERTIES["format"],
-                    },
-                },
-                handler=self.list_chunks,
-            ),
-            Tool(
-                name="index_status",
-                description=(
-                    "Report how many chunks the stored index holds for a path, "
-                    "which languages they came from, which embedding backend "
-                    "produced them, and whether a refresh is running."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {"path": _PATH_PROPERTY},
-                },
-                handler=self.index_status,
-            ),
+    def tools(self, over_http: bool = False) -> list[Tool]:
+        """Describe every tool this server offers.
+
+        With *over_http*, offer the sources tool in place of ``ask``. A
+        client on another machine reads the text of the chunks and
+        answers with a model of its own. A server over HTTP sends text
+        to each client it admits, so it builds no model for them.
+        """
+        offered = [
+            search_tool(self.search),
+            ask_tool(self.ask),
+            list_tool(self.list_chunks),
+            status_tool(self.index_status),
             Tool(
                 name="refresh_index",
                 description=(
@@ -590,30 +509,284 @@ class IshTools:
                 },
                 handler=self.refresh,
             ),
-            Tool(
-                name="complete_filter",
-                description=(
-                    "Finish the filter word a query ends in, the way a shell "
-                    "finishes a path: ty becomes type:, lang:cp becomes "
-                    "lang:cpp, and under:/s becomes the subtree that starts "
-                    "with s. Returns JSON with the completed text and, when "
-                    "several answers fit, the candidates to choose between. "
-                    "For an editor's picker, which calls it on Tab."
-                ),
-                schema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The query as typed so far.",
-                        },
-                        "path": _PATH_PROPERTY,
-                    },
-                    "required": ["query"],
-                },
-                handler=self.complete_filter,
-            ),
+            complete_tool(self.complete_filter),
         ]
+        if not over_http:
+            # Only an editor on this machine chooses between this tree and
+            # a server, so only the server on stdio offers this tool.
+            offered.append(exists_tool(self.index_exists))
+        if over_http:
+            offered = [tool for tool in offered if tool.name != "ask"]
+            offered.append(
+                Tool(
+                    name="sources",
+                    description=(
+                        "Return the chunks a search finds with the text of "
+                        "each, for a client that writes the answer with a "
+                        "model of its own. Returns JSON: 'sources' lists the "
+                        "ranked chunks, each with its path, type, location, "
+                        "kind, symbol, language, score, link, and text, and "
+                        "'terms' gives the meaning of each acronym the texts "
+                        "use, with the chunk that spells it out. The text is "
+                        "empty for a chunk the server cannot read."
+                    ),
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "What to look for, in plain language.",
+                            },
+                            "path": _PATH_PROPERTY,
+                            "limit": {
+                                "type": "integer",
+                                "description": "How many chunks to return.",
+                                "minimum": 1,
+                                "maximum": MAX_SOURCES,
+                            },
+                            "lang": _QUERY_PROPERTIES["lang"],
+                            "under": _QUERY_PROPERTIES["under"],
+                            "type": _QUERY_PROPERTIES["type"],
+                        },
+                        "required": ["query"],
+                    },
+                    handler=self.sources,
+                )
+            )
+        return offered
+
+
+def search_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``search_code``, which *handler* answers."""
+    return Tool(
+        name="search_code",
+        description=(
+            "Search a codebase by meaning rather than by literal text. "
+            "Returns ranked chunks (functions, classes, methods, and "
+            "sections) with their file, line range, and score. Use it "
+            "for questions such as 'where is authentication handled' "
+            "or 'what computes the ranking', where the wording of the "
+            "question will not appear in the code."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to look for, in plain language.",
+                },
+                "path": _PATH_PROPERTY,
+                **_QUERY_PROPERTIES,
+            },
+            "required": ["query"],
+        },
+        handler=handler,
+    )
+
+
+def ask_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``ask``, which *handler* answers."""
+    return Tool(
+        name="ask",
+        description=(
+            "Answer a question from the documents and code under a "
+            "path, with a citation for each claim. Returns JSON: the "
+            "answer with [n] markers, its layout (a short answer, "
+            "sections of prose, steps, or tables, and what the "
+            "documents leave open), and per citation the path, the "
+            "type, the location, and a link that opens the source, and "
+            "the whole answer as Markdown, and what it cost: the "
+            "models, their tokens, and the seconds of each stage in "
+            "'timings'. When the "
+            "documents do not answer the question, 'covered' is "
+            "false and 'sources' lists the closest chunks. Use it "
+            "for questions such as 'how is the watchdog configured'."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question, in plain language.",
+                },
+                "path": _PATH_PROPERTY,
+                "brief": {
+                    "type": "boolean",
+                    "description": (
+                        "Answer in a sentence or two with no citations. "
+                        "Ask again without it for the sources."
+                    ),
+                },
+                "ask_turns": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_ASK_TURNS,
+                    "description": (
+                        "Follow-up searches the model may ask for "
+                        "before it answers. Leave it out for the "
+                        "server's own setting."
+                    ),
+                },
+                "lang": _QUERY_PROPERTIES["lang"],
+                "under": _QUERY_PROPERTIES["under"],
+                "type": _QUERY_PROPERTIES["type"],
+            },
+            "required": ["question"],
+        },
+        handler=handler,
+    )
+
+
+def list_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``list_chunks``, which *handler* answers."""
+    return Tool(
+        name="list_chunks",
+        description=(
+            "List every definition under a path, with its kind, "
+            "qualified name, and line range. Use it to survey a file "
+            "or package without reading the source."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "path": _PATH_PROPERTY,
+                "lang": _QUERY_PROPERTIES["lang"],
+                "under": _QUERY_PROPERTIES["under"],
+                "type": _QUERY_PROPERTIES["type"],
+                "format": _QUERY_PROPERTIES["format"],
+            },
+        },
+        handler=handler,
+    )
+
+
+def status_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``index_status``, which *handler* answers."""
+    return Tool(
+        name="index_status",
+        description=(
+            "Report how many chunks the stored index holds for a path, "
+            "which languages they came from, which embedding backend "
+            "produced them, and whether a refresh is running."
+        ),
+        schema={
+            "type": "object",
+            "properties": {"path": _PATH_PROPERTY},
+        },
+        handler=handler,
+    )
+
+
+def complete_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``complete_filter``, which *handler* answers."""
+    return Tool(
+        name="complete_filter",
+        description=(
+            "Finish the filter word a query ends in, the way a shell "
+            "finishes a path: ty becomes type:, lang:cp becomes "
+            "lang:cpp, and under:/s becomes the subtree that starts "
+            "with s. Returns JSON with the completed text and, when "
+            "several answers fit, the candidates to choose between. "
+            "For an editor's picker, which calls it on Tab."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The query as typed so far.",
+                },
+                "path": _PATH_PROPERTY,
+            },
+            "required": ["query"],
+        },
+        handler=handler,
+    )
+
+
+def exists_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
+    """Describe ``index_exists``, which *handler* answers."""
+    return Tool(
+        name="index_exists",
+        description=(
+            "Say whether a stored index holds chunks for a path, and how "
+            "many. Returns JSON with 'exists' and 'chunks'. It starts no "
+            "index and no refresh, unlike index_status. An editor calls it "
+            "to choose between this tree and a server."
+        ),
+        schema={
+            "type": "object",
+            "properties": {"path": _PATH_PROPERTY},
+        },
+        handler=handler,
+    )
+
+
+def narrowing_of(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the query-scope filters a call passed, as keyword arguments."""
+    return {
+        "lang": tuple(str(item) for item in arguments.get("lang") or ()),
+        "under": str(arguments.get("under") or ""),
+        "type": tuple(str(item) for item in arguments.get("type") or ()),
+    }
+
+
+def answer_data(
+    answer: Answer,
+    question: str,
+    brief: bool,
+    link: Callable[[Chunk], str],
+    kind_of: Callable[[Chunk], str],
+    *,
+    base: Path | None = None,
+) -> dict[str, Any]:
+    """Return the reply of ``ask`` for *answer*, as data for JSON.
+
+    Give the answer with numbered citations, and for each citation the
+    path from *base*, the location as data, and a link. A question the
+    documents do not cover gets the closest sources in place of an
+    answer.
+    """
+
+    def described(chunk: Chunk, number: int | None = None) -> dict[str, Any]:
+        entry: dict[str, Any] = {} if number is None else {"n": number}
+        entry |= {
+            "path": str(display_path(chunk.path, base)),
+            "type": kind_of(chunk),
+            "location": chunk.location.to_dict(),
+            "kind": chunk.kind,
+            "symbol": symbol_of(chunk),
+            "url": link(chunk),
+        }
+        return entry
+
+    # What the answer cost: the models, their tokens, and the seconds
+    # of each stage, so a client can show where the time went.
+    reply: dict[str, Any] = {
+        "covered": answer.covered,
+        "dropped": answer.dropped,
+        **answer_usage(answer),
+    }
+    if brief:
+        reply["answer"] = format_brief(answer)
+        return reply
+    if answer.covered:
+        text, cited = number_citations(answer)
+        layout, _ = layout_data(answer)
+        terms, cited = terms_data(answer, cited)
+        reply["answer"] = text
+        reply["layout"] = layout
+        reply["terms"] = terms
+        reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
+    else:
+        reply["answer"] = NOT_COVERED_TEXT
+        reply["sources"] = [described(c) for c in answer.sources]
+    # The text `ish --ask` prints, so a client in a terminal shows
+    # the answer the way a local run does.
+    reply["markdown"] = format_answer(
+        answer, question, link, base=base, kind_of=kind_of
+    )
+    return reply
 
 
 # The most follow-up turns one call may ask for. Each turn is one more
@@ -622,7 +795,7 @@ class IshTools:
 MAX_ASK_TURNS = 5
 
 
-def _turns(value: Any) -> int | None:
+def turns_of(value: Any) -> int | None:
     """Return the turns a call asked for, or None for the server's setting.
 
     Raise ``ValueError`` for a value that is not a count from 0 to
@@ -637,6 +810,27 @@ def _turns(value: Any) -> int | None:
     return value
 
 
+# The most chunks one call of the sources tool may return. Each chunk
+# travels with its text, up to the cap a parser sets, so the bound keeps
+# one reply to a few megabytes.
+MAX_SOURCES = 200
+
+
+def _limit(value: Any, default: int) -> int:
+    """Return the chunks a sources call asked for, or *default* for none.
+
+    Raise ``ValueError`` for a value that is not a count from 1 to
+    ``MAX_SOURCES``, so the call fails rather than a bound being lifted.
+    """
+    if value is None:
+        return min(default, MAX_SOURCES)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("'limit' must be a whole number.")
+    if not 1 <= value <= MAX_SOURCES:
+        raise ValueError(f"'limit' must be from 1 to {MAX_SOURCES}.")
+    return value
+
+
 def installed_version() -> str:
     """Return the installed package version."""
     import importlib.metadata
@@ -647,11 +841,11 @@ def installed_version() -> str:
         return "unknown"
 
 
-def _parse(argv: list[str] | None):
+def _parse(argv: list[str] | None, prog: str):
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="ish-mcp",
+        prog=prog,
         description="Serve the ish tools over MCP, on stdio unless told otherwise.",
     )
     parser.add_argument(
@@ -665,6 +859,50 @@ def _parse(argv: list[str] | None):
     return parser.parse_args(argv)
 
 
+def _warn_of_a_tree_that_sets_sign_in(root: Path) -> None:
+    """Name each file in the tree that sets how the server signs users in.
+
+    The loader ignores those options in a file of the tree, because a
+    person who can commit to the tree would choose the directory that gets
+    each password.
+    """
+    from ish.settings import tree_files_setting, user_config_path
+
+    for path, names in tree_files_setting(root):
+        kept = [name for name in names if name != "remote"]
+        if kept:
+            log.warning(
+                "Ignore %s in %s. A file in a tree does not set how a server "
+                "signs users in. Set them in %s or in ISH_* variables.",
+                ", ".join(kept),
+                path,
+                user_config_path(),
+            )
+
+
+def _refuse_a_password_from_the_network(host: str, methods: list[str]) -> None:
+    """Raise ``ValueError`` when a server that signs users in listens on a network.
+
+    ish holds no certificate. A password reaches a server that signs
+    users in through a reverse proxy on this machine that holds one, so
+    the server listens on the loopback address only.
+    """
+    import ipaddress
+
+    if not methods or host == "localhost":
+        return
+    try:
+        if ipaddress.ip_address(host.strip("[]")).is_loopback:
+            return
+    except ValueError:
+        pass
+    raise ValueError(
+        f"A server that signs users in with {', '.join(methods)} listens on this "
+        "machine only, behind a reverse proxy that holds the certificate. "
+        "Give --http 127.0.0.1:PORT."
+    )
+
+
 def _address(text: str) -> tuple[str, int]:
     """Split HOST:PORT, and read a bare PORT as one on the loopback address."""
     host, _, port = text.rpartition(":")
@@ -673,12 +911,13 @@ def _address(text: str) -> tuple[str, int]:
     return host or "127.0.0.1", int(port)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
     """Run the MCP server on stdio, or over HTTP with ``--http``.
 
-    Return an exit code.
+    Return an exit code. *prog* is the name the usage line shows, because
+    ``ish mcp`` starts this server as well.
     """
-    args = _parse(argv)
+    args = _parse(argv, prog)
     root = Path.cwd()
     settings = load_settings(start=root)
 
@@ -686,16 +925,23 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(verbosity=settings.verbosity, color=False)
 
     if args.http:
+        _warn_of_a_tree_that_sets_sign_in(root)
         try:
-            transport = HttpTransport(
-                *_address(args.http), os.environ.get(TOKEN_VARIABLE, "")
-            )
+            address = _address(args.http)
+            access = bootstrap.build_access(settings)
+            _refuse_a_password_from_the_network(address[0], access.methods())
+            transport = HttpTransport(*address, access.admit, access)
         except ValueError as exc:
             log.error("%s", exc)
             return 1
 
+    if args.http:
+        # Who called which tool shows at every verbosity.
+        logging.getLogger("ish.audit").setLevel(logging.INFO)
     tools = IshTools(settings, root)
-    server = Server(SERVER_NAME, installed_version(), tools.tools())
+    server = Server(
+        SERVER_NAME, installed_version(), tools.tools(over_http=bool(args.http))
+    )
     try:
         tools.warm_reader()
         if args.http:

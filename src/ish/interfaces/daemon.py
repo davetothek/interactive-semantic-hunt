@@ -205,10 +205,10 @@ def _exit_on_signal(signum: int, _frame: object) -> None:
     raise KeyboardInterrupt(f"signal {signum}")
 
 
-def _parse(argv: list[str] | None) -> argparse.Namespace:
+def _parse(argv: list[str] | None, prog: str) -> argparse.Namespace:
     """Read the lifecycle options. Everything else comes from the config."""
     parser = argparse.ArgumentParser(
-        prog="ish-serve",
+        prog=prog,
         description="Keep the index of a tree current for every client that reads it.",
     )
     parser.add_argument(
@@ -231,9 +231,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run the server. Return an exit code."""
-    args = _parse(argv)
+def main(argv: list[str] | None = None, prog: str = "ish-serve") -> int:
+    """Run the server. Return an exit code.
+
+    *prog* is the name the usage line shows, because ``ish serve`` starts
+    this server as well.
+    """
+    args = _parse(argv, prog)
     root = Path(args.tree).expanduser().resolve()
     if not root.is_dir():
         print(f"ish-serve: {root} is not a directory", file=sys.stderr)

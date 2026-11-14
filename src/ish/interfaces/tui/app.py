@@ -11,6 +11,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.widgets import Footer, Header, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -89,6 +90,14 @@ class IshApp(App[Match | None]):
         width: 40%;
         height: 1fr;
         border: solid $accent;
+    }
+    /* The query field keeps the focus, so the list is never focused, and
+       an ANSI theme draws the highlight of a list without focus in the
+       colors of every other row. Draw it as the focused cursor. */
+    #results-list > .option-list--option-highlighted {
+        color: $block-cursor-foreground;
+        background: $block-cursor-background;
+        text-style: $block-cursor-text-style;
     }
     #preview-pane {
         width: 60%;
@@ -312,9 +321,16 @@ class IshApp(App[Match | None]):
 
         Show the score prefix only for search results — the plain chunk
         listing has no meaningful scores.
+
+        Fill nothing when the interface has closed. A search that ends as
+        the picker quits finds no list to fill, and raising then would
+        fail the worker on the way out.
         """
+        try:
+            option_list = self.query_one(OptionList)
+        except NoMatches:
+            return
         self._current_results = results
-        option_list = self.query_one(OptionList)
         option_list.clear_options()
 
         for chunk, score in results:

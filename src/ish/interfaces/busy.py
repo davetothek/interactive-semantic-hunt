@@ -180,6 +180,22 @@ class Ticker:
             sys.stderr.flush()
         self.draw()
 
+    def above(self, text: str) -> None:
+        """Write *text* on stdout above the turning line, which turns on below it.
+
+        The line turns on stderr, and both streams reach one terminal.
+        Clear the line first, so the text starts at the left and no frame
+        of the spinner lands inside it.
+        """
+        with self._lock:
+            if sys.stderr.isatty():
+                sys.stderr.write("\r\033[2K")
+                sys.stderr.flush()
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        if self._thread is not None:
+            self.draw()
+
     def stop(self) -> None:
         """Stop turning and clear the line, so the output stands alone.
 

@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import logging
 import os
 
 import pytest
@@ -15,6 +16,30 @@ def configured_logging():
     from ish.interfaces.log import setup_logging
 
     setup_logging(verbosity=0, color=False)
+    # A server over HTTP raises the audit logger for the process. Reset it,
+    # so a test after one that started a server sees no audit line.
+    logging.getLogger("ish.audit").setLevel(logging.NOTSET)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def isolated_session(tmp_path_factory):
+    """Keep a fixture of a module out of the directories of the developer.
+
+    A fixture of a module runs before the fixtures of its first test, so
+    the isolation of one test comes too late for it. One fixture wrote a
+    login file to the data directory of the developer that way. This one
+    runs before every other fixture.
+    """
+    base = tmp_path_factory.mktemp("xdg-session")
+    with pytest.MonkeyPatch.context() as patch:
+        for name in (
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_DATA_HOME",
+            "XDG_RUNTIME_DIR",
+        ):
+            patch.setenv(name, str(base / name.lower()))
+        yield
 
 
 @pytest.fixture(autouse=True)

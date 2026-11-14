@@ -1,5 +1,6 @@
 """Test the ish tools exposed over MCP."""
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -205,6 +206,7 @@ class TestToolDefinitions:
             "index_status",
             "refresh_index",
             "complete_filter",
+            "index_exists",
         ]
 
     def test_search_requires_a_query(self, tools: IshTools) -> None:
@@ -1041,6 +1043,134 @@ class TestAsk:
         assert "limit" not in ask.schema["properties"]
 
 
+class TestSources:
+    """The sources tool returns chunks with their text, as JSON."""
+
+    def _sources(self, tools: IshTools, **arguments) -> dict:
+        import json
+
+        return json.loads(tools.sources(arguments))
+
+    def test_a_chunk_carries_what_a_citation_needs_and_its_text(
+        self, tools: IshTools, project: Path, stub_backend
+    ) -> None:
+        reply = self._sources(tools, query="load the config", limit=1)
+        (source,) = reply["sources"]
+        assert source["text"].startswith("def load_config():")
+        assert isinstance(source.pop("score"), float)
+        assert source.pop("url").startswith("file://")
+        assert source == {
+            "path": "app.py",
+            "type": "code",
+            "location": {"kind": "lines", "start": 1, "end": 2},
+            "kind": "function",
+            "symbol": "load_config",
+            "language": "python",
+            "text": "def load_config():\n    return {}\n",
+        }
+
+    def test_the_chunks_come_in_the_order_a_search_ranks_them(
+        self, tools: IshTools, project: Path, stub_backend
+    ) -> None:
+        ranked = tools.search({"query": "client", "format": "plain"}).splitlines()
+        reply = self._sources(tools, query="client")
+        assert [s["symbol"] for s in reply["sources"]] == [
+            line.split()[-1] for line in ranked
+        ]
+
+    def test_a_term_carries_its_meaning_and_the_chunk_that_spells_it_out(
+        self, tools: IshTools, project: Path, stub_backend
+    ) -> None:
+        (project / "notes.md").write_text(
+            "# Gain\n\nThe Automatic Gain Control (AGC) loop reads the config.\n"
+        )
+        reply = self._sources(tools, query="config", lang=["markdown"])
+        (term,) = reply["terms"]
+        assert (term["term"], term["meaning"]) == ("AGC", "Automatic Gain Control")
+        assert term["source"]["path"] == "notes.md"
+        assert term["source"]["location"]["kind"] == "lines"
+        assert "text" not in term["source"]
+
+    def test_a_filter_narrows_the_chunks(
+        self, tools: IshTools, project: Path, stub_backend
+    ) -> None:
+        (project / "notes.md").write_text("# Notes\n\nThe client reads a config.\n")
+        reply = self._sources(tools, query="client", lang=["markdown"])
+        assert {s["language"] for s in reply["sources"]} == {"markdown"}
+
+    def test_a_query_is_required(self, tools: IshTools) -> None:
+        with pytest.raises(ValueError, match="query"):
+            tools.sources({"query": "  "})
+
+    @pytest.mark.parametrize("limit", [0, -1, 201, "3", 2.5, True])
+    def test_a_limit_out_of_bounds_fails_the_call(
+        self, tools: IshTools, stub_backend, limit
+    ) -> None:
+        with pytest.raises(ValueError, match="limit"):
+            tools.sources({"query": "config", "limit": limit})
+
+    def test_no_limit_takes_the_setting_of_the_server_within_the_bound(self) -> None:
+        from ish.interfaces.mcp.server import MAX_SOURCES, _limit
+
+        assert _limit(None, 20) == 20
+        assert _limit(None, 5000) == MAX_SOURCES
+        assert _limit(MAX_SOURCES, 20) == MAX_SOURCES
+
+    def test_no_language_model_is_built(
+        self, tools: IshTools, stub_backend, monkeypatch
+    ) -> None:
+        def refuse(settings, **_):
+            raise AssertionError("the sources tool must not build a model")
+
+        monkeypatch.setattr(bootstrap, "build_language_model", refuse)
+        monkeypatch.setattr(bootstrap, "build_reranker", refuse)
+        assert self._sources(tools, query="config")["sources"]
+
+    def test_only_a_server_over_http_offers_the_tool(self, tools: IshTools) -> None:
+        local = [t.name for t in tools.tools()]
+        assert "sources" not in local
+        offered = [t.name for t in tools.tools(over_http=True)]
+        assert offered == [
+            name for name in local if name not in ("ask", "index_exists")
+        ] + ["sources"]
+
+    def test_the_server_on_stdio_keeps_its_ask(self, tools: IshTools) -> None:
+        assert "ask" in [t.name for t in tools.tools()]
+
+    def test_the_tool_says_what_it_accepts(self, tools: IshTools) -> None:
+        from ish.interfaces.mcp.server import MAX_SOURCES
+
+        sources = tools.tools(over_http=True)[-1]
+        assert sources.schema["required"] == ["query"]
+        assert set(sources.schema["properties"]) == {
+            "query",
+            "path",
+            "limit",
+            "lang",
+            "under",
+            "type",
+        }
+        assert sources.schema["properties"]["limit"]["maximum"] == MAX_SOURCES
+        assert len(sources.description) > 40
+
+    def test_the_stdio_server_does_not_list_the_tool(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        import io
+        import json
+        import sys
+
+        monkeypatch.chdir(tmp_path)
+        out = io.StringIO()
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(request) + "\n"))
+        monkeypatch.setattr(sys, "stdout", out)
+        assert main([]) == 0
+        listed = json.loads(out.getvalue())["result"]["tools"]
+        assert "sources" not in [tool["name"] for tool in listed]
+        assert "ask" in [tool["name"] for tool in listed]
+
+
 class TestWarmReader:
     """ish-mcp parses its tree for answers on a thread, with ask_warm."""
 
@@ -1130,3 +1260,41 @@ class TestAskTurnsPerCall:
         self._recording(tools, project, monkeypatch)
         with pytest.raises(ValueError, match="ask_turns"):
             tools.ask({"question": "q", "path": str(project), "ask_turns": value})
+
+
+class TestIndexExists:
+    """An editor asks whether a tree has an index, and starts none by asking."""
+
+    @pytest.fixture()
+    def stored(self, project: Path, tmp_path_factory, stub_backend):
+        from dataclasses import replace
+
+        cache = tmp_path_factory.mktemp("idx")
+        settings = replace(Settings(), git=False, cache_dir=str(cache))
+        made = IshTools(settings, project)
+        yield made, cache
+        made.close()
+
+    def test_a_tree_with_no_index_says_so_and_starts_nothing(self, stored) -> None:
+        tools, cache = stored
+        before = sorted(p.name for p in cache.rglob("*"))
+        assert json.loads(tools.index_exists({})) == {"exists": False, "chunks": 0}
+        # No watch thread, and no file of an index.
+        assert tools._watchers == []
+        assert sorted(p.name for p in cache.rglob("*")) == before
+
+    def test_a_tree_with_an_index_says_how_many_chunks(self, stored) -> None:
+        tools, cache = stored
+        tools._session_for(tools._root).index()
+        indexes = sorted(cache.glob("*.db"))
+        reply = json.loads(tools.index_exists({}))
+        assert reply["exists"] is True
+        assert reply["chunks"] >= 2
+        # Counting opens the index there is, and makes no other.
+        assert sorted(cache.glob("*.db")) == indexes
+        assert tools._watchers == []
+
+    def test_only_the_server_on_stdio_offers_it(self, stored) -> None:
+        tools, _cache = stored
+        assert "index_exists" in [t.name for t in tools.tools()]
+        assert "index_exists" not in [t.name for t in tools.tools(over_http=True)]

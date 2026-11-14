@@ -15,7 +15,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.language_model import LANGUAGE_MODELS
@@ -36,6 +36,7 @@ from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
 from ish.application.index import Index
 from ish.application.languages import LanguageResolver, resolve_with
+from ish.application.ports.chunk_source import ChunkSource
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.language_model import LanguageModel, LanguageModelError
 from ish.application.ports.link import LinkResolver
@@ -50,7 +51,18 @@ from ish.application.ranking import ResultFilter
 from ish.application.scan import Scan
 from ish.application.search import Search
 from ish.domain.chunk import Chunk
-from ish.settings import Settings
+from ish.settings import (
+    LDAP_PASSWORD_ENV_VAR,
+    LDAP_PASSWORD_FILE_ENV_VAR,
+    MCP_TOKEN_ENV_VAR,
+    Settings,
+    user_config_path,
+)
+
+if TYPE_CHECKING:
+    # For the type checker alone. A local search loads no authentication code.
+    from ish.application.access import Access
+    from ish.application.ports.login import Login
 
 log = logging.getLogger(__name__)
 
@@ -279,9 +291,168 @@ def _language_model(
 
 
 def build_prompts(settings: Settings) -> Prompts:
-    """Read the instructions, from ``prompt_dir`` where it holds a file."""
+    """Read the instructions, from ``prompt_dir`` where it holds a file, with notes."""
     directory = Path(settings.prompt_dir).expanduser() if settings.prompt_dir else None
-    return load_prompts(directory)
+    return load_prompts(
+        directory,
+        answer_notes=settings.answer_notes,
+        rerank_notes=settings.rerank_notes,
+    )
+
+
+# The file in the data directory where a server keeps the logins it gave.
+LOGIN_FILE = "logins.jsonl"
+
+
+def login_file() -> Path:
+    """Return the file where a server keeps the logins it gave.
+
+    Keep it in the data directory of the user that runs the server. A
+    `cache_dir` that a config file sets moves the indexes and never the
+    logins, so no file in a tree decides where they are read from.
+    """
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "ish" / LOGIN_FILE
+
+
+# The file beside the user config where a client keeps its login tokens.
+TOKEN_FILE = "logins.json"
+
+# Seconds in a day, for `login_days`.
+DAY_SECONDS = 86_400
+
+
+def build_access(settings: Settings) -> "Access":
+    """Construct what admits the requests of a server over HTTP.
+
+    Build each method that ``auth`` names. A method that admits a bearer
+    token checks each request, and a method that checks a password signs
+    users in for ``login_days``. Keep the logins in a file beside the
+    indexes. Import the methods here, so a run that serves no HTTP loads
+    none of them. Raise ``ValueError`` when ``auth`` names no method or
+    an unknown one, and when a method lacks a value it needs.
+    """
+    from ish.adapters.authenticator import AUTHENTICATORS
+    from ish.adapters.login_store import LoginFile
+    from ish.application.access import Access
+    from ish.application.ports.authenticator import Authenticator, SignIn
+
+    if not settings.auth:
+        raise ValueError(
+            "Set auth to the ways the server admits a request, "
+            'such as auth = ["token"].'
+        )
+    unknown = [name for name in settings.auth if name not in AUTHENTICATORS]
+    if unknown:
+        valid = ", ".join(sorted(AUTHENTICATORS))
+        raise ValueError(f"Unknown auth method {unknown[0]!r}. Valid methods: {valid}")
+    # What the methods may read. Each one reads only its own keys.
+    options = {
+        "token": os.environ.get(MCP_TOKEN_ENV_VAR, ""),
+        "token_variable": MCP_TOKEN_ENV_VAR,
+        "ldap_url": settings.ldap_url,
+        "ldap_user_dn": settings.ldap_user_dn,
+        "ldap_bind_dn": settings.ldap_bind_dn,
+        # Only a server with a service account reads its password.
+        "ldap_bind_password": _ldap_password() if settings.ldap_bind_dn else "",
+        "ldap_base": settings.ldap_base,
+        "ldap_user_filter": settings.ldap_user_filter,
+        "ldap_group": settings.ldap_group,
+        "ldap_starttls": "true" if settings.ldap_starttls else "",
+    }
+    methods = {
+        name: AUTHENTICATORS[name](options) for name in dict.fromkeys(settings.auth)
+    }
+    return Access(
+        [method for method in methods.values() if isinstance(method, Authenticator)],
+        {
+            name: method
+            for name, method in methods.items()
+            if isinstance(method, SignIn)
+        },
+        LoginFile(login_file()),
+        settings.login_days * DAY_SECONDS,
+    )
+
+
+def token_file() -> Path:
+    """Return the file where this machine keeps its login tokens.
+
+    Keep it beside the config file of the user, which no tree can name.
+    """
+    return user_config_path().parent / TOKEN_FILE
+
+
+def _ldap_password() -> str:
+    """Return the password of the LDAP service account, or an empty text.
+
+    Read ``ISH_LDAP_BIND_PASSWORD``, or else the file that
+    ``ISH_LDAP_BIND_PASSWORD_FILE`` names, as Docker mounts a secret.
+    Drop one line break at the end of the file. Raise ``ValueError``
+    when the file cannot be read, and name the variable, not the file
+    content.
+    """
+    password = os.environ.get(LDAP_PASSWORD_ENV_VAR, "")
+    named = os.environ.get(LDAP_PASSWORD_FILE_ENV_VAR, "")
+    if password or not named:
+        return password
+    try:
+        text = Path(named).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(
+            f"Cannot read the file {LDAP_PASSWORD_FILE_ENV_VAR} names: "
+            f"{type(exc).__name__}"
+        ) from None
+    return text.removesuffix("\n").removesuffix("\r")
+
+
+def build_chunk_source(settings: Settings) -> ChunkSource:
+    """Construct the source that reads the chunks of the server at ``remote``.
+
+    Read the token from ``ISH_MCP_TOKEN``, or else the login token that
+    ``ish remote login`` kept for that URL. Import the adapter here, so a
+    run that reads no server loads no client. Raise ``ChunkSourceError``
+    for a URL that is not http or https, for no token, for a login token
+    that has expired, and for a token file that ish refuses.
+    """
+    import datetime
+    import time
+
+    from ish.adapters._logins import TokenFile, TokenFileError
+    from ish.adapters.chunk_source.mcp import McpChunkSource
+    from ish.application.ports.chunk_source import ChunkSourceError
+
+    token = os.environ.get(MCP_TOKEN_ENV_VAR, "")
+    if token:
+        return McpChunkSource(settings.remote, token, MCP_TOKEN_ENV_VAR)
+    try:
+        saved = TokenFile(token_file()).get(settings.remote)
+    except (OSError, TokenFileError) as exc:
+        raise ChunkSourceError(str(exc)) from exc
+    if saved is not None and saved.expires <= time.time():
+        ended = datetime.datetime.fromtimestamp(saved.expires, datetime.UTC)
+        raise ChunkSourceError(
+            f"Your login to {settings.remote} ended on "
+            f"{ended:%Y-%m-%d %H:%M} UTC. Run: ish remote login"
+        )
+    return McpChunkSource(
+        settings.remote,
+        saved.token if saved else "",
+        MCP_TOKEN_ENV_VAR,
+        login=saved is not None,
+    )
+
+
+def build_login(settings: Settings) -> "Login":
+    """Construct what signs this machine in to the server at ``remote``.
+
+    Import the adapter here, so a run that signs nobody in loads none of
+    it. Raise ``LoginError`` for a URL that it refuses.
+    """
+    from ish.adapters._logins import TokenFile
+    from ish.adapters.login import HttpLogin
+
+    return HttpLogin(settings.remote, TokenFile(token_file()))
 
 
 def build_link_resolver(settings: Settings, root: Path) -> LinkResolver:

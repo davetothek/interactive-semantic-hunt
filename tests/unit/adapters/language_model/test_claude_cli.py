@@ -213,3 +213,251 @@ class TestStep:
         )
         assert call["input"] == _grounded.step_prompt("q", SOURCES, [], 2)
         assert reply.searches == ("where is it handled",)
+
+
+class TestQuery:
+    def test_query_runs_the_query_prompt_and_schema(self, runner) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"query": "watchdog reset"},
+                "usage": {"input_tokens": 90, "output_tokens": 5},
+                "total_cost_usd": 0.0003,
+            }
+        )
+        query = ClaudeCliLanguageModel("haiku", timeout=5).query("and it?", "Q: w")
+        call = runner.calls[0]
+        assert call["args"] == command(
+            "/usr/bin/claude", "haiku", PROMPTS.query, _grounded.QUERY_SCHEMA
+        )
+        assert call["input"] == _grounded.query_prompt("and it?", "Q: w")
+        assert (query.text, query.input_tokens, query.cost_usd) == (
+            "watchdog reset",
+            90,
+            0.0003,
+        )
+
+
+class TestCost:
+    """claude says what each call would cost at the prices of the API."""
+
+    def test_each_kind_of_call_keeps_the_cost(self, runner) -> None:
+        body = json.loads(runner.stdout)
+        runner.stdout = json.dumps({**body, "total_cost_usd": 0.0123})
+        model = ClaudeCliLanguageModel("sonnet", timeout=5)
+        assert model.answer("q", SOURCES).cost_usd == 0.0123
+        assert model.step("q", SOURCES, [], 0).cost_usd == 0.0123
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"ids": ["1"]},
+                "total_cost_usd": 0.002,
+            }
+        )
+        assert model.select("q", SOURCES, 1).cost_usd == 0.002
+
+    def test_a_reply_with_no_cost_costs_nothing_known(self, runner) -> None:
+        assert (
+            ClaudeCliLanguageModel("sonnet", timeout=5).answer("q", SOURCES).cost_usd
+            == 0.0
+        )
+
+
+def _events(structured: dict, result: dict | None = None) -> list[str]:
+    """Return the lines claude writes when it streams *structured*."""
+    text = json.dumps(structured)
+    lines = ["Warning: no stdin data received in 3s.\n"]
+    lines.append(
+        json.dumps({"type": "stream_event", "event": {"type": "message_start"}})
+    )
+    for start in range(0, len(text), 9):
+        delta = {"type": "input_json_delta", "partial_json": text[start : start + 9]}
+        lines.append(
+            json.dumps(
+                {
+                    "type": "stream_event",
+                    "event": {"type": "content_block_delta", "delta": delta},
+                }
+            )
+        )
+    lines.append(
+        json.dumps({"type": "stream_event", "event": {"type": "message_stop"}})
+    )
+    lines.append('["not", "an", "event"]')
+    if result is not None:
+        lines.append(json.dumps(result))
+    return [line if line.endswith("\n") else line + "\n" for line in lines]
+
+
+class Process:
+    """A claude that writes its stream, and records how it was run and stopped."""
+
+    def __init__(
+        self, lines: list[str], returncode: int = 0, stops: bool = True
+    ) -> None:
+        import io
+
+        self.stdin = io.StringIO()
+        self.stdout = iter(lines)
+        self.lines = lines
+        self.returncode: int | None = None
+        self._final = returncode
+        self._stops = stops
+        self.killed = False
+        self.args: list[str] = []
+        self.written = ""
+
+    def __call__(self, args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        errors = kwargs["stderr"]
+        errors.write("claude broke")
+        errors.flush()
+        original = self.stdin.close
+
+        def close() -> None:
+            self.written = self.stdin.getvalue()
+            original()
+
+        self.stdin.close = close
+        return self
+
+    def wait(self) -> int:
+        if self._stops:
+            self.returncode = self._final
+        return self.returncode or 0
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+
+STRUCTURED = {
+    "covered": True,
+    "summary": {"text": "At boot.", "source_ids": ["1"]},
+    "sections": [
+        {
+            "heading": "",
+            "style": "prose",
+            "passages": [{"text": "It starts at boot.", "source_ids": ["1"]}],
+            "columns": [],
+            "rows": [],
+        }
+    ],
+    "gaps": [],
+    "terms": [],
+}
+RESULT = {
+    "type": "result",
+    "is_error": False,
+    "structured_output": STRUCTURED,
+    "usage": {"input_tokens": 5, "output_tokens": 30},
+    "total_cost_usd": 0.004,
+}
+
+
+class TestStreaming:
+    """A reader gets each block as claude writes it, and the reply at its end."""
+
+    @pytest.fixture()
+    def process(self, monkeypatch) -> Process:
+        made = Process(_events(STRUCTURED, RESULT))
+        monkeypatch.setattr(claude_cli.subprocess, "Popen", made)
+        monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+        return made
+
+    def test_each_block_streams_and_the_reply_is_the_whole(self, process) -> None:
+        blocks: list = []
+        reply = ClaudeCliLanguageModel("sonnet", timeout=5).answer(
+            "q", SOURCES, on_block=blocks.append
+        )
+        assert tuple(blocks) == reply.blocks
+        assert [b.kind for b in blocks] == ["summary", "prose"]
+        assert (reply.input_tokens, reply.output_tokens, reply.cost_usd) == (
+            5,
+            30,
+            0.004,
+        )
+        assert process.args == command(
+            "/usr/bin/claude", "sonnet", PROMPTS.answer, _grounded.SCHEMA, stream=True
+        )
+        assert process.written == _grounded.prompt("q", SOURCES)
+        assert not process.killed
+
+    def test_a_step_streams_as_an_answer_does(self, process) -> None:
+        blocks: list = []
+        ClaudeCliLanguageModel("sonnet", timeout=5).step(
+            "q", SOURCES, [], 0, on_block=blocks.append
+        )
+        assert [b.kind for b in blocks] == ["summary", "prose"]
+
+    def test_the_stream_arguments(self) -> None:
+        args = command("/c", "m", "s", {}, stream=True)
+        at = args.index("--output-format")
+        assert args[at + 1 : at + 4] == [
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+        ]
+
+    def test_a_stream_with_no_reply_says_what_claude_wrote(self, monkeypatch) -> None:
+        made = Process(_events(STRUCTURED), returncode=1)
+        monkeypatch.setattr(claude_cli.subprocess, "Popen", made)
+        monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+        with pytest.raises(
+            LanguageModelError, match="exited 1 without a JSON reply: claude broke"
+        ):
+            ClaudeCliLanguageModel("sonnet", timeout=5).answer(
+                "q", SOURCES, on_block=print
+            )
+
+    def test_a_reply_that_is_an_error_is_one(self, monkeypatch) -> None:
+        failed = {"type": "result", "is_error": True, "result": "You've hit your limit"}
+        made = Process(_events(STRUCTURED, failed))
+        monkeypatch.setattr(claude_cli.subprocess, "Popen", made)
+        monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+        with pytest.raises(LanguageModelError, match="You've hit your limit"):
+            ClaudeCliLanguageModel("sonnet", timeout=5).answer(
+                "q", SOURCES, on_block=print
+            )
+
+    def test_a_call_past_its_time_is_stopped(self, monkeypatch) -> None:
+        made = Process([], stops=False)
+        monkeypatch.setattr(claude_cli.subprocess, "Popen", made)
+        monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+        class Now:
+            """A timer that fires at once, as if the call took too long."""
+
+            def __init__(self, seconds, call, args) -> None:
+                self.call, self.args = call, args
+
+            def start(self) -> None:
+                self.call(*self.args)
+
+            def cancel(self) -> None:
+                pass
+
+        monkeypatch.setattr(claude_cli.threading, "Timer", Now)
+        with pytest.raises(LanguageModelError, match="did not answer within 5 s"):
+            ClaudeCliLanguageModel("sonnet", timeout=5).answer(
+                "q", SOURCES, on_block=print
+            )
+        assert made.killed
+
+    def test_a_reader_that_stops_stops_claude(self, monkeypatch) -> None:
+        made = Process(_events(STRUCTURED, RESULT), stops=False)
+        monkeypatch.setattr(claude_cli.subprocess, "Popen", made)
+        monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+        def stop(block) -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            ClaudeCliLanguageModel("sonnet", timeout=5).answer(
+                "q", SOURCES, on_block=stop
+            )
+        assert made.killed

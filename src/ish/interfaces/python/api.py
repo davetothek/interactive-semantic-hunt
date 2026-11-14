@@ -24,19 +24,31 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
+from typing import TYPE_CHECKING
 
 from ish import bootstrap
-from ish.application.answer import Answer, AnswerCallback, AnswerQuestion
+from ish.application.answer import (
+    Answer,
+    AnswerBlock,
+    AnswerCallback,
+    AnswerQuestion,
+)
+from ish.application.candidates import candidates
 from ish.application.filters import Filters, parse_query
 from ish.application.glossary import Glossary
 from ish.application.ports.language_model import LanguageModel
 from ish.application.ports.link import LinkResolver
 from ish.application.progress import ProgressCallback
 from ish.application.search import Search
+from ish.application.sources import Sources, read_sources
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
 from ish.interfaces import completion, heartbeat
 from ish.settings import Settings, load_settings
+
+if TYPE_CHECKING:
+    # For the type checker alone. A search loads no chat code.
+    from ish.application.chat import Reading
 
 log = logging.getLogger(__name__)
 
@@ -182,6 +194,23 @@ class Ish:
         """Return how many chunks the index holds now, without refreshing it."""
         return self._use_case.held()
 
+    def stored(self) -> bool:
+        """Return True when a stored index reaches this tree.
+
+        Read the catalog alone, and open and write no index: the index of
+        the tree, one below it, or one above it that a search would read.
+        An index opened to ask would leave an empty file behind.
+        """
+        if self.settings.no_cache:
+            return False
+        indexes = bootstrap.catalog(self.settings)
+        _repository, checkout = self.identity
+        return (
+            indexes.path_for(self.path).exists()
+            or bool(indexes.entries_below(self.path))
+            or indexes.covering(self.path, checkout) is not None
+        )
+
     def warm(self) -> None:
         """Load the model before the first query waits on it.
 
@@ -278,6 +307,8 @@ class Ish:
         on_step: AnswerCallback | None = None,
         brief: bool = False,
         turns: int | None = None,
+        reading: "Reading | None" = None,
+        on_block: Callable[[AnswerBlock], None] | None = None,
     ) -> Answer:
         """Answer *question* from the chunks a search of this tree returns.
 
@@ -289,6 +320,76 @@ class Ish:
         call takes seconds. With *brief*, the model writes the short answer
         alone, which costs a fraction of the output. *turns* overrides
         ``ask_turns`` for this question alone.
+
+        A chat gives a *reading*: the queries the first search runs in
+        place of the question, which holds the history of the chat, and
+        the chunks to offer beside the results. With its ``only``, the
+        answer reads those chunks, with no search, no rerank, and no
+        follow-up search.
+
+        Give *on_block* each block of the answer as the model writes it,
+        when the backend streams, so a terminal can show it at once.
+        """
+        self.prepare(brief)
+        read = self._reader_for_answers()
+        # A rerank model sorts a wide search cheaply from the start of each
+        # chunk. Without one, the best chunks as ranked are read in full.
+        wide = self._reranker is not None
+        limit = self.settings.rerank_candidates if wide else ASK_LIMIT
+
+        def narrowed(text: str, kinds: Sequence[str], count: int) -> list[Match]:
+            return self.search(text, count, lang=lang, under=under, type=kinds or type)
+
+        def search(text: str) -> list[Match]:
+            # A wide search keeps the best of each type for the rerank. A
+            # type the caller asked for is the whole search.
+            if wide and not type:
+                return candidates(narrowed, text, limit)
+            return narrowed(text, (), limit)
+
+        found, reranker = search, self._reranker
+        if reading is not None:
+            from ish.application.chat import plan
+
+            found, reranker, turns = plan(reading, search, limit, reranker, turns)
+        use_case = AnswerQuestion(
+            search=found,
+            model=self._models[brief],
+            reranker=reranker,
+            pick=ASK_LIMIT,
+            turns=self.settings.ask_turns if turns is None else turns,
+            read=read,
+            glossary=self._glossary,
+            kind_of=self.kind_of,
+            on_block=on_block,
+            **({"on_step": on_step} if on_step else {}),
+        )
+        return use_case.answer(question)
+
+    def query_for(self, question: str, history: str) -> str:
+        """Return one search query for *question* of a chat, given its *history*.
+
+        The rerank model writes it, the cheap one, or the model of the
+        answer when no rerank model is set. Raise ``LanguageModelError``
+        when no model is set or allowed, or when it does not reply.
+        """
+        self.prepare()
+        model = self._reranker or self._models[False]
+        query = model.query(question, history)
+        log.info(
+            "%s wrote the search query %r for %d tokens",
+            model.model_name,
+            query.text,
+            query.input_tokens,
+        )
+        return query.text
+
+    def prepare(self, brief: bool = False) -> None:
+        """Build the language model of an answer, and the rerank model, now.
+
+        A chat calls it before its first question, so a machine that
+        allows no model stops before it reads any text. Raise
+        ``LanguageModelError`` when no model is set or allowed.
         """
         if brief not in self._models:
             self._models[brief] = bootstrap.build_language_model(
@@ -297,24 +398,26 @@ class Ish:
         if self._reranker is None and not self._built:
             self._reranker = bootstrap.build_reranker(self.settings)
             self._built = True
-        read = self._reader_for_answers()
-        # A rerank model sorts a wide search cheaply from the start of each
-        # chunk. Without one, the best chunks as ranked are read in full.
-        wide = self._reranker is not None
-        limit = self.settings.rerank_candidates if wide else ASK_LIMIT
-        use_case = AnswerQuestion(
-            search=lambda text: self.search(
-                text, limit, lang=lang, under=under, type=type
-            ),
-            model=self._models[brief],
-            reranker=self._reranker,
-            pick=ASK_LIMIT,
-            turns=self.settings.ask_turns if turns is None else turns,
-            read=read,
-            glossary=self._glossary,
-            **({"on_step": on_step} if on_step else {}),
-        )
-        return use_case.answer(question)
+
+    def sources(
+        self,
+        query: str,
+        limit: int | None = None,
+        *,
+        lang: Sequence[str] = (),
+        under: str = "",
+        type: Sequence[str] = (),
+    ) -> Sources:
+        """Return what a search of *query* finds, with the text of each chunk.
+
+        Search the way ``search`` does, filters included. Read each chunk
+        with the reader answers share, and return the meaning of each
+        acronym the texts use that the tree spells out. A client with a
+        model of its own writes an answer from the result, so no model is
+        built here.
+        """
+        matches = self.search(query, limit, lang=lang, under=under, type=type)
+        return read_sources(matches, self._reader_for_answers(), self._glossary)
 
     def _reader_for_answers(self) -> Callable[[Chunk], str | None]:
         """Return the reader answers share, and build it on the first call.

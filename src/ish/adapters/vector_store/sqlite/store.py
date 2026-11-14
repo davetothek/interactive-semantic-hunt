@@ -186,6 +186,10 @@ class SqliteVectorStore:
         # out of SQLite and joining it cost more than the arithmetic:
         # measured on 23,215 chunks, 118 ms a query against 2 ms.
         self._matrix_cache: tuple[tuple[int, int], Sequence[int], Any] | None = None
+        # One Path for each file, shared by its chunks. A filtered search
+        # builds a chunk for each row it walks, tens of thousands, and
+        # parsing a path again for each cost more than the filter itself.
+        self._paths: dict[str, Path] = {}
         self._writes = 0
         # When this store last wrote, and the index state the matrix
         # file beside it was last read or written under.
@@ -607,16 +611,19 @@ class SqliteVectorStore:
             rows = self._db.execute("SELECT path FROM files ORDER BY path").fetchall()
         return [Path(str(row[0])) for row in rows]
 
-    @staticmethod
-    def _to_chunk(row: Sequence[Any]) -> Chunk:
+    def _to_chunk(self, row: Sequence[Any]) -> Chunk:
         """Build a Chunk from the stored column order.
 
         Leave the text empty. The index holds no source, so a caller
         that needs it reads the file.
         """
         path, kind, language, symbol, start, end = row[:6]
+        name = str(path)
+        found = self._paths.get(name)
+        if found is None:
+            found = self._paths.setdefault(name, Path(name))
         return Chunk(
-            path=Path(str(path)),
+            path=found,
             text="",
             kind=str(kind),
             language=str(language),

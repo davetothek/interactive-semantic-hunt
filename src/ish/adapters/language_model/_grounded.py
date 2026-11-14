@@ -11,12 +11,15 @@ for and the ids of the sources that write it.
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
+from ish.adapters.language_model._json_stream import JsonValues
 from ish.application.ports.language_model import (
     Block,
     LanguageModelError,
     Passage,
+    Query,
     Reply,
     Row,
     Selection,
@@ -156,41 +159,104 @@ def _passage(data: dict) -> Passage:
 
 def _blocks(data: dict) -> tuple[Block, ...]:
     """Read the summary, the sections, and the gaps, and drop what is empty."""
-    blocks: list[Block] = []
-    summary = data.get("summary")
-    if summary and str(summary.get("text") or "").strip():
-        blocks.append(Block(kind="summary", passages=(_passage(summary),)))
-    for section in data.get("sections") or ():
-        style = str(section.get("style") or "prose")
-        kind = style if style in ("prose", "steps", "table") else "prose"
-        rows = tuple(
-            Row(
-                cells=tuple(_OWN_MARKER.sub("", str(c)) for c in row["cells"]),
-                source_ids=tuple(str(i) for i in row.get("source_ids") or ()),
-            )
-            for row in section.get("rows") or ()
-        )
-        passages = tuple(
-            _passage(p) for p in section.get("passages") or () if str(p["text"]).strip()
-        )
-        if kind == "table" and not rows:
-            kind = "prose"
-        if passages or rows:
-            blocks.append(
-                Block(
-                    kind=kind,
-                    heading=str(section.get("heading") or "").strip(),
-                    passages=passages,
-                    columns=tuple(str(c) for c in section.get("columns") or ()),
-                    rows=rows if kind == "table" else (),
-                )
-            )
-    gaps = tuple(_passage(p) for p in data.get("gaps") or () if str(p["text"]).strip())[
-        :MAX_GAPS
+    found = [
+        _summary_block(data.get("summary")),
+        *(_section_block(section) for section in data.get("sections") or ()),
+        _gaps_block(data.get("gaps")),
     ]
-    if gaps:
-        blocks.append(Block(kind="gaps", passages=gaps))
-    return tuple(blocks)
+    return tuple(block for block in found if block is not None)
+
+
+def _summary_block(summary: dict | None) -> Block | None:
+    """Read the summary, or None when it is empty."""
+    if summary and str(summary.get("text") or "").strip():
+        return Block(kind="summary", passages=(_passage(summary),))
+    return None
+
+
+def _section_block(section: dict) -> Block | None:
+    """Read one section in its style, or None when it holds nothing."""
+    style = str(section.get("style") or "prose")
+    kind = style if style in ("prose", "steps", "table") else "prose"
+    rows = tuple(
+        Row(
+            cells=tuple(_OWN_MARKER.sub("", str(c)) for c in row["cells"]),
+            source_ids=tuple(str(i) for i in row.get("source_ids") or ()),
+        )
+        for row in section.get("rows") or ()
+    )
+    passages = tuple(
+        _passage(p) for p in section.get("passages") or () if str(p["text"]).strip()
+    )
+    if kind == "table" and not rows:
+        kind = "prose"
+    if not (passages or rows):
+        return None
+    return Block(
+        kind=kind,
+        heading=str(section.get("heading") or "").strip(),
+        passages=passages,
+        columns=tuple(str(c) for c in section.get("columns") or ()),
+        rows=rows if kind == "table" else (),
+    )
+
+
+def _gaps_block(gaps: list | None) -> Block | None:
+    """Read the points the sources leave open, at most ``MAX_GAPS``, or None."""
+    kept = tuple(_passage(p) for p in gaps or () if str(p["text"]).strip())
+    return Block(kind="gaps", passages=kept[:MAX_GAPS]) if kept else None
+
+
+class BlockStream:
+    """Turn the JSON of an answer, as it arrives, into its blocks in reading order.
+
+    Give *on_block* each block as soon as its JSON is whole: the summary,
+    each section, then the gaps, built as ``parse`` builds them. A model
+    that writes the parts in another order streams nothing more, so a
+    reader never sees a block in a place the whole answer would not put
+    it. The whole reply is parsed as before when it ends.
+    """
+
+    def __init__(self, on_block: Callable[[Block], None]) -> None:
+        self._values = JsonValues()
+        self._on_block = on_block
+        # The part the reading order expects next, or "" once it stopped.
+        self._next = "summary"
+
+    def feed(self, piece: str) -> None:
+        """Add *piece* of the JSON, and give on each block it completes."""
+        for path, value in self._values.feed(piece):
+            if self._next:
+                self._take(path, value)
+
+    def _take(self, path: tuple[str | int, ...], value: Any) -> None:
+        """Give on the block that *value* at *path* completes, if it is due."""
+        part = path[0] if path else ""
+        if part not in ("summary", "sections", "gaps") or len(path) > 2:
+            return
+        if len(path) == 2 and not (part == "sections" and isinstance(path[1], int)):
+            return
+        due = {"summary": "summary", "sections": "sections", "gaps": "gaps"}[part]
+        if self._next != due:
+            self._next = ""
+            return
+        try:
+            if part == "summary":
+                block = _summary_block(value)
+                self._next = "sections"
+            elif len(path) == 2:
+                block = _section_block(value)
+            elif part == "sections":
+                self._next, block = "gaps", None
+            else:
+                block = _gaps_block(value)
+                self._next = "done"
+        except (KeyError, TypeError, AttributeError):
+            # The whole reply is parsed again at its end, and says what is wrong.
+            self._next = ""
+            return
+        if block is not None:
+            self._on_block(block)
 
 
 def _flat(blocks: Sequence[Block]) -> list[Passage]:
@@ -208,6 +274,38 @@ SELECT_SCHEMA: dict[str, object] = {
     "required": ["ids"],
     "additionalProperties": False,
 }
+
+
+QUERY_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {"query": {"type": "string"}},
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+
+def query_prompt(question: str, history: str) -> str:
+    """Return the user message that asks for one search query."""
+    return f"Earlier turns:\n\n{history}\n\nNew question: {question}"
+
+
+def parse_query(
+    text: str, backend: str, input_tokens: int = 0, output_tokens: int = 0
+) -> Query:
+    """Turn the JSON a model wrote into a search query.
+
+    Raise ``LanguageModelError`` naming *backend* when the text is not the
+    JSON the schema asks for, or when the query is empty.
+    """
+    try:
+        query = " ".join(str(json.loads(text)["query"]).split())
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise LanguageModelError(
+            f"{backend} did not reply with a search query: {exc}"
+        ) from exc
+    if not query:
+        raise LanguageModelError(f"{backend} wrote an empty search query.")
+    return Query(query, input_tokens, output_tokens)
 
 
 def select_prompt(question: str, candidates: Sequence[Source], limit: int) -> str:

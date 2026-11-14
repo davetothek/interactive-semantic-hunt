@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from ish.application.glossary import Glossary
+from ish.application.glossary import Glossary, acronyms
 from ish.application.ports.language_model import (
     SEARCHES_A_TURN,
     Block,
@@ -40,9 +40,6 @@ CHUNKS_A_SEARCH = 5
 # Acronyms an answer names at most. A register table can hold dozens of
 # names, and a reader wants the terms, not a second table.
 MAX_TERMS = 20
-
-# An acronym as an answer writes it: a capital, then capitals or digits.
-_ACRONYM = re.compile(r"(?<![\w-])[A-Z][A-Z0-9&/-]{1,9}(?![\w-])")
 
 # Characters of chunk text one question may send. About 15,000 tokens at
 # the four characters a token that English text averages.
@@ -172,6 +169,8 @@ class Answer:
         terms: The acronyms the answer uses, each with what it stands for
             and the sources that write it, sorted by term. A meaning that
             no source writes is not kept, so none is invented.
+        cost_usd: What the backends say the rerank and every turn of the
+            answer cost, in US dollars, or 0 when they do not say.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -190,6 +189,7 @@ class Answer:
     timings: tuple[tuple[str, float], ...] = ()
     seconds: float = 0.0
     terms: tuple[AnswerTerm, ...] = ()
+    cost_usd: float = 0.0
 
 
 class AnswerQuestion:
@@ -208,6 +208,8 @@ class AnswerQuestion:
         on_step: AnswerCallback = _quiet,
         clock: Callable[[], float] = time.monotonic,
         glossary: Glossary | None = None,
+        kind_of: Callable[[Chunk], str] | None = None,
+        on_block: Callable[["AnswerBlock"], None] | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -233,6 +235,16 @@ class AnswerQuestion:
         answer that the model did not spell out with the meaning the
         glossary holds. A session shares one glossary between questions,
         and a server fills it from its whole tree.
+
+        Name the type of each source in its title through *kind_of*, so
+        the model can tell a specification from a test or code. Read one
+        copy of a text that several chunks hold, and name the others in
+        its title.
+
+        Give *on_block* each block of the answer as the model writes it,
+        with its citations as chunks, when the backend streams. The
+        answer holds every block again, and a block of a turn that then
+        asks for a search is no part of the answer.
         """
         self._search = search
         self._model = model
@@ -245,12 +257,22 @@ class AnswerQuestion:
         self._clock = clock
         self._spent: dict[str, float] = {}
         self._glossary = Glossary() if glossary is None else glossary
+        self._kind_of = kind_of
+        self._on_block = on_block
+        # What one answer has read, so no chunk is read twice. Each text
+        # is keyed by its words alone, to find a copy in another file.
+        self._texts: dict[Chunk, str | None] = {}
+        self._first: dict[str, Chunk] = {}
+        self._copies: dict[Chunk, list[Chunk]] = {}
+        self._rerank_cost = 0.0
 
-    def _timed(self, stage: str, call: Callable[..., object], *args: object):
+    def _timed(
+        self, stage: str, call: Callable[..., object], *args: object, **named: object
+    ):
         """Run *call* with *args*, and add the seconds it took to *stage*."""
         start = self._clock()
         try:
-            return call(*args)
+            return call(*args, **named)
         finally:
             self._spent[stage] = self._spent.get(stage, 0.0) + self._clock() - start
 
@@ -261,6 +283,8 @@ class AnswerQuestion:
         when the search finds nothing.
         """
         self._spent = {}
+        self._texts, self._first, self._copies = {}, {}, {}
+        self._rerank_cost = 0.0
         start = self._clock()
         answer = self._answer(question)
         return _with_time(answer, tuple(self._spent.items()), self._clock() - start)
@@ -272,6 +296,7 @@ class AnswerQuestion:
             raise ValueError("The question is empty.")
         self._on_step(AnswerStep(SEARCHING))
         found = [chunk for chunk, _ in self._timed(SEARCHING, self._search, question)]
+        found = self._distinct(found)
         rerank = self._rerank(question, found) if self._reranker else None
         if rerank is not None:
             found, rerank_in, rerank_out = rerank
@@ -293,14 +318,21 @@ class AnswerQuestion:
                 rerank_input_tokens=rerank_in,
                 rerank_output_tokens=rerank_out,
                 rerank_model=rerank_model,
+                cost_usd=self._rerank_cost,
             )
 
         if self._turns > 0:
             reply, texts, searched, turns, left = self._converse(question, texts, left)
         else:
-            sources = [_source(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
             self._on_step(AnswerStep(WRITING, model=self._model.model_name))
-            reply = self._timed(WRITING, self._model.answer, question, sources)
+            reply = self._timed(
+                WRITING,
+                self._model.answer,
+                question,
+                sources,
+                **self._streaming(texts),
+            )
             searched, turns = [], 1
         kept = [chunk for chunk, _ in texts]
         by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
@@ -333,6 +365,7 @@ class AnswerQuestion:
             rerank_model=rerank_model,
             searches=tuple(searched),
             turns=turns,
+            cost_usd=reply.cost_usd + self._rerank_cost,
         )
 
     def _named(
@@ -346,7 +379,7 @@ class AnswerQuestion:
         """
         words = " ".join(_words(reply))
         named = {t.term: t for t in _terms(reply.terms, texts, words)}
-        for short in dict.fromkeys(_ACRONYM.findall(words)):
+        for short in acronyms(words):
             if short in named or len(named) >= MAX_TERMS:
                 continue
             found = self._glossary.lookup(short, kept)
@@ -354,11 +387,60 @@ class AnswerQuestion:
                 named[short] = AnswerTerm(short, found.meaning, (found.chunk,))
         return tuple(named[t] for t in sorted(named, key=str.casefold))
 
+    def _streaming(self, texts: list[tuple[Chunk, str]]) -> dict[str, object]:
+        """Return what asks the model to stream, with the sources of *texts*.
+
+        Map the ids of a streamed block to its chunks as the answer maps
+        them, so a block reads the same streamed and in the answer. Ask a
+        model nothing more when no one takes the blocks.
+        """
+        if self._on_block is None:
+            return {}
+        by_id = {str(n): chunk for n, (chunk, _) in enumerate(texts, 1)}
+        give = self._on_block
+        return {"on_block": lambda block: give(_block(block, by_id))}
+
     def _read_kept(self, chunk: Chunk) -> str | None:
-        """Read *chunk*, and add what its text defines to the glossary."""
+        """Read *chunk* once, and add what its text defines to the glossary."""
+        if chunk in self._texts:
+            return self._texts[chunk]
         text = self._timed(READING, self._read, chunk)
         self._glossary.add(chunk, text)
+        self._texts[chunk] = text
         return text
+
+    def _distinct(self, chunks: Sequence[Chunk]) -> list[Chunk]:
+        """Keep the first chunk of each text, and note the others as its copies.
+
+        A tree can hold one section in several files, word for word. Each
+        copy would take a place among the candidates and say nothing new.
+        Compare the words alone, so a change of spacing or case is still
+        a copy. Keep a chunk with no readable text: the budget leaves it
+        out later and says so.
+        """
+        kept: list[Chunk] = []
+        for chunk in chunks:
+            text = self._read_kept(chunk)
+            key = " ".join(text.split()).casefold() if text else ""
+            first = self._first.setdefault(key, chunk) if key else chunk
+            if first is chunk:
+                kept.append(chunk)
+            else:
+                self._copies.setdefault(first, []).append(chunk)
+        return kept
+
+    def _titled(self, source_id: str, chunk: Chunk, text: str) -> Source:
+        """Return *chunk* as a source the model reads, with its type and copies."""
+        title = f"{chunk.path}{chunk.location.render()}"
+        if chunk.symbol:
+            title = f"{title} {chunk.symbol}"
+        if self._kind_of is not None:
+            title = f"{self._kind_of(chunk)}: {title}"
+        copies = self._copies.get(chunk)
+        if copies:
+            places = ", ".join(f"{c.path}{c.location.render()}" for c in copies)
+            title = f"{title} (the same text is also in {places})"
+        return Source(id=source_id, title=title, text=text)
 
     def _converse(
         self, question: str, texts: list[tuple[Chunk, str]], left: int
@@ -372,8 +454,9 @@ class AnswerQuestion:
         """
         searched: list[str] = []
         read_in = wrote = turns = 0
+        cost = 0.0
         for turns_left in range(self._turns, -1, -1):
-            sources = [_source(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
             self._on_step(
                 AnswerStep(
                     WRITING,
@@ -383,11 +466,18 @@ class AnswerQuestion:
                 )
             )
             reply = self._timed(
-                WRITING, self._model.step, question, sources, searched, turns_left
+                WRITING,
+                self._model.step,
+                question,
+                sources,
+                searched,
+                turns_left,
+                **self._streaming(texts),
             )
             turns += 1
             read_in += reply.input_tokens
             wrote += reply.output_tokens
+            cost += reply.cost_usd
             if not reply.searches or turns_left == 0:
                 break
             seen = {chunk for chunk, _ in texts}
@@ -397,11 +487,13 @@ class AnswerQuestion:
             for query in fresh_queries[:SEARCHES_A_TURN]:
                 self._on_step(AnswerStep(FOLLOWING, query=query))
                 searched.append(query)
-                fresh = [
-                    c
-                    for c, _ in self._timed(FOLLOWING, self._search, query)
-                    if c not in seen
-                ]
+                fresh = self._distinct(
+                    [
+                        c
+                        for c, _ in self._timed(FOLLOWING, self._search, query)
+                        if c not in seen
+                    ]
+                )
                 added, _, left = self._fit(fresh[:CHUNKS_A_SEARCH], left)
                 texts = texts + added
                 seen.update(chunk for chunk, _ in added)
@@ -411,6 +503,7 @@ class AnswerQuestion:
             covered=reply.covered and not (reply.searches and not reply.passages),
             input_tokens=read_in,
             output_tokens=wrote,
+            cost_usd=cost,
             blocks=reply.blocks,
             terms=reply.terms,
         )
@@ -432,7 +525,7 @@ class AnswerQuestion:
             if not text or not text.strip():
                 continue
             start = " ".join(text.split())[:PREVIEW_CHARS]
-            previews.append(_source(str(n), chunk, start))
+            previews.append(self._titled(str(n), chunk, start))
             by_id[str(n)] = chunk
         if not previews:
             return None
@@ -443,6 +536,7 @@ class AnswerQuestion:
             CHOOSING, self._reranker.select, question, previews, self._pick
         )
         chosen = [by_id[i] for i in selection.ids if i in by_id]
+        self._rerank_cost = selection.cost_usd
         log.info(
             "%s chose %d of %d chunks, reading %d tokens",
             self._reranker.model_name,
@@ -537,13 +631,6 @@ def _terms(
     if dropped:
         log.info("Left out %d terms that no source spells out", dropped)
     return tuple(kept[name] for name in sorted(kept, key=str.casefold))
-
-
-def _source(source_id: str, chunk: Chunk, text: str) -> Source:
-    title = f"{chunk.path}{chunk.location.render()}"
-    if chunk.symbol:
-        title = f"{title} {chunk.symbol}"
-    return Source(id=source_id, title=title, text=text)
 
 
 def _block(block: Block, by_id: dict[str, Chunk]) -> AnswerBlock:

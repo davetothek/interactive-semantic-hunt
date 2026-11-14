@@ -75,6 +75,51 @@ local function render(line)
   return fzf.utils.ansi_codes.yellow(rank) .. ' ' .. entry
 end
 
+-- Mark a line of the server in its text, after the location, so the
+-- actions that read the path out of a line read it as before.
+local SERVER_MARK = '[server] '
+local function mark_remote(line)
+  local head, rest = line:match('^(.-:%d+:%d+:)(.*)$')
+  if not head then
+    return line
+  end
+  local rank, tail = rest:match('^(%[[%d%.]+%]%s*)(.*)$')
+  if rank then
+    return head .. rank .. SERVER_MARK .. tail
+  end
+  return head .. SERVER_MARK .. (rest:gsub('^%s+', ''))
+end
+
+-- Ask each chosen server for *text*, and hand the lines to *done* when
+-- all have answered: the lines of this tree first, then the server's.
+local function search_all(server, choice, text, opts, done)
+  local wanted = (choice.use_local and 1 or 0) + (choice.use_remote and 1 or 0)
+  local found = { here = {}, there = {} }
+  local function answered()
+    wanted = wanted - 1
+    if wanted > 0 then
+      return
+    end
+    local lines = vim.list_extend({}, found.here)
+    for _, line in ipairs(found.there) do
+      table.insert(lines, mark_remote(line))
+    end
+    done(lines)
+  end
+  if choice.use_local then
+    server.search(text, opts, function(lines)
+      found.here = lines
+      answered()
+    end)
+  end
+  if choice.use_remote then
+    server.remote.search(text, opts, function(lines)
+      found.there = lines
+      answered()
+    end)
+  end
+end
+
 -- Take the rank back off before fzf-lua reads the path out of a line.
 -- The previewer and every action parse the entry through this hook, so
 -- one place covers them all.
@@ -240,10 +285,21 @@ function M.search(opts)
   opts.cwd = opts.cwd or root()
   local server = require('utils.ish_server')
 
+  -- Choose this tree, the server, or both, before the picker opens. With
+  -- no index and no server, the choice asks before it builds an index.
+  server.choose(opts.cwd, opts.source, function(choice)
+    if choice then
+      M._pick(server, choice, opts)
+    end
+  end)
+end
+
+-- Open the picker on the servers that *choice* names.
+function M._pick(server, choice, opts)
   -- Look for changes now, once, rather than on every keystroke. The
   -- search runs against whatever is already stored and improves as the
-  -- refresh lands.
-  if server.ensure() then
+  -- refresh lands. Only this tree is refreshed: the server keeps its own.
+  if choice.use_local and server.ensure() then
     server.refresh(opts.cwd)
     watch(server, opts.cwd)
   end
@@ -253,7 +309,7 @@ function M.search(opts)
     if text == '' then
       return nil
     end
-    if not server.ensure() then
+    if choice.use_local and not choice.use_remote and not server.ensure() then
       return command(text, opts)
     end
     -- Hand fzf-lua a function rather than a list. It calls this with a
@@ -261,7 +317,7 @@ function M.search(opts)
     -- arrives. Waiting for it here would stop Neovim redrawing for the
     -- length of a round trip, which is what made typing feel heavy.
     return function(write_line, write)
-      server.search(text, opts, function(lines)
+      search_all(server, choice, text, opts, function(lines)
         for _, line in ipairs(lines) do
           write_line(render(line))
         end
@@ -280,6 +336,24 @@ function M.search(opts)
     -- `lang:` takes a parser name or an alias, `under:` takes a path.
     keymap = { fzf = { ['tab'] = complete_bind(opts.cwd) } },
   })
+end
+
+--- Build or refresh the index of the tree, as asked for by name.
+---
+--- The picker asks before it builds an index, once for each tree. This
+--- is the way to build one after a "Not now", and a save refreshes the
+--- tree from then on.
+function M.index(opts)
+  opts = opts or {}
+  local cwd = opts.cwd or root()
+  local server = require('utils.ish_server')
+  if not server.ensure() then
+    return
+  end
+  server.indexed[cwd] = true
+  server.build_answers[cwd] = true
+  server.refresh(cwd)
+  watch(server, cwd)
 end
 
 --- Search only the languages given, for example { 'cpp' }.
@@ -316,7 +390,9 @@ vim.api.nvim_create_autocmd('BufWritePost', {
   group = vim.api.nvim_create_augroup('IshRefreshOnSave', { clear = true }),
   callback = function()
     local server = require('utils.ish_server')
-    if not server.running() then
+    -- Refresh only a tree this session chose to search here, so a save
+    -- never starts an index the person did not ask for.
+    if not server.running() or not server.indexed[root()] then
       return
     end
     if save_timer then
@@ -340,6 +416,8 @@ _internal.render = render
 _internal.unrender = unrender
 _internal.watch = watch
 _internal.complete_bind = complete_bind
+_internal.mark_remote = mark_remote
+_internal.search_all = search_all
 M._internal = _internal
 
 return M

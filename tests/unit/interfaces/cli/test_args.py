@@ -156,11 +156,14 @@ class TestHelpSections:
         used = {f.metadata["section"] for f in fields(Settings)}
         assert used == set(SECTIONS)
 
-    def test_the_usage_is_one_short_line(self) -> None:
+    def test_the_usage_is_two_short_lines(self) -> None:
         from ish.interfaces.cli.args import build_parser
 
         usage = build_parser().format_usage()
-        assert usage.strip() == "usage: ish [options] [query] [path]"
+        assert usage.strip().splitlines() == [
+            "usage: ish [options] [query] [path]",
+            "       ish command ...",
+        ]
 
     def test_the_sections_show_in_order(self) -> None:
         from ish.interfaces.cli.args import build_parser

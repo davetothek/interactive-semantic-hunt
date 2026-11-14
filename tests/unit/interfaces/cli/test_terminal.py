@@ -1,5 +1,6 @@
 """Test what a terminal shows of an answer: rendered on request, and the grey."""
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -119,6 +120,52 @@ class TestRenderedWithColor:
     def test_a_marker_with_no_source_is_a_plain_number(self) -> None:
         out = rendered("It does. [^7]", width=80, color=True)
         assert "[7]" in out and f"{ESCAPE}]8" not in out
+
+
+class TestPlainMarkers:
+    """A chat marks a citation as ``[n]``, and lists its sources by number."""
+
+    REPLY = f"It does. [1] [2]\n\n1. [a.adoc:1-2]({URL})\n2. [b.adoc:3-4]({URL}b)"
+
+    def test_each_marker_opens_its_source(self) -> None:
+        marker = rendered(self.REPLY, width=80, color=True).split("\n")[0]
+        assert f";{URL}{ESCAPE}\\" in marker and f";{URL}b{ESCAPE}\\" in marker
+
+    def test_brackets_on_a_word_or_before_a_link_are_no_marker(self) -> None:
+        text = f"Read reg[1] or [1](https://e.invalid/x).\n\n1. [a.adoc:1-2]({URL})"
+        first = rendered(text, width=80, color=True).split("\n")[0]
+        assert URL not in first
+
+
+class TestGreySources:
+    """A chat shows its sources in grey, so the answer stands out."""
+
+    def _lines(self, color: bool = True) -> list[str]:
+        out = rendered(_covered(), width=80, color=color, grey_sources=True)
+        return out.split("\n")
+
+    def test_only_the_sources_are_grey(self) -> None:
+        lines = self._lines()
+        first = next(n for n, line in enumerate(lines) if "a.adoc:12-27" in line)
+        assert all(GREY in line for line in lines[first : first + 3])
+        assert not any(GREY in line for line in lines[:first])
+
+    def test_a_line_ends_with_no_padding(self) -> None:
+        assert not any(
+            line.endswith(f" {ESCAPE}[0m") or line.endswith(" ")
+            for line in self._lines()
+        )
+
+    def test_the_layout_is_that_of_one_rendering(self) -> None:
+        def shown(text: str) -> str:
+            return re.sub(r"\033\[[0-9;]*m|\033\]8;[^\033]*\033\\", "", text)
+
+        whole = rendered(_covered(), width=80, color=True)
+        assert shown("\n".join(self._lines())) == shown(whole)
+
+    def test_with_no_color_it_is_the_plain_rendering(self) -> None:
+        plain = rendered(_covered(), width=80, color=False)
+        assert "\n".join(self._lines(color=False)) == plain
 
 
 class TestGrey:

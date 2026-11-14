@@ -14,6 +14,7 @@ from ish.settings import (
     CONFIG_BASENAME,
     CONFIG_DIRNAME,
     CONFIG_FILENAME,
+    MCP_TOKEN_ENV_VAR,
     Settings,
     load_settings,
 )
@@ -1458,6 +1459,34 @@ class TestBuildLanguageModel:
             bootstrap.build_language_model(settings)
 
 
+class TestBuildChunkSource:
+    """A chunk source reads a server, behind the token in the environment."""
+
+    URL = "http://ish.example.invalid:8765/mcp"
+
+    def test_the_source_reads_the_server_the_settings_name(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSource
+
+        monkeypatch.setenv(MCP_TOKEN_ENV_VAR, "test-token-EXAMPLE")
+        source = bootstrap.build_chunk_source(Settings(remote=self.URL))
+        assert isinstance(source, ChunkSource)
+        assert source.host == "ish.example.invalid:8765"
+
+    def test_no_token_names_the_variable(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSourceError
+
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR, raising=False)
+        with pytest.raises(ChunkSourceError, match=MCP_TOKEN_ENV_VAR):
+            bootstrap.build_chunk_source(Settings(remote=self.URL))
+
+    def test_a_url_that_is_not_http_is_refused(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSourceError
+
+        monkeypatch.setenv(MCP_TOKEN_ENV_VAR, "test-token-EXAMPLE")
+        with pytest.raises(ChunkSourceError, match="not an http or https URL"):
+            bootstrap.build_chunk_source(Settings(remote="ish.example.invalid"))
+
+
 class TestReader:
     """A model reads the text the index embedded, includes resolved."""
 
@@ -1506,3 +1535,225 @@ class TestReader:
             doc = tmp_path / f"d{n}.adoc"
             doc.write_text(f"= D{n}\ntext {n}\n")
             assert read(self._chunk(doc, 1, 2)) == f"= D{n}\ntext {n}\n"
+
+
+class TestBuildAccess:
+    """What admits each request of a server over HTTP."""
+
+    TOKEN = "test-token-EXAMPLE"
+
+    @pytest.fixture(autouse=True)
+    def token(self, monkeypatch) -> None:
+        monkeypatch.setenv(MCP_TOKEN_ENV_VAR, self.TOKEN)
+
+    def test_the_default_admits_the_static_token(self) -> None:
+        from ish.application.ports.authenticator import Identity
+
+        access = bootstrap.build_access(Settings())
+        assert access.admit(self.TOKEN) == Identity("token", "token")
+        assert access.admit("wrong-token-EXAMPLE") is None
+
+    def test_the_default_offers_no_sign_in(self) -> None:
+        assert bootstrap.build_access(Settings()).methods() == []
+
+    def test_no_method_names_the_setting(self) -> None:
+        with pytest.raises(ValueError, match="Set auth to the ways the server admits"):
+            bootstrap.build_access(replace(Settings(), auth=()))
+
+    def test_an_unknown_method_names_the_valid_ones(self) -> None:
+        with pytest.raises(ValueError) as refused:
+            bootstrap.build_access(replace(Settings(), auth=("token", "magic")))
+        assert str(refused.value) == (
+            "Unknown auth method 'magic'. Valid methods: ldap, token"
+        )
+
+    def test_no_token_names_the_variable(self, monkeypatch) -> None:
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR)
+        with pytest.raises(ValueError, match=MCP_TOKEN_ENV_VAR):
+            bootstrap.build_access(Settings())
+
+    def test_each_method_is_asked_in_turn(self, monkeypatch) -> None:
+        from ish.adapters import authenticator
+        from ish.application.ports.authenticator import Identity
+
+        built: list[str] = []
+
+        class Other:
+            @classmethod
+            def configured(cls, options):
+                built.append("other")
+                return cls()
+
+            def admit(self, bearer):
+                return (
+                    Identity("reader", "other") if bearer == "other-EXAMPLE" else None
+                )
+
+        monkeypatch.setitem(authenticator.AUTHENTICATORS, "other", Other.configured)
+        settings = replace(Settings(), auth=("token", "other", "other"))
+        access = bootstrap.build_access(settings)
+        assert access.admit(self.TOKEN) == Identity("token", "token")
+        assert access.admit("other-EXAMPLE") == Identity("reader", "other")
+        assert access.admit("wrong-token-EXAMPLE") is None
+        # A method named twice is built once.
+        assert built == ["other"]
+
+    def test_a_method_that_checks_a_password_signs_users_in(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from ish.adapters import authenticator
+        from ish.application.ports.authenticator import Identity
+
+        class Directory:
+            @classmethod
+            def configured(cls, options):
+                return cls()
+
+            def sign_in(self, user, password):
+                return Identity(user, "directory")
+
+        monkeypatch.setitem(
+            authenticator.AUTHENTICATORS, "directory", Directory.configured
+        )
+        settings = replace(
+            Settings(), auth=("token", "directory"), cache_dir=str(tmp_path)
+        )
+        access = bootstrap.build_access(settings)
+        assert access.methods() == ["directory"]
+        granted = access.sign_in("directory", "reader", "hunter2-EXAMPLE")
+        assert access.admit(granted.token) == Identity("reader", "directory")
+        # The server keeps the logins in the data directory, not in cache_dir.
+        assert not (tmp_path / bootstrap.LOGIN_FILE).exists()
+        assert bootstrap.login_file().is_file()
+        assert granted.token not in bootstrap.login_file().read_text()
+
+
+class TestTheTokenOfAServer:
+    """A run that reads a server sends `ISH_MCP_TOKEN`, or the login token."""
+
+    URL = "https://docs.example.invalid/mcp"
+
+    def _keep(self, token: str, expires: float) -> None:
+        from ish.adapters._logins import Saved, TokenFile
+
+        TokenFile(bootstrap.token_file()).put(self.URL, Saved(token, "reader", expires))
+
+    def _token_of(self, source) -> str:
+        return source._client._token
+
+    def test_the_token_file_is_beside_the_user_config(self) -> None:
+        from ish.settings import user_config_path
+
+        assert bootstrap.token_file() == user_config_path().parent / "logins.json"
+
+    def test_the_variable_wins_over_a_login(self, monkeypatch) -> None:
+        import time
+
+        self._keep("login-token-EXAMPLE", time.time() + 60)
+        monkeypatch.setenv(MCP_TOKEN_ENV_VAR, "test-token-EXAMPLE")
+        source = bootstrap.build_chunk_source(replace(Settings(), remote=self.URL))
+        assert self._token_of(source) == "test-token-EXAMPLE"
+
+    def test_with_no_variable_the_login_token_is_sent(self, monkeypatch) -> None:
+        import time
+
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR, raising=False)
+        self._keep("login-token-EXAMPLE", time.time() + 60)
+        source = bootstrap.build_chunk_source(replace(Settings(), remote=self.URL))
+        assert self._token_of(source) == "login-token-EXAMPLE"
+        assert source._client._login is True
+
+    def test_a_login_that_has_expired_says_to_sign_in_again(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSourceError
+
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR, raising=False)
+        self._keep("login-token-EXAMPLE", 1_700_000_000.0)
+        with pytest.raises(ChunkSourceError) as refused:
+            bootstrap.build_chunk_source(replace(Settings(), remote=self.URL))
+        assert str(refused.value) == (
+            f"Your login to {self.URL} ended on 2023-11-14 22:13 UTC. "
+            "Run: ish remote login"
+        )
+
+    def test_no_token_at_all_names_both_ways(self, monkeypatch) -> None:
+        from ish.application.ports.chunk_source import ChunkSourceError
+
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR, raising=False)
+        with pytest.raises(ChunkSourceError) as refused:
+            bootstrap.build_chunk_source(replace(Settings(), remote=self.URL))
+        assert str(refused.value) == (
+            f"Set {MCP_TOKEN_ENV_VAR} to the token of {self.URL}, "
+            "or run: ish remote login"
+        )
+
+    def test_a_token_file_others_can_read_is_refused(self, monkeypatch) -> None:
+        import os
+        import time
+
+        from ish.application.ports.chunk_source import ChunkSourceError
+
+        monkeypatch.delenv(MCP_TOKEN_ENV_VAR, raising=False)
+        self._keep("login-token-EXAMPLE", time.time() + 60)
+        os.chmod(bootstrap.token_file(), 0o644)
+        with pytest.raises(
+            ChunkSourceError, match="Other users can read the token file"
+        ):
+            bootstrap.build_chunk_source(replace(Settings(), remote=self.URL))
+
+    def test_build_login_signs_in_to_the_server(self) -> None:
+        from ish.application.ports.login import Login
+
+        login = bootstrap.build_login(replace(Settings(), remote=self.URL))
+        assert isinstance(login, Login)
+        assert login.host == "docs.example.invalid"
+
+
+class TestThePasswordOfTheServiceAccount:
+    """The password comes from the environment, or from a file it names."""
+
+    def test_the_variable_gives_it(self, monkeypatch) -> None:
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD", "service-EXAMPLE")
+        assert bootstrap._ldap_password() == "service-EXAMPLE"
+
+    @pytest.mark.parametrize(
+        "text", ["service-EXAMPLE\n", "service-EXAMPLE\r\n", "service-EXAMPLE"]
+    )
+    def test_a_file_gives_it_as_docker_mounts_a_secret(
+        self, text: str, tmp_path, monkeypatch
+    ) -> None:
+        secret = tmp_path / "password"
+        secret.write_bytes(text.encode())
+        monkeypatch.delenv("ISH_LDAP_BIND_PASSWORD", raising=False)
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD_FILE", str(secret))
+        assert bootstrap._ldap_password() == "service-EXAMPLE"
+
+    def test_a_file_that_cannot_be_read_names_the_variable(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD_FILE", str(tmp_path / "absent"))
+        with pytest.raises(ValueError) as refused:
+            bootstrap._ldap_password()
+        assert str(refused.value) == (
+            "Cannot read the file ISH_LDAP_BIND_PASSWORD_FILE names: FileNotFoundError"
+        )
+
+    def test_no_variable_gives_none(self) -> None:
+        assert bootstrap._ldap_password() == ""
+
+    def test_a_server_with_no_service_account_reads_no_file(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from tests.unit.adapters.authenticator import fake_ldap
+
+        fake_ldap.install(monkeypatch, fake_ldap.Directory())
+        monkeypatch.setenv("ISH_MCP_TOKEN", "test-token-EXAMPLE")
+        monkeypatch.setenv("ISH_LDAP_BIND_PASSWORD_FILE", str(tmp_path / "absent"))
+        assert bootstrap.build_access(Settings()).methods() == []
+        settings = replace(
+            Settings(),
+            auth=("ldap",),
+            ldap_url="ldaps://ldap.example.invalid",
+            ldap_user_dn="uid={user},dc=example,dc=invalid",
+        )
+        # A direct bind needs no account, so a bad path stops nothing.
+        assert bootstrap.build_access(settings).methods() == ["ldap"]

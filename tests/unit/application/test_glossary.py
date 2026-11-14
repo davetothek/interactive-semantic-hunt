@@ -8,12 +8,29 @@ from pathlib import Path
 
 import pytest
 
-from ish.application.glossary import Glossary, definitions, long_form
+from ish.application.glossary import (
+    Definition,
+    Glossary,
+    acronyms,
+    definitions,
+    long_form,
+)
 from ish.domain.chunk import Chunk
 
 
 def chunk(path: str) -> Chunk:
     return Chunk(Path(path), "t", "section", "asciidoc", None, 1, 2)
+
+
+class TestAcronyms:
+    """An acronym a text uses is a word of its own, named once."""
+
+    def test_each_is_named_once_in_the_order_of_first_use(self) -> None:
+        assert acronyms("SHT follows AE, and AE follows R&D.") == ["SHT", "AE", "R&D"]
+
+    @pytest.mark.parametrize("text", ["the block", "xAE1", "pre-AE", "AE-post", "A"])
+    def test_a_part_of_a_longer_word_is_not_an_acronym(self, text: str) -> None:
+        assert acronyms(text) == []
 
 
 class TestLongForm:
@@ -125,3 +142,27 @@ class TestGlossary:
         glossary.add(chunk("/b/2.adoc"), "Auto Exposure (AE)")
         glossary.add(chunk("/c/3.adoc"), "auto exposure (AE)")
         assert glossary.lookup("AE", [chunk("/z/q.adoc")]).meaning == "Auto Exposure"
+
+
+class TestKeep:
+    """A client keeps a meaning the server found, with the chunk that writes it."""
+
+    def test_a_kept_definition_is_looked_up(self) -> None:
+        glossary = Glossary()
+        doc = chunk("spec/a.adoc")
+        glossary.keep(Definition("AE", "Auto Exposure", doc))
+        assert glossary.lookup("AE") == Definition("AE", "Auto Exposure", doc)
+
+    def test_a_chunk_counts_once_for_an_acronym(self) -> None:
+        # The tree writes one meaning in two chunks and the other in one.
+        # A chunk that counted twice would turn the vote.
+        glossary = Glossary()
+        doc = chunk("spec/a.adoc")
+        glossary.add(doc, "Auto Exposure (AE)")
+        glossary.keep(Definition("AE", "Auto Exposure", doc))
+        glossary.keep(Definition("AE", "Auto Exposure", doc))
+        glossary.keep(Definition("AE", "Application Engineer", chunk("x/b.adoc")))
+        glossary.keep(Definition("AE", "Application Engineer", chunk("x/c.adoc")))
+        found = glossary.lookup("AE", [chunk("y/d.adoc")])
+        assert found is not None
+        assert found.meaning == "Application Engineer"

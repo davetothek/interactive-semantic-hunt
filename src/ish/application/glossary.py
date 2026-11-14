@@ -31,6 +31,9 @@ _CELL = re.compile(rf"^\|\s*({_SHORT})\s*$")
 _NEXT_CELL = re.compile(r"^\|\s*([^|\n]{3,120}?)\s*$")
 _DEFINED = re.compile(rf"^({_SHORT})::\s*(\S.{{2,120}})?$")
 
+# An acronym as a text uses it: one that stands as a word of its own.
+_USED = re.compile(rf"(?<![\w-]){_SHORT}(?![\w-])")
+
 # Where a meaning ends and an explanation of it starts.
 _STOP = re.compile(r"[.;] | - | – ")
 
@@ -104,6 +107,11 @@ def _clean(meaning: str) -> str:
     return _STOP.split(words, maxsplit=1)[0].strip(" .,;:")
 
 
+def acronyms(text: str) -> list[str]:
+    """Return each acronym that *text* uses, once, in the order of first use."""
+    return list(dict.fromkeys(_USED.findall(text)))
+
+
 def definitions(text: str) -> list[tuple[str, str]]:
     """Return each acronym that *text* defines, with its meaning, in order."""
     found: list[tuple[str, str]] = []
@@ -172,6 +180,18 @@ class Glossary:
                 self._by_short.setdefault(short, []).append(
                     Definition(short, meaning, chunk)
                 )
+
+    def keep(self, definition: Definition) -> None:
+        """Keep a *definition* that another glossary found in its tree.
+
+        A client of a server holds no file of the tree, so the server
+        sends each meaning with the chunk that writes it.
+        """
+        with self._lock:
+            if (definition.chunk, definition.short) in self._seen:
+                return
+            self._seen.add((definition.chunk, definition.short))
+            self._by_short.setdefault(definition.short, []).append(definition)
 
     def lookup(self, short: str, near: Sequence[Chunk] = ()) -> Definition | None:
         """Return the meaning of *short* the tree gives, or None.

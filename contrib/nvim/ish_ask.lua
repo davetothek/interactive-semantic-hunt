@@ -1,10 +1,10 @@
 -- lua/utils/ish_ask.lua
 -- Ask ish a question, and read the answer in a split.
 --
--- The answer comes from `ish --ask`, which writes Markdown on stdout
+-- The answer comes from `ish ask`, which writes Markdown on stdout
 -- with each source as a link. Running the command line keeps one set of
--- settings: `remote`, the language model, and the filters are the ones
--- a shell uses, so an answer here is the answer there.
+-- settings: the language model and the filters are the ones a shell
+-- uses, so an answer here is the answer there.
 --
 -- The split opens at once and names the question, because an answer
 -- takes seconds and a key that shows nothing looks dead. The command
@@ -41,12 +41,28 @@ end
 -- question follows `--`, so one that starts with a hyphen is not read
 -- as a flag.
 local function command(question, opts)
-  local parts = { 'ish', '--ask' }
+  local parts = { 'ish', 'ask' }
   vim.list_extend(parts, opts.args or {})
   vim.list_extend(parts, { '--', question, opts.cwd or root() })
   return parts
 end
 _internal.command = command
+
+-- Build the command that asks the server. A server answers from its own
+-- tree, so the command names no path.
+local function remote_command(question, opts)
+  local parts = { 'ish', 'remote', 'ask' }
+  vim.list_extend(parts, opts.args or {})
+  vim.list_extend(parts, { '--', question })
+  return parts
+end
+_internal.remote_command = remote_command
+
+-- The exit code of an answer that the documents do not cover.
+local NOT_COVERED = 2
+
+-- Defined below `M.ask`, which uses it.
+local answer
 
 local function lines_of(text)
   return vim.split(vim.trim(text), '\n', { plain = true })
@@ -126,6 +142,31 @@ function M.ask(question, opts)
     return
   end
 
+  opts.cwd = opts.cwd or root()
+  -- Ask this tree, the server, or this tree and then the server. With no
+  -- index and no server, the choice asks before it builds an index.
+  require('utils.ish_server').choose(opts.cwd, opts.source, function(choice)
+    if not choice then
+      return
+    end
+    if not choice.use_local then
+      return answer(question, remote_command(question, opts))
+    end
+    answer(question, command(question, opts), function(code)
+      -- The tree here does not cover it. The server may, so offer it.
+      if code == NOT_COVERED and choice.use_remote then
+        local asked = vim.fn.confirm('This tree does not cover it. Ask the server?', '&Ask\n&No', 1)
+        if asked == 1 then
+          answer(question, remote_command(question, opts))
+        end
+      end
+    end)
+  end)
+end
+
+-- Run *argv* for *question*, show the answer in a split, and call
+-- *after* with the exit code once it is shown.
+answer = function(question, argv, after)
   local buffer = open(question)
   local started = vim.uv.now()
   local function waiting()
@@ -138,7 +179,7 @@ function M.ask(question, opts)
   local timer = vim.uv.new_timer()
   timer:start(TICK_MS, TICK_MS, vim.schedule_wrap(waiting))
 
-  vim.system(command(question, opts), { text = true }, function(result)
+  vim.system(argv, { text = true }, function(result)
     vim.schedule(function()
       timer:stop()
       timer:close()
@@ -148,11 +189,14 @@ function M.ask(question, opts)
       end
       -- An answer that the documents do not cover exits with 2 and still
       -- prints the closest sources, so judge by the text, not the code.
-      local answer = vim.trim(result.stdout or '')
-      if answer == '' then
+      local text = vim.trim(result.stdout or '')
+      if text == '' then
         fill(buffer, failure(question, result.code, result.stderr))
       else
-        fill(buffer, lines_of(answer))
+        fill(buffer, lines_of(text))
+      end
+      if after then
+        after(result.code)
       end
     end)
   end)

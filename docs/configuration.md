@@ -2,8 +2,13 @@
 
 Every command-line option is also a key in the config file, under the same
 name. The one exception is `--config` itself: a file cannot name where to
-find itself. Put project settings in `.ish/config.toml` at the root of your
-repository:
+find itself. A config file in a tree cannot set `remote`, the server of `ish
+remote`, because a tree you cloned would choose where your token goes. It
+also cannot set `prompt_dir`, `answer_notes`, or `rerank_notes`, because
+a tree you cloned would choose what the model is told. Set them in the
+user config file, `~/.config/ish/config.toml`, or in a file you name with
+`--config`. Put project settings in `.ish/config.toml` at the root
+of your repository:
 
 ```toml
 embedder = "ollama"
@@ -146,7 +151,7 @@ it from the model card, so there only the cap follows.
 
 ## Answer questions
 
-`ish --ask` and the `ask` MCP tool send the text of the chunks a search
+`ish ask` and the `ask` MCP tool send the text of the chunks a search
 finds to a language model. Nothing is sent until the configuration names a
 backend and allows it:
 
@@ -163,7 +168,7 @@ these three options, because they decide where the text of a document goes.
 
 | Backend | Where the text goes | Citations | Use it for |
 |---|---|---|---|
-| `anthropic` | The Anthropic Messages API, `api.anthropic.com` only. The key comes from `ANTHROPIC_API_KEY` | Native | A shared server |
+| `anthropic` | The Anthropic Messages API, `api.anthropic.com` only. The key comes from `ANTHROPIC_API_KEY` | Native | A shared machine, or a key of a team |
 | `ollama` | A generation model on the local daemon. A host that is not this machine is refused | From a JSON schema | Text that must stay on the machine |
 | `claude-cli` | The Claude Code CLI, on the account it is logged in to, with every tool and settings file off | From a JSON schema | One person on their own machine |
 
@@ -194,20 +199,27 @@ up to that many turns. It reads the first sources, and when they fall short
 or name a term worth finding, it sends up to three new queries. ish runs
 them with the same filters, adds the best chunks it has not read, and asks
 again. The model still sees only what ish sends, so this works the same on
-a tree of documents with no code at all. `ish --ask` lists the follow-up
+a tree of documents with no code at all. `ish ask` lists the follow-up
 searches below the sources.
 
 ```toml
-ask_turns = 3
+ask_turns = 1
 ```
 
-`--ask-turns N` sets it for one question, and travels with a question to a
-server. A server takes from 0 to 5 per question.
+`--ask-turns N` sets it for one question. With `ish remote ask`, the model
+of this machine runs the turns, and each follow-up search goes to the
+server. The `ask` MCP tool takes from 0 to 5 per question.
 
 Measured on 25 questions with the rerank and Haiku 5.5: 19 were answered in
 one turn, so they cost the same. The model searched again for two hard
 questions and for all four that the documents do not answer, and it still
 refused those four. An answer cost about 0.4 cents against 0.3.
+
+With a candidate of each type, 41 questions answered with Sonnet 5.5 used
+no more than two turns. One hard question took a follow-up search, and
+it was cited the same with `ask_turns = 1` as with 3, in 41 s against 63.
+The four that the documents do not answer were refused in 20 to 25 s
+against 22 to 40. Over those five questions, one turn cost a third less.
 
 ### Keep the files parsed
 
@@ -217,7 +229,7 @@ resolved. A file with large includes takes seconds to parse. ish keeps
 the last `ask_files` files parsed, 32 by default, so a second question
 about the same files reads none again.
 
-A server that answers from one tree can keep the whole tree. With
+A server that serves one tree can keep the whole tree. With
 `ask_warm`, `ish-mcp` parses the files of its tree on a thread when it
 starts, up to `ask_files`, so the first questions read no file either. The
 same pass collects what the acronyms of the tree stand for, which the
@@ -257,12 +269,40 @@ the file.
 The JSON a reply must follow stays in code, because the parser reads it.
 An instruction can ask for a different layout only within that schema.
 
+To add to the instructions and change none of them, write notes. The
+answering model reads `answer_notes` after its instructions, and the
+rerank model reads `rerank_notes` after its own, each under a heading
+that says the notes change none of the instructions above:
+
+```toml
+answer_notes = """
+Answer in English, also when the question is in Norwegian.
+A name such as REQ-1234 is a requirement id. Cite it as written.
+"""
+rerank_notes = "The specifications are under docs/spec and docs/system."
+```
+
+A note is sent as written, with no `$name` filled in. Prefer notes to
+`prompt_dir`: a replaced file must keep every rule of the shipped one,
+such as the rule to answer only from the sources, and a note cannot drop
+one. Set notes, and `prompt_dir`, in the user config file or in a file
+you name with `--config`. A config file in a tree cannot set them.
+
 To compare two sets of instructions, run the evaluation with each:
 
 ```sh
 uv run python scripts/evaluate_ask.py questions.yaml TREE \
   --language-model claude-cli --answer-model claude-haiku-5-5 \
   --prompt-dir ./prompts-b
+```
+
+To score `ish remote ask`, give `--remote URL` in place of the tree. The
+server searches, and the model of this machine answers:
+
+```sh
+uv run python scripts/evaluate_ask.py questions.yaml \
+  --remote https://ish.example.com/mcp \
+  --language-model claude-cli --answer-model claude-haiku-5-5
 ```
 
 `link_base` publishes the links of an answer under a base URL. With

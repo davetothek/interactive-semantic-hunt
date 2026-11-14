@@ -532,6 +532,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+ldap = [
+    { name = "python-ldap" },
+]
 llama = [
     { name = "huggingface-hub" },
     { name = "llama-cpp-python" },
@@ -557,6 +560,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'llama'", specifier = ">=0.23.0" },
     { name = "llama-cpp-python", marker = "extra == 'llama'", specifier = ">=0.2.75" },
     { name = "numpy", specifier = ">=2.5.2" },
+    { name = "python-ldap", marker = "extra == 'ldap'", specifier = ">=3.4" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.3.3" },
     { name = "sentence-transformers", marker = "extra == 'st'" },
@@ -565,7 +569,7 @@ requires-dist = [
     { name = "tree-sitter-c", specifier = ">=0.24.2" },
     { name = "tree-sitter-cpp", specifier = ">=0.23.4" },
 ]
-provides-extras = ["llama", "st"]
+provides-extras = ["llama", "st", "ldap"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1130,6 +1134,27 @@ wheels = [
 ]
 
 [[package]]
+name = "pyasn1"
+version = "0.6.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/7e/3c0da41061a2021cac7cd524fd57092adbe5b515e8bf9005702e366802e2/pyasn1-0.6.5.tar.gz", hash = "sha256:6b11616a6bcf3a40e635f082bb232fa57b5e0dd7f517bd7ddd69ec3794508a47", size = 155152, upload-time = "2026-10-27T06:32:49.125Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/1f/3eefd5c84c35cae44549ce1c7f7e58f7945b34f5a6bce07a135438522073/pyasn1-0.6.5-py3-none-any.whl", hash = "sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587", size = 84807, upload-time = "2026-10-27T06:32:48.045Z" },
+]
+
+[[package]]
+name = "pyasn1-modules"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyasn1" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/e6/78ebbb10a8c8e4b61a59249394a4a594c1a7af95593dc933a349c8d00964/pyasn1_modules-0.4.2.tar.gz", hash = "sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6", size = 307892, upload-time = "2025-03-28T02:41:22.17Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl", hash = "sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a", size = 181259, upload-time = "2025-03-28T02:41:19.028Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.21.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1193,6 +1218,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/0e/df/f15f80383f152452d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/17/cebee01d1c0c1441174cf0456ddc91b280d79acb65340c05e41d77866ee8/python_dateutil-3.0.0-py2.py3-none-any.whl", hash = "sha256:3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd", size = 94659, upload-time = "2026-10-21T23:41:43.431Z" },
 ]
+
+[[package]]
+name = "python-ldap"
+version = "3.4.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyasn1" },
+    { name = "pyasn1-modules" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/45/489fcf46984f916ef165cdc6a2a1f1ca01ab6f486d47169256ebe44bdd62/python_ldap-3.4.8.tar.gz", hash = "sha256:18dc7460470c6ff64ed5c04ee21c56dbfee7ab433a53213ba91e407eea44c34c", size = 387710, upload-time = "2026-09-16T12:41:20.15Z" }
 
 [[package]]
 name = "pyyaml"

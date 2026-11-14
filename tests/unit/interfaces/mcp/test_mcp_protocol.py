@@ -160,7 +160,7 @@ class TestInternalFailure:
 
         server = build()
 
-        def boom(method, params):
+        def boom(method, params, who=""):
             raise RuntimeError("the index is corrupt")
 
         monkeypatch.setattr(server, "_dispatch", boom)
@@ -168,3 +168,75 @@ class TestInternalFailure:
 
         assert result["error"]["code"] == protocol.INTERNAL_ERROR
         assert "the index is corrupt" in result["error"]["message"]
+
+
+class TestAudit:
+    """A tool call names who made it, and never what it asked."""
+
+    def _audit(self, caplog) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.name == "ish.audit"]
+
+    def test_a_call_for_a_user_names_the_user_and_the_tool(self, caplog) -> None:
+        line = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "echo", "arguments": {"x": "the secret query"}},
+            }
+        )
+        with caplog.at_level("INFO", logger="ish.audit"):
+            build().handle_line(line, who="reader")
+        assert self._audit(caplog) == ["reader calls echo"]
+        assert "the secret query" not in caplog.text
+
+    def test_a_call_on_stdio_names_nobody(self, caplog) -> None:
+        with caplog.at_level("INFO", logger="ish.audit"):
+            call(build(), "tools/call", {"name": "echo", "arguments": {"x": "a"}})
+        assert self._audit(caplog) == []
+
+
+class TestNoForgedAuditLine:
+    """A name a client sends cannot write a line of the audit log."""
+
+    def _audit(self, caplog) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.name == "ish.audit"]
+
+    def test_an_unknown_tool_is_not_named(self, caplog) -> None:
+        line = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "evil\nINJECT [INF] fake", "arguments": {}},
+            }
+        )
+        with caplog.at_level("INFO", logger="ish.audit"):
+            build().handle_line(line, who="reader")
+        assert self._audit(caplog) == ["reader calls an unknown tool"]
+
+    def test_a_user_name_with_a_line_break_is_escaped(self, caplog) -> None:
+        line = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "echo", "arguments": {}},
+            }
+        )
+        with caplog.at_level("INFO", logger="ish.audit"):
+            build().handle_line(line, who="reader\nfake")
+        assert self._audit(caplog) == ["reader\\x0afake calls echo"]
+
+
+class TestNoForgedLogLine:
+    def test_the_protocol_a_client_asks_for_is_escaped(self, caplog) -> None:
+        with caplog.at_level("INFO", logger="ish"):
+            call(build(), "initialize", {"protocolVersion": "x\nadmin calls delete"})
+        assert "x\\x0aadmin calls delete" in caplog.text
+        assert "x\nadmin" not in caplog.text
+
+    def test_a_notification_is_escaped(self, caplog) -> None:
+        with caplog.at_level("DEBUG", logger="ish"):
+            build().handle({"jsonrpc": "2.0", "method": "a\nforged"})
+        assert "a\\x0aforged" in caplog.text
