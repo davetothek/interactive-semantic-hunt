@@ -203,7 +203,7 @@ a tree of documents with no code at all. `ish ask` lists the follow-up
 searches below the sources.
 
 ```toml
-ask_turns = 3
+ask_turns = 1
 ```
 
 `--ask-turns N` sets it for one question. With `ish remote ask`, the model
@@ -214,6 +214,12 @@ Measured on 25 questions with the rerank and Haiku 5.5: 19 were answered in
 one turn, so they cost the same. The model searched again for two hard
 questions and for all four that the documents do not answer, and it still
 refused those four. An answer cost about 0.4 cents against 0.3.
+
+With a candidate of each type, 41 questions answered with Sonnet 5.5 used
+no more than two turns. One hard question took a follow-up search, and
+it was cited the same with `ask_turns = 1` as with 3, in 41 s against 63.
+The four that the documents do not answer were refused in 20 to 25 s
+against 22 to 40. Over those five questions, one turn cost a third less.
 
 ### Keep the files parsed
 

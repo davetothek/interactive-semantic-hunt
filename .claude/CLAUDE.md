@@ -401,6 +401,11 @@ something broke. This is that record, so a rule is never argued from taste.
   of 20 correct and 19 of 20 complete, and haiku 19 and 18. Accuracy
   comes first, so sonnet answers, and haiku reranks and writes the
   query of a follow-up.
+- With a candidate of each type, 41 questions used one turn, except
+  one hard question and the four the tree does not cover. Those five
+  with `ask_turns = 1` against 3: the hard one cited in 41 s against
+  63, the four refused in 20 to 25 s against 22 to 40, and $0.369
+  against $0.553 for the five. Hence 1 in the example of the docs.
 - Answers that say in one or two sentences what code does or what a
   test checks: 37 of 37 cited on the same 41, 1,959 output tokens
   against 2,409, $0.0605 against $0.0699, 23.6 s against 26.0.
