@@ -119,6 +119,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- An answer says in one or two sentences what a source of code does or
+  what a test checks, and writes paragraphs of two to three sentences.
+  It costs 13 % less and takes 2.4 s less, with the same citations.
 - A follow-up in a chat searches for one query that the rerank model
   writes from the history, and the chat names it. A follow-up such as
   "cool, what about ldap?" otherwise searched for its own words and for
