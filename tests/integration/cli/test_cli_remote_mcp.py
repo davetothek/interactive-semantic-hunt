@@ -10,6 +10,7 @@ import json
 import pytest
 
 from ish.interfaces.cli import run
+from ish.interfaces.mcp.server import AGENT_INSTRUCTIONS
 from ish.settings import MCP_TOKEN_ENV_VAR
 from tests.integration.cli.conftest import Served
 from tests.integration.cli.test_cli_ask import FakeModel, _model
@@ -60,6 +61,28 @@ class TestRemoteMcp:
         assert answer["server"]["host"] == served.host
         assert model.questions == [QUESTION]
         assert [name for name, _ in served.calls] == ["search_code", "sources"]
+
+    def test_the_handshake_gives_the_agent_instructions(
+        self, served: Served, monkeypatch
+    ) -> None:
+        """An agent that reads a server learns the same rules as a local one."""
+        hello = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        code, results = _serve(monkeypatch, ["remote", "mcp"], hello)
+        assert code == 0
+        assert results[1]["instructions"] == AGENT_INSTRUCTIONS
+
+    def test_the_text_shape_shows_what_the_server_chunk_says(
+        self, served: Served, monkeypatch
+    ) -> None:
+        code, results = _serve(
+            monkeypatch,
+            ["remote", "mcp"],
+            _call(1, "search_code", {"query": "watchdog", "format": "text"}),
+        )
+        assert code == 0
+        lines = results[1]["content"][0]["text"].splitlines()
+        assert lines[0] == "[1.00] docs/boot.md:1-3  document  Watchdog"
+        assert lines[1].startswith("    ")
 
     def test_ish_remote_names_the_server(self, served: Served, monkeypatch) -> None:
         _model(monkeypatch, FakeModel())

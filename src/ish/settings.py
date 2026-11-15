@@ -274,9 +274,10 @@ class Settings:
         default="plain",
         metadata=_opt(
             OUTPUT,
-            "Output shape. Use grep for an editor picker.",
+            "Output shape. Use grep for an editor picker, and text to show "
+            "the start of each chunk under its line.",
             scope="query",
-            choices=["plain", "grep"],
+            choices=["plain", "grep", "text"],
         ),
     )
     color: str = field(

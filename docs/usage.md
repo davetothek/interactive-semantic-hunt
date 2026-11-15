@@ -20,6 +20,27 @@ ish "parse a python file" src/
 [0.71] src/ish/adapters/parser/python.py:14-31  method  PythonParser.parse
 ```
 
+A result line tells where a chunk is, not what it says. `--format text`
+prints the start of each chunk under its line, at most 12 lines, and marks
+a cut:
+
+```
+[0.80] src/ish/application/scan.py:186-209  method  Scan.parse_file
+        def parse_file(self, path: Path) -> Sequence[Chunk] | None:
+            """Read and parse one discovered file.
+
+            Return no chunks when the file was read but holds nothing this
+            parser can use, and None when the file could not be read at
+            all. The two answers differ for the index: a file that yields
+            nothing is described by that answer and is stamped, while a
+            file nobody could read is unknown and is asked about again.
+            Report the reason for either, and continue.
+            """
+            log.debug("Parsing %s", path)
+            try:
+    (more text follows)
+```
+
 Run the interactive picker and open the selection in your editor. Type to
 search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `ctrl+t`
 to change the theme, `escape` to quit. The picker lists what the index held
@@ -305,7 +326,8 @@ token expires, or the operator ends it, ish says to run `ish remote login`
 again. `ish remote logout` deletes the token of the server.
 
 `ish remote search` prints the result lines of the server. `--limit` and
-`--format` travel with the query.
+`--format` travel with the query. A server older than `--format text`
+prints plain lines for it.
 
 For `ish remote ask`, the server searches its own tree and returns the
 chunks with their text. The language model of this machine picks the chunks

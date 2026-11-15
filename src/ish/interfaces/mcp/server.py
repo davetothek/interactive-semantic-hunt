@@ -52,6 +52,28 @@ WATCH_STOP_SECONDS = 5.0
 
 SERVER_NAME = "ish"
 
+# What a host gives its model before the first call. A search finds where
+# an idea is. It does not prove what the source says, and an agent that
+# writes a claim from a heading writes a guess as a fact.
+AGENT_INSTRUCTIONS = """\
+ish finds where an idea is in a tree. It does not check what the source \
+says. Follow these rules before you state a fact from a result.
+
+- A search result is a pointer: a path, a line range, and a heading. Read \
+the text of a chunk before you state what it says. Call search_code with \
+format "text", or open the file.
+- A heading, a symbol name, or a short comment is not evidence of what the \
+code does. A field that names a histogram does not show that the code \
+reads a histogram.
+- A source that is not in the top results can still be in the tree. Before \
+you report that the tree does not say a thing, search again in other \
+words or with a type filter.
+- Search for the subject, not for your conclusion. A query that states a \
+conclusion finds text that looks like the conclusion.
+- Mark each statement that you infer, and do not read in a source, as an \
+inference.
+"""
+
 # How a search that found nothing begins its answer. A client that
 # prints results as lines reads this as prose, not as a result.
 NO_RESULTS = "No results for"
@@ -99,7 +121,8 @@ _QUERY_PROPERTIES: dict[str, dict[str, Any]] = {
         "enum": list(choices_of("format")),
         "description": (
             "Shape of each line. Use grep for an editor, which opens a "
-            "result at path:line:column."
+            "result at path:line:column. Use text to get the start of the "
+            "text of each chunk under its line."
         ),
     },
 }
@@ -567,7 +590,10 @@ def search_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
             "sections) with their file, line range, and score. Use it "
             "for questions such as 'where is authentication handled' "
             "or 'what computes the ranking', where the wording of the "
-            "question will not appear in the code."
+            "question will not appear in the code. A result is a "
+            "pointer, not evidence: read the text of a chunk before you "
+            "state what it says. Pass format 'text' to get the start of "
+            "each chunk."
         ),
         schema={
             "type": "object",
@@ -966,7 +992,10 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
         logging.getLogger("ish.audit").setLevel(logging.INFO)
     tools = IshTools(settings, root)
     server = Server(
-        SERVER_NAME, installed_version(), tools.tools(over_http=bool(args.http))
+        SERVER_NAME,
+        installed_version(),
+        tools.tools(over_http=bool(args.http)),
+        AGENT_INSTRUCTIONS,
     )
     try:
         tools.warm_reader()

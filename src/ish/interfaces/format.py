@@ -4,7 +4,17 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerTerm
+from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
+
+# Lines and characters of a chunk that the text shape shows under its
+# result line. Enough for a heading and its first statements, so that a
+# reader sees what the chunk says and not only what it is called.
+EXCERPT_LINES = 12
+EXCERPT_CHARS = 1_000
+
+# The indent of an excerpt line, so a reader tells it from a result line.
+EXCERPT_INDENT = "    "
 
 
 def display_path(path: Path, base: Path | None = None) -> Path:
@@ -71,9 +81,44 @@ def render(
     """
     if shape == "grep":
         return format_grep_line(chunk, score, base)
-    if score is None:
-        return format_chunk_line(chunk, base)
-    return format_result_line(chunk, score, base)
+    line = (
+        format_chunk_line(chunk, base)
+        if score is None
+        else format_result_line(chunk, score, base)
+    )
+    if shape == "text":
+        return f"{line}\n{format_excerpt(chunk)}"
+    return line
+
+
+def format_excerpt(chunk: Chunk) -> str:
+    """Return the start of the text of *chunk*, indented under its result line.
+
+    A heading or a name tells where a chunk is, not what it says. The
+    excerpt gives a reader the words to check before a claim. Mark a cut
+    excerpt, and say when the text cannot be read, so that a reader
+    never takes a part for the whole.
+    """
+    text = read_lines(chunk)
+    if text is None:
+        return f"{EXCERPT_INDENT}(The text of this chunk cannot be read.)"
+    lines = text.strip("\n").splitlines()
+    if not lines:
+        return f"{EXCERPT_INDENT}(This chunk holds no text.)"
+    shown: list[str] = []
+    room = EXCERPT_CHARS
+    cut = len(lines) > EXCERPT_LINES
+    for line in lines[:EXCERPT_LINES]:
+        if room <= 0:
+            cut = True
+            break
+        shown.append(line[:room])
+        cut = cut or len(line) > room
+        room -= len(line)
+    excerpt = "\n".join(f"{EXCERPT_INDENT}{line}".rstrip() for line in shown)
+    if cut:
+        excerpt = f"{excerpt}\n{EXCERPT_INDENT}(more text follows)"
+    return excerpt
 
 
 def format_selection(chunk: Chunk) -> str:

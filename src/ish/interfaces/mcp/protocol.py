@@ -57,10 +57,13 @@ class Tool:
 class Server:
     """Dispatch JSON-RPC messages to a set of tools."""
 
-    def __init__(self, name: str, version: str, tools: list[Tool]) -> None:
+    def __init__(
+        self, name: str, version: str, tools: list[Tool], instructions: str = ""
+    ) -> None:
         self._name = name
         self._version = version
         self._tools = {tool.name: tool for tool in tools}
+        self._instructions = instructions
 
     # ------------------------------------------------------------------
     # Transport
@@ -139,11 +142,16 @@ class Server:
             printable(str(asked)),
             version,
         )
-        return {
+        reply: dict[str, Any] = {
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": self._name, "version": self._version},
         }
+        # A host gives the instructions to its model, which reads them
+        # before it calls a tool.
+        if self._instructions:
+            reply["instructions"] = self._instructions
+        return reply
 
     def _call(self, params: Mapping[str, Any], who: str = "") -> dict[str, Any]:
         """Run one tool and wrap whatever it returns as text content.

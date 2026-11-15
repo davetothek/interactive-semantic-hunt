@@ -8,6 +8,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `--format text` prints the start of each chunk under its result line, at
+  most 12 lines, and marks a cut. `search_code` takes `format: "text"` the
+  same way. A heading tells where a chunk is, not what it says.
+- The MCP server gives the agent rules in the `instructions` of its
+  handshake, on stdio, over HTTP, and through `ish remote mcp`. The agent
+  reads a chunk before it states what the chunk says, and does not report a
+  gap from the top results alone.
+
 ## 0.10.1 - 2026-11-14
 
 ### Added

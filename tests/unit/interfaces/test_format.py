@@ -6,6 +6,8 @@ import pytest
 
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import (
+    EXCERPT_CHARS,
+    EXCERPT_LINES,
     display_path,
     format_chunk_line,
     format_grep_line,
@@ -67,6 +69,78 @@ class TestPlainShape:
 
     def test_symbol_of_names_the_unnamed(self) -> None:
         assert symbol_of(chunk(None)) == "<anonymous>"
+
+
+def text_chunk(text: str, path: Path = Path("/proj/src/a.py")) -> Chunk:
+    return Chunk(
+        path=path,
+        text=text,
+        kind="section",
+        language="markdown",
+        symbol="Watchdog",
+        start_line=3,
+        end_line=9,
+    )
+
+
+class TestTextShape:
+    """Verify the text shape shows what a chunk says, not only where it is.
+
+    An agent that reads only a heading writes a guess as a fact. The text
+    shape puts the start of each chunk under its line, and marks a cut,
+    so that a reader never takes a part for the whole.
+    """
+
+    def test_the_excerpt_follows_the_result_line(self) -> None:
+        out = render(text_chunk("The gain is 4.\nIt applies after HDR."), "text", 0.5)
+        lines = out.splitlines()
+        assert lines[0].startswith("[0.50] ")
+        assert lines[1:] == ["    The gain is 4.", "    It applies after HDR."]
+
+    def test_a_listing_takes_the_text_shape_too(self) -> None:
+        out = render(text_chunk("One line."), "text")
+        assert out.splitlines() == [
+            format_chunk_line(text_chunk("One line.")),
+            "    One line.",
+        ]
+
+    def test_a_long_chunk_is_cut_and_marked(self) -> None:
+        text = "\n".join(f"line {n}" for n in range(EXCERPT_LINES + 5))
+        lines = render(text_chunk(text), "text", 0.5).splitlines()
+        assert lines[EXCERPT_LINES] == f"    line {EXCERPT_LINES - 1}"
+        assert lines[-1] == "    (more text follows)"
+        assert len(lines) == EXCERPT_LINES + 2
+
+    def test_a_long_line_is_cut_and_marked(self) -> None:
+        lines = render(text_chunk("x" * (EXCERPT_CHARS + 50)), "text").splitlines()
+        assert lines[1] == "    " + "x" * EXCERPT_CHARS
+        assert lines[2] == "    (more text follows)"
+
+    def test_the_characters_stop_the_excerpt_between_lines(self) -> None:
+        text = "\n".join(["a" * EXCERPT_CHARS, "b", "c"])
+        lines = render(text_chunk(text), "text").splitlines()
+        assert lines[1:] == ["    " + "a" * EXCERPT_CHARS, "    (more text follows)"]
+
+    def test_a_short_chunk_is_not_marked(self) -> None:
+        assert "more text" not in render(text_chunk("Short."), "text", 0.5)
+
+    def test_an_unreadable_chunk_says_so(self, tmp_path: Path) -> None:
+        out = render(text_chunk("", tmp_path / "gone.md"), "text", 0.5)
+        assert out.splitlines()[1] == "    (The text of this chunk cannot be read.)"
+
+    def test_a_chunk_with_no_text_says_so(self, tmp_path: Path) -> None:
+        empty = tmp_path / "blank.md"
+        empty.write_text("\n" * 12)
+        out = render(text_chunk("", empty), "text", 0.5)
+        assert out.splitlines()[1] == "    (This chunk holds no text.)"
+
+    def test_the_text_is_read_from_the_file_when_the_index_holds_none(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "spec.md"
+        source.write_text("".join(f"row {n}\n" for n in range(1, 12)))
+        out = render(text_chunk("", source), "text", 0.5)
+        assert out.splitlines()[1:] == [f"    row {n}" for n in range(3, 10)]
 
 
 class TestTheBase:
