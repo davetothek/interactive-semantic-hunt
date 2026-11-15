@@ -10,6 +10,7 @@ from ish.application.ranking import (
     SEMANTIC_WEIGHT,
     fuse_rankings,
     fusion_width,
+    identifiers_in,
     is_code_like,
     rank,
     split_identifier,
@@ -47,6 +48,20 @@ class TestSplitIdentifier:
     )
     def test_splits(self, name: str, expected: str) -> None:
         assert split_identifier(name) == expected
+
+
+class TestIdentifiersIn:
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("DMA control words", "DMA"),
+            ("the FIFO of the bus", "FIFO"),
+            ("parse_query and IshApp", "parse_query IshApp"),
+            ("a plain description of an ID", ""),
+        ],
+    )
+    def test_the_names_of_a_query(self, query: str, expected: str) -> None:
+        assert identifiers_in(query) == expected
 
 
 class TestIsCodeLike:
@@ -158,6 +173,23 @@ class TestRank:
         assert [m.chunk.symbol for m in found] == ["c", "a"]
         assert asked["semantic"][0] == fusion_width(2) == MIN_FUSION_WIDTH
         assert asked["lexical"] == ("some_name", MIN_FUSION_WIDTH, None)
+
+    def test_the_lexical_half_matches_the_names_alone(self) -> None:
+        """The plain words of a query matched every heading that held them.
+
+        "DMA control words sent to the host" lifted 14 sections titled
+        "... Control" above the section the vector ranked first.
+        """
+        semantic, lexical, asked = self._primitives(["a"], ["a"])
+        rank(
+            [1.0],
+            "where does IshApp read the some_name control",
+            2,
+            None,
+            semantic=semantic,
+            lexical=lexical,
+        )
+        assert asked["lexical"][0] == "IshApp some_name"
 
     def test_the_score_stays_the_cosine(self) -> None:
         semantic, lexical, _ = self._primitives(["a", "b"], ["b"])

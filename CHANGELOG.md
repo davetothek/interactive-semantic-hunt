@@ -34,6 +34,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - A checked answer shows on a terminal when the check ends, not part by
   part as the model writes it. Turn the check off with
   `--no-check-claims` to stream.
+- The lexical half of a search matches the names in a query alone, such as
+  `DMA_EN`, `IshApp`, or `FIFO`, and no longer its plain words. A query
+  that named something and also said "control" lifted every section titled
+  "... Control" above the section the vector ranked first.
 
 ### Fixed
 

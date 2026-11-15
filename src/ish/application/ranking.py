@@ -55,16 +55,25 @@ def is_code_like(query: str) -> bool:
     identifier. Fusing it into a plain description costs accuracy,
     because the vector ranking is already the better signal there.
     """
+    return bool(identifiers_in(query))
+
+
+def identifiers_in(query: str) -> str:
+    """Return the words of *query* that name something, one space apart.
+
+    A name has an underscore, is a capital word of three letters or more,
+    or mixes its case, such as IshApp or HTTPServer. A short capital word
+    stays ordinary prose.
+    """
+    names = []
     for token in _TOKEN.findall(query):
-        if "_" in token:
-            return True
-        if len(token) > 2 and token.isupper():
-            return True
-        # Mixed case, such as IshApp or HTTPServer. An all-capital word is
-        # already handled above, so a short one stays ordinary prose.
-        if not token.isupper() and any(char.isupper() for char in token[1:]):
-            return True
-    return False
+        if (
+            "_" in token
+            or (len(token) > 2 and token.isupper())
+            or (not token.isupper() and any(char.isupper() for char in token[1:]))
+        ):
+            names.append(token)
+    return " ".join(names)
 
 
 def split_identifier(name: str) -> str:
@@ -131,7 +140,11 @@ def rank(
 
     width = fusion_width(limit)
     candidates = semantic(query_vector, width, keep)
-    by_name = lexical(query_text, width, keep)
+    # Match the names alone. The plain words of a query that also names
+    # something matched every heading that held them: "control" in "DMA
+    # control words sent to the host" lifted 14 sections titled
+    # "... Control" above the section the vector ranked first.
+    by_name = lexical(identifiers_in(query_text), width, keep)
     if not by_name:
         return candidates[:limit]
 
