@@ -51,6 +51,8 @@ class PurePythonVectorStore:
         self._stamps: dict[Path, FileStamp] = {}
         self._chunks: dict[Path, list[tuple[Chunk, str]]] = {}
         self._vectors: dict[str, Sequence[float]] = {}
+        # The window hashes of each chunk hash, by the file that holds it.
+        self._windows: dict[Path, dict[str, tuple[str, ...]]] = {}
         self._chunking = ""
 
     # ------------------------------------------------------------------
@@ -70,22 +72,31 @@ class PurePythonVectorStore:
         self._vectors.update(vectors)
 
     def set_file(
-        self, path: Path, stamp: FileStamp, chunks: Sequence[tuple[Chunk, str]]
+        self,
+        path: Path,
+        stamp: FileStamp,
+        chunks: Sequence[tuple[Chunk, str]],
+        windows: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
-        """Replace everything held for *path*."""
+        """Replace everything held for *path*, the windows of its chunks with it."""
         self._stamps[path] = stamp
         self._chunks[path] = list(chunks)
+        self._windows[path] = {
+            digest: tuple(held) for digest, held in (windows or {}).items()
+        }
 
     def remove_files(self, paths: Collection[Path]) -> None:
         """Drop everything held for *paths*."""
         for path in paths:
             self._stamps.pop(path, None)
             self._chunks.pop(path, None)
+            self._windows.pop(path, None)
 
     def clear(self) -> None:
         """Discard every indexed file. Keep the vectors, which are reusable."""
         self._stamps.clear()
         self._chunks.clear()
+        self._windows.clear()
 
     def chunking(self) -> str:
         """Return the chunking stamp the files were read under, or empty."""
@@ -136,14 +147,24 @@ class PurePythonVectorStore:
     def _semantic(
         self, query_vector: Sequence[float], top: int, keep: ResultFilter = None
     ) -> list[Match]:
-        """Return the *top* chunks *keep* allows, most similar first."""
-        scored = [
-            Match(chunk, cosine_similarity(query_vector, vector))
-            for entries in self._chunks.values()
-            for chunk, digest in entries
-            if (vector := self._vectors.get(digest)) is not None
-            and (keep is None or keep(chunk))
-        ]
+        """Return the *top* chunks *keep* allows, most similar first.
+
+        Score a chunk with windows by the best of its own vector and theirs.
+        """
+        scored: list[Match] = []
+        for path, entries in self._chunks.items():
+            windows = self._windows.get(path, {})
+            for chunk, digest in entries:
+                if keep is not None and not keep(chunk):
+                    continue
+                vectors = [
+                    vector
+                    for held in (digest, *windows.get(digest, ()))
+                    if (vector := self._vectors.get(held)) is not None
+                ]
+                if vectors:
+                    best = max(cosine_similarity(query_vector, v) for v in vectors)
+                    scored.append(Match(chunk, best))
         scored.sort(key=lambda match: match.score, reverse=True)
         return scored[:top]
 

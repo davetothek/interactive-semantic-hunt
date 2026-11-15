@@ -31,7 +31,7 @@ from ish.adapters.parser import (
     spellings,
 )
 from ish.adapters.vector_store._catalog import IndexCatalog, IndexEntry
-from ish.application.categories import Categorizer, compile_categories
+from ish.application.categories import DOC, Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
 from ish.application.index import Index
@@ -216,6 +216,33 @@ def context_window(settings: Settings) -> int | None:
     return settings.context_tokens
 
 
+def windowed(settings: Settings) -> Callable[[Chunk], bool]:
+    """Return which chunks get a vector for each window of a few lines.
+
+    With ``doc_windows``, the chunks of documents. A section of prose says
+    many things, and a window finds one of them. Code divides into
+    definitions that each say one thing, so a chunk of code keeps its one
+    vector. Windows are off by default: on this repository they gave the
+    documents more chances than the code and cost 8 points of conceptual
+    top-1.
+    """
+    if not settings.doc_windows:
+        return _no_windows
+    documents = frozenset(
+        name for name, held in categories(all_parsers(settings)).items() if held == DOC
+    )
+
+    def is_document(chunk: Chunk) -> bool:
+        return chunk.language in documents
+
+    return is_document
+
+
+def _no_windows(chunk: Chunk) -> bool:
+    """Give no chunk windows."""
+    return False
+
+
 def chunking_stamp(settings: Settings) -> str:
     """Name how the settings divide a file into chunks.
 
@@ -226,7 +253,10 @@ def chunking_stamp(settings: Settings) -> str:
     from ish.adapters.parser._limits import chars_for
 
     cap = chars_for(settings.context_tokens)
-    return f"{CHUNKING_VERSION}:{cap}:{settings.max_chunks}"
+    stamp = f"{CHUNKING_VERSION}:{cap}:{settings.max_chunks}"
+    # Windows are more vectors of the same chunks, so turning them on or
+    # off reads every file again, as a new division would.
+    return f"{stamp}:windows" if settings.doc_windows else stamp
 
 
 def build_embedder(settings: Settings) -> Embedder:
@@ -844,6 +874,7 @@ def build_search(
             vector_store=primary,
             rebuild=settings.reindex,
             chunking=chunking_stamp(settings),
+            windowed=windowed(settings),
         )
     return Search(
         embedder=embedder,

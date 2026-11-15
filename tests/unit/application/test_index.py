@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 
 from ish.adapters.vector_store.pure_python import PurePythonVectorStore
-from ish.application.index import Index, IndexStats, content_hash, embed_text
+from ish.application.index import (
+    Index,
+    IndexStats,
+    content_hash,
+    embed_text,
+    window_texts,
+)
 from ish.application.ports.parser import ParseError
 from ish.application.scan import Scan
 from ish.domain.chunk import Chunk
@@ -689,6 +695,104 @@ class TestRowsLandAsTheRunGoes:
 
         # The third request already sees the four rows the first two earned.
         assert seen == [0, 2, 4]
+
+
+class DocParser:
+    """Emit one chunk of a document for the whole file."""
+
+    language = "markdown"
+    suffixes = frozenset({".md"})
+
+    def parse(self, path: Path, source: str) -> Sequence[Chunk]:
+        return [
+            Chunk(path, source, "section", "markdown", "Doc", 1, source.count("\n") + 1)
+        ]
+
+
+class TestWindows:
+    """A long chunk of a document gets a vector for each window of a few lines."""
+
+    LONG = "".join(f"line {n:02d} " + "x" * 80 + "\n" for n in range(20))
+
+    def _index(self, embedder, store, tmp_path: Path, windowed=None) -> Index:
+        (tmp_path / "doc.md").write_text(self.LONG)
+        (tmp_path / "code.py").write_text("def f():\n")
+        return Index(
+            scan=Scan(parsers=[LineParser(), DocParser()]),
+            embedder=embedder,
+            vector_store=store,
+            **({"windowed": windowed} if windowed else {}),
+        )
+
+    def test_each_window_is_embedded_under_the_heading_of_its_chunk(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        index = self._index(
+            embedder, store, tmp_path, lambda chunk: chunk.language == "markdown"
+        )
+        index.refresh(tmp_path)
+        doc = next(c for c in store.chunks() if c.language == "markdown")
+        windows = window_texts(doc)
+        assert len(windows) > 1
+        assert all(w.startswith("markdown section Doc:\n") for w in windows)
+        assert set(windows) <= set(embedder.seen)
+        assert embed_text(doc) in embedder.seen
+
+    def test_a_window_lifts_its_chunk_in_a_search(self, store, tmp_path: Path) -> None:
+        """A long section holds a MARK, and only a short window stands for it."""
+
+        class Marks:
+            model_name = "marks"
+
+            def embed_documents(self, texts):
+                return [
+                    [1.0 if "MARK" in t and len(t) < 600 else 0.0, 1.0] for t in texts
+                ]
+
+            def embed_query(self, text):
+                return [1.0, 0.0]
+
+        (tmp_path / "doc.md").write_text(self.LONG + "the MARK is here\n" + self.LONG)
+        (tmp_path / "code.py").write_text("def f():\n")
+        index = Index(
+            scan=Scan(parsers=[LineParser(), DocParser()]),
+            embedder=Marks(),
+            vector_store=store,
+            windowed=lambda chunk: chunk.language == "markdown",
+        )
+        index.refresh(tmp_path)
+        (first, second) = store.search([1.0, 0.0], limit=2)
+        assert first.chunk.language == "markdown"
+        assert round(first.score, 3) == 0.707
+        assert second.score == 0.0
+
+    def test_no_chunk_gets_windows_unless_the_caller_names_its_kind(
+        self, embedder, store, tmp_path: Path
+    ) -> None:
+        self._index(embedder, store, tmp_path).refresh(tmp_path)
+        assert len(embedder.seen) == 2
+
+    def test_a_file_is_written_once_its_windows_are_stored(
+        self, embedder, store, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A row that stood on a window with no vector would score on less."""
+        import ish.application.index as index_module
+
+        monkeypatch.setattr(index_module, "EMBED_BATCH", 2)
+        written: list[int] = []
+        real = store.set_file
+
+        def watch(path, stamp, chunks, windows=None):
+            held = [d for ds in (windows or {}).values() for d in ds]
+            written.append(len(store.missing_vectors(held)))
+            real(path, stamp, chunks, windows)
+
+        store.set_file = watch
+        index = self._index(
+            embedder, store, tmp_path, lambda chunk: chunk.language == "markdown"
+        )
+        index.refresh(tmp_path)
+        assert written and set(written) == {0}
 
 
 class TestChunkingStamp:

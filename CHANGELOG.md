@@ -25,6 +25,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   The JSON of `ask` lists the quotes of each citation and the
   unconfirmed claims. `check_claims`, `check_model`, and `repair_turns`
   set the check, and `check.md` is its instruction.
+- `doc_windows` embeds each window of a few lines of a long document
+  section as one more vector of it, so a search finds one sentence of a
+  long section. A section scores the best of its own vector and its
+  windows. Off by default. Turning it on reads every file again.
 - With `ask_turns` of 2 or more, the model searches against its first draft
   before it answers, and puts each disagreement in the gaps. `challenge`
   turns it off.

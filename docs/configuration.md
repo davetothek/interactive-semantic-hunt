@@ -149,6 +149,31 @@ a wider window is worth its re-index only when the table moves. The
 `llama.cpp` backend takes the window the same way. The `st` backend reads
 it from the model card, so there only the cap follows.
 
+## Find one sentence of a long section
+
+One vector stands for one chunk, and an embedding model averages what the
+chunk says. A long section of a specification says many things, so its
+vector stands for the topic of the section, not for one of its sentences.
+`doc_windows` embeds each window of a few lines of a long document section,
+about 400 characters with the heading path in front, as one more vector of
+that section. A search gives a section the best score of its own vector and
+its windows, and a result and an answer still read the whole section:
+
+```toml
+doc_windows = true
+```
+
+Measured on 10 questions over three files of a private specification tree:
+top-1 for questions in plain words went from 3 of 7 to 5 of 7, and MRR from
+0.464 to 0.833. A question that quotes one sentence of a 4,000-character
+section found that section first, where it ranked 57th before.
+
+Code keeps one vector a chunk, because a definition says one thing. Windows
+stay off by default: on this repository, which is mostly code, they gave
+the documents more chances than the code and cost 8 points of top-1. A
+section shorter than 800 characters gets no windows. Turning the option on
+or off reads every file again, and embeds only the windows.
+
 ## Answer questions
 
 `ish ask` and the `ask` MCP tool send the text of the chunks a search

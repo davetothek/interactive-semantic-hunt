@@ -1037,3 +1037,88 @@ class TestBusyIndex:
 
         original = sqlite3.OperationalError("no such table: chunks")
         assert _busy(Path("x.db"), original) is original
+
+
+class TestWindows:
+    """A chunk with windows scores as the best of its vector and theirs.
+
+    A section of 4,075 characters scored 0.572 for a query that quoted
+    one of its sentences, below 56 other chunks. A window of the few
+    lines around that sentence scored above every chunk of the index.
+    """
+
+    def _two(self, store: SqliteVectorStore) -> None:
+        store.add_vectors(
+            {"whole": [1.0, 0.0], "near": [0.0, 1.0], "other": [0.6, 0.8]}
+        )
+        store.set_file(
+            Path("a.md"),
+            STAMP,
+            [(make_chunk("section", "a.md"), "whole")],
+            {"whole": ["near"]},
+        )
+        store.set_file(Path("b.md"), STAMP, [(make_chunk("other", "b.md"), "other")])
+
+    def test_a_window_lifts_its_chunk(self, store: SqliteVectorStore) -> None:
+        self._two(store)
+        (first, second) = store.search([0.0, 1.0], limit=2)
+        assert (first.chunk.symbol, round(first.score, 3)) == ("section", 1.0)
+        assert (second.chunk.symbol, round(second.score, 3)) == ("other", 0.8)
+
+    def test_a_chunk_comes_once_whatever_its_windows(
+        self, store: SqliteVectorStore
+    ) -> None:
+        self._two(store)
+        found = store.search([0.7, 0.7], limit=5)
+        assert sorted(m.chunk.symbol for m in found) == ["other", "section"]
+
+    def test_a_filter_sees_each_chunk_once(self, store: SqliteVectorStore) -> None:
+        self._two(store)
+        found = store.search([0.0, 1.0], limit=5, keep=lambda c: True)
+        assert [m.chunk.symbol for m in found] == ["section", "other"]
+
+    def test_the_windows_go_with_their_file(
+        self, store: SqliteVectorStore, db_path: Path
+    ) -> None:
+        self._two(store)
+        store.set_file(Path("a.md"), STAMP, [(make_chunk("section", "a.md"), "whole")])
+        assert self._windows(db_path) == 0
+        self._two(store)
+        store.remove_files([Path("a.md")])
+        assert self._windows(db_path) == 0
+
+    def test_a_sweep_keeps_the_vectors_of_windows(
+        self, store: SqliteVectorStore
+    ) -> None:
+        self._two(store)
+        store.add_vectors({"stale": [1.0, 1.0]})
+        assert store.prune_vectors() == 1
+        assert store.missing_vectors(["near"]) == set()
+
+    def test_an_index_from_before_windows_gets_the_table(self, db_path: Path) -> None:
+        """An index made before windows keeps its vectors and gains the table."""
+        first = SqliteVectorStore(db_path, model_id="model-a")
+        first.add_vectors({"h1": [1.0, 0.0]})
+        first.set_file(Path("a.py"), STAMP, [(make_chunk("f"), "h1")])
+        first.close()
+        db = sqlite3.connect(db_path)
+        db.execute("DROP TABLE windows")
+        db.commit()
+        db.close()
+        again = SqliteVectorStore(db_path, model_id="model-a")
+        try:
+            assert [m.chunk.symbol for m in again.search([1.0, 0.0])] == ["f"]
+            again.set_file(
+                Path("b.md"), STAMP, [(make_chunk("g", "b.md"), "h1")], {"h1": ["h1"]}
+            )
+        finally:
+            again.close()
+        assert self._windows(db_path) == 1
+
+    @staticmethod
+    def _windows(db_path: Path) -> int:
+        db = sqlite3.connect(db_path)
+        try:
+            return int(db.execute("SELECT COUNT(*) FROM windows").fetchone()[0])
+        finally:
+            db.close()

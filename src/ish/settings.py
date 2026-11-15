@@ -261,6 +261,16 @@ class Settings:
             metavar="N",
         ),
     )
+    doc_windows: bool = field(
+        default=False,
+        metadata=_opt(
+            INDEXED,
+            "Embed each window of a few lines of a long document section as "
+            "one more vector of it, so a search finds one sentence of a long "
+            "section. For a tree of specifications. Costs more vectors.",
+            action="boolean_optional",
+        ),
+    )
     languages: tuple[str, ...] = field(
         default=(),
         metadata=_opt(

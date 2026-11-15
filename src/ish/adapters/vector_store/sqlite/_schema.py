@@ -65,6 +65,19 @@ END;
 
 """
 
+# The windows of a chunk: more vectors of it, one for each few lines of a
+# long section of a document. An index made before the table existed
+# gets it when it opens, and holds no window until its files are read
+# again.
+WINDOWS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS main.windows (
+    chunk_id     INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+    content_hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS main.windows_by_chunk ON windows(chunk_id);
+CREATE INDEX IF NOT EXISTS main.windows_by_hash ON windows(content_hash);
+"""
+
 # The vectors, keyed by the text they stand for and the model that made
 # them. The table lives in the shared store of the repository, or in the
 # index itself for a tree outside any repository.
