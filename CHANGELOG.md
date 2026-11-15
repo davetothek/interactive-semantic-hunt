@@ -35,6 +35,14 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   part as the model writes it. Turn the check off with
   `--no-check-claims` to stream.
 
+### Fixed
+
+- An AsciiDoc include that selects lines, such as `include::regs.adoc[lines=2..7]`
+  or `lines="1,3..5"`, brings those lines alone, as Asciidoctor does. It
+  brought the whole file, so a section that names 40 registers by their
+  lines held 40 copies of the register file. A selection by lines wins over
+  one by tags. The next refresh reads every file again.
+
 ## 0.10.1 - 2026-11-14
 
 ### Added

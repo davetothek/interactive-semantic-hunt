@@ -13,8 +13,9 @@ runs from its heading to the next and its line numbers stay true.
 
 Asciidoctor does more than this. Here an attribute is set when it is
 defined and read when an include names it, a tag selects the lines
-between ``tag::name[]`` and ``end::name[]``, and a path is read relative
-to the file that holds the include. An included file shows its text but
+between ``tag::name[]`` and ``end::name[]``, a range such as
+``lines=2..7`` selects those lines of the file, and a path is read
+relative to the file that holds the include. An included file shows its text but
 not its attribute definitions or comments, so a file of 64,000
 definitions adds attributes and no lines. Conditional directives stay as
 text. A file that cannot be read leaves its include as written.
@@ -35,6 +36,21 @@ _ATTRIBUTE = re.compile(r"^:(!?)([\w][\w-]*)(!?):(?:\s+(.*?))?\s*$")
 _INCLUDE = re.compile(r"^include::([^\[]+)\[([^\]]*)\]\s*$")
 _REFERENCE = re.compile(r"\{([\w][\w-]*)\}")
 _TAG = re.compile(r"(?:tag|end)::([^\[]+)\[\]")
+# One option of an include: a name, =, and a value, quoted or bare. A
+# quoted value may hold a comma, as in lines="1,3..5".
+_OPTION = re.compile(r'\s*([\w-]+)\s*=\s*("[^"]*"|[^,]*)')
+
+
+@dataclass(frozen=True)
+class _Selection:
+    """Hold what an include selects of a file: line ranges, tags, or the whole file.
+
+    A range runs from its first line to its last, counted from 1, and a
+    last line of None runs to the end of the file.
+    """
+
+    lines: tuple[tuple[int, int | None], ...] = ()
+    tags: tuple[str, ...] = ()
 
 
 @dataclass
@@ -97,12 +113,13 @@ class Expander:
         lines = self._read(file, context)
         if lines is None:
             return line
-        tags = _tags(options)
-        if not tags and self._apply_cached(file, lines, context):
+        selection = _selection(options)
+        whole = not (selection.lines or selection.tags)
+        if whole and self._apply_cached(file, lines, context):
             return ""
         context.reading.append(file)
         try:
-            chosen = _select(lines, tags)
+            chosen = _select(lines, selection)
             text = "".join(self._line(file, raw, context, depth + 1) for raw in chosen)
         finally:
             context.reading.pop()
@@ -209,18 +226,62 @@ def _definition_reads(lines: list[str]) -> frozenset[str] | None:
     return frozenset(reads)
 
 
-def _tags(options: str) -> list[str]:
-    """Return the tags an include selects: ``tag=a`` or ``tags=a;b``."""
-    for option in options.split(","):
-        key, _, value = option.strip().partition("=")
-        if key.strip() in ("tag", "tags"):
-            names = re.split(r"[;,]", value.strip().strip('"'))
-            return [n.strip() for n in names if n.strip() and not n.startswith("!")]
-    return []
+def _selection(options: str) -> _Selection:
+    """Return what an include selects: ``lines=2..7``, ``tag=a``, or ``tags=a;b``.
+
+    Read ``lines`` first, as Asciidoctor does when an include names both.
+    A ``lines`` value with no valid range selects nothing by number.
+    """
+    found = {
+        name.strip(): value.strip().strip('"')
+        for name, value in _OPTION.findall(options)
+    }
+    ranges = _ranges(found.get("lines", ""))
+    if ranges:
+        return _Selection(lines=ranges)
+    for key in ("tag", "tags"):
+        if key in found:
+            names = (n.strip() for n in re.split(r"[;,]", found[key]))
+            return _Selection(
+                tags=tuple(n for n in names if n and not n.startswith("!"))
+            )
+    return _Selection()
 
 
-def _select(lines: list[str], tags: list[str]) -> list[str]:
-    """Keep the lines inside the named tags, or every line but tag markers."""
+def _ranges(value: str) -> tuple[tuple[int, int | None], ...]:
+    """Return the line ranges of a ``lines`` value, without one that is not valid.
+
+    A range is ``a..b``, or ``a`` for one line. ``a..-1`` and ``a..`` run
+    to the end of the file. Ranges part on ``;`` or ``,``.
+    """
+    ranges: list[tuple[int, int | None]] = []
+    for part in re.split(r"[;,]", value):
+        first, dots, last = part.strip().partition("..")
+        if not first.isdigit() or int(first) < 1:
+            continue
+        if not dots:
+            ranges.append((int(first), int(first)))
+        elif last in ("", "-1"):
+            ranges.append((int(first), None))
+        elif last.isdigit() and int(last) >= int(first):
+            ranges.append((int(first), int(last)))
+    return tuple(ranges)
+
+
+def _select(lines: list[str], selection: _Selection) -> list[str]:
+    """Keep the lines the selection names, or every line, and never a tag marker."""
+    if selection.lines:
+        last_line = len(lines)
+        return [
+            line
+            for number, line in enumerate(lines, 1)
+            if not _TAG.search(line)
+            and any(
+                first <= number <= (last if last is not None else last_line)
+                for first, last in selection.lines
+            )
+        ]
+    tags = set(selection.tags)
     if not tags:
         return [line for line in lines if not _TAG.search(line)]
     chosen: list[str] = []
@@ -234,6 +295,6 @@ def _select(lines: list[str], tags: list[str]) -> list[str]:
             else:
                 inside.discard(name)
             continue
-        if inside & set(tags):
+        if inside & tags:
             chosen.append(line)
     return chosen
