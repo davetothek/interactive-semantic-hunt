@@ -9,7 +9,12 @@ import pytest
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded, claude_cli
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.adapters.language_model.claude_cli import ClaudeCliLanguageModel, command
-from ish.application.ports.language_model import LanguageModelError, Source
+from ish.application.ports.language_model import (
+    Claim,
+    LanguageModelError,
+    Source,
+    Verdicts,
+)
 
 PROMPTS = load_prompts()
 
@@ -213,6 +218,41 @@ class TestStep:
         )
         assert call["input"] == _grounded.step_prompt("q", SOURCES, [], 2)
         assert reply.searches == ("where is it handled",)
+
+    def test_step_sends_the_notes_of_ish(self, runner) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"covered": False, "passages": [], "search": []},
+            }
+        )
+        model = ClaudeCliLanguageModel("haiku", timeout=5)
+        model.step("q", SOURCES, [], 0, notes=("Fix the claim.",))
+        assert runner.calls[0]["input"] == _grounded.step_prompt(
+            "q", SOURCES, [], 0, ("Fix the claim.",)
+        )
+
+
+class TestCheck:
+    def test_check_runs_the_check_prompt_and_schema(self, runner) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {
+                    "verdicts": [{"id": "1", "verdict": "unsupported"}]
+                },
+                "usage": {"input_tokens": 50, "output_tokens": 4},
+                "total_cost_usd": 0.003,
+            }
+        )
+        claims = [Claim("1", "It reads a queue.", ("It starts at boot.",))]
+        verdicts = ClaudeCliLanguageModel("haiku", timeout=5).check(claims)
+        call = runner.calls[0]
+        assert call["args"] == command(
+            "/usr/bin/claude", "haiku", PROMPTS.check, _grounded.CHECK_SCHEMA
+        )
+        assert call["input"] == _grounded.check_prompt(claims)
+        assert verdicts == Verdicts(("unsupported",), 50, 4, 0.003)
 
 
 class TestQuery:

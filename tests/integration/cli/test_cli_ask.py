@@ -7,9 +7,12 @@ import pytest
 
 from ish import bootstrap
 from ish.application.ports.language_model import (
+    STATED,
     LanguageModelError,
     Passage,
+    Quote,
     Reply,
+    Verdicts,
 )
 from ish.interfaces.cli.main import main
 
@@ -33,6 +36,7 @@ class FakeModel:
         self.covered = covered
         self.questions: list[str] = []
         self.queries: list[tuple[str, str]] = []
+        self.checked: list[str] = []
 
     def query(self, question, history):
         from ish.application.ports.language_model import Query
@@ -45,11 +49,24 @@ class FakeModel:
         watchdog = next(s.id for s in sources if "watchdog" in s.text)
         return Reply(
             passages=(
-                Passage("The watchdog resets the board", (watchdog,)),
+                Passage(
+                    "The watchdog resets the board",
+                    (watchdog,),
+                    (Quote(watchdog, WATCHDOG),),
+                ),
                 Passage("."),
             ),
             covered=self.covered,
         )
+
+    def check(self, claims):
+        """Find each claim stated, and note which claims a check read."""
+        self.checked += [claim.text for claim in claims]
+        return Verdicts(tuple(STATED for _ in claims))
+
+
+# The sentence of docs/boot.md that the fake answers quote.
+WATCHDOG = "The watchdog resets the board."
 
 
 @pytest.fixture()
@@ -243,7 +260,10 @@ class TestProgressStaysOffStdout:
         _model(monkeypatch, FakeModel())
         assert main(["--ask", "what does the watchdog do", str(project), *FLAGS]) == 0
         assert shown[0] == "Searching"
-        assert shown[-1] == "fake-model writing the answer"
+        assert shown[-2:] == [
+            "fake-model writing the answer",
+            "fake-model checking the claims against their sources",
+        ]
         assert stopped == [True]
         assert capsys.readouterr().out.startswith("# what does the watchdog do")
 
@@ -348,7 +368,12 @@ class TestFollowUpSearchesStand:
 
         monkeypatch.setattr(cli, "Ticker", Recorder)
         _model(monkeypatch, Agent())
-        assert main(["--ask", "q", str(project), *FLAGS, "--ask-turns", "2"]) == 0
+        # The test is about the searches a model asks for. The check of the
+        # claims and the challenge each add turns of their own.
+        alone = ["--no-check-claims", "--no-challenge"]
+        assert (
+            main(["--ask", "q", str(project), *FLAGS, *alone, "--ask-turns", "2"]) == 0
+        )
         assert notes == ["Searching again: the reset command"]
 
 
@@ -413,10 +438,16 @@ class StreamingModel(FakeModel):
 
         self.streamed = on_block is not None
         watchdog = next(s.id for s in sources if "watchdog" in s.text)
+        quoted = (Quote(watchdog, WATCHDOG),)
         blocks = (
-            Block("summary", passages=(Passage("It resets the board.", (watchdog,)),)),
             Block(
-                "prose", heading="When", passages=(Passage("At boot.", (watchdog,)),)
+                "summary",
+                passages=(Passage("It resets the board.", (watchdog,), quoted),),
+            ),
+            Block(
+                "prose",
+                heading="When",
+                passages=(Passage("At boot.", (watchdog,), quoted),),
             ),
         )
         for block in blocks if on_block else ():
@@ -429,9 +460,24 @@ class StreamingModel(FakeModel):
 
 
 class TestStreamedAnswer:
-    """A terminal sees each block as it is written, and the text a pipe gets."""
+    """A terminal sees each block as it is written, and the text a pipe gets.
 
-    ARGS = ["--ask", "what does the watchdog do"]
+    A block streams only when no check of the claims runs, because a block
+    on the screen before the check can hold a claim that fails it.
+    """
+
+    ARGS = ["--ask", "what does the watchdog do", "--no-check-claims"]
+
+    def test_a_checked_answer_does_not_stream(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        model = StreamingModel()
+        _model(monkeypatch, model)
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        assert main(["--ask", "what does the watchdog do", str(project), *FLAGS]) == 0
+        assert model.streamed is False
+        assert model.checked == ["It resets the board.", "At boot."]
+        assert "**Short answer:** It resets the board. [^1]" in capsys.readouterr().out
 
     def test_a_terminal_gets_what_a_pipe_gets(
         self, project: Path, monkeypatch, capsys

@@ -317,7 +317,10 @@ class TestAsk:
 
         monkeypatch.setattr(program, "Ticker", Recorder)
         _model(monkeypatch, Agent())
-        assert run(["remote", "ask", QUESTION, "--ask-turns", "2"]) == 0
+        # The test is about the searches a model asks for. The check of the
+        # claims and the challenge each add turns of their own.
+        alone = ["--no-check-claims", "--no-challenge"]
+        assert run(["remote", "ask", QUESTION, *alone, "--ask-turns", "2"]) == 0
         assert [arguments["query"] for _name, arguments in served.calls] == [
             QUESTION,
             "the sky",

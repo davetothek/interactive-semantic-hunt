@@ -249,8 +249,9 @@ whole tree of a few thousand files fits in tens of megabytes.
 The instructions a language model receives are text files that ship with
 ish: `answer.md` for an answer, `answer_cited.md` for the `anthropic`
 answer with native citations, `step.md` for a turn that may ask for
-searches, `select.md` for the rerank, and `brief.md`, which `--brief` adds
-to the instruction that writes the answer. Copy the ones to change into a
+searches, `select.md` for the rerank, `check.md` for the check of the
+claims, and `brief.md`, which `--brief` adds to the instruction that
+writes the answer. Copy the ones to change into a
 directory, edit them, and point `prompt_dir` at it:
 
 ```toml

@@ -4,7 +4,8 @@ Each instruction is one file in the ``prompts`` directory beside this
 module: ``answer.md`` for an answer in JSON, ``answer_cited.md`` for an
 answer with native citations, ``step.md`` for a turn that may ask for
 searches, ``select.md`` for a rerank, ``query.md`` for the search query
-of a question in a chat, and ``brief.md``, which a brief
+of a question in a chat, ``check.md`` for the check of the claims of an
+answer, and ``brief.md``, which a brief
 answer adds to the instruction that writes it. A directory that an operator
 names holds files of the same names, and each one it holds replaces the
 default. A file it does not hold keeps the default.
@@ -32,11 +33,15 @@ from importlib import resources
 from pathlib import Path
 
 from ish.adapters.language_model._grounded import MAX_GAPS
-from ish.application.ports.language_model import SEARCHES_A_TURN, LanguageModelError
+from ish.application.ports.language_model import (
+    MIN_QUOTE_WORDS,
+    SEARCHES_A_TURN,
+    LanguageModelError,
+)
 
 log = logging.getLogger(__name__)
 
-NAMES = ("answer", "answer_cited", "step", "select", "query", "brief")
+NAMES = ("answer", "answer_cited", "step", "select", "query", "check", "brief")
 
 # The reply word a backend with native citations gives when the
 # documents do not answer. It cannot reply in JSON beside its citations.
@@ -59,6 +64,7 @@ class Prompts:
     step: str
     select: str
     query: str = ""
+    check: str = ""
     brief: str = ""
 
     def briefly(self) -> "Prompts":
@@ -97,6 +103,7 @@ def load(
         "max_gaps": MAX_GAPS,
         "not_covered": NOT_COVERED,
         "searches_a_turn": SEARCHES_A_TURN,
+        "min_quote_words": MIN_QUOTE_WORDS,
         **values,
     }
     words = {k: _word(v) for k, v in filled.items()}

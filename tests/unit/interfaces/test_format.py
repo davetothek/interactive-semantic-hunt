@@ -836,3 +836,115 @@ class TestFormatChat:
         assert "- **AE**: Auto Exposure [1]" in text
         place = f"{a.path.name}{a.location.render()}"
         assert f"## Sources\n\n1. [{place}](file:///x)\n   " in text
+
+
+class TestCheckedClaims:
+    """A reader tells a fact from an inference, and sees what failed the check."""
+
+    @staticmethod
+    def _chunk() -> Chunk:
+        return Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 3, 9)
+
+    def _answer(self, *, covered: bool = True):
+        from ish.application.answer import (
+            UNCONFIRMED,
+            Answer,
+            AnswerBlock,
+            AnswerPart,
+            AnswerRow,
+        )
+
+        a = self._chunk()
+        stated = AnswerPart("DMA sets the window.", (a,), "stated", "", ((a, "sets"),))
+        implied = AnswerPart("The host can invert it.", (a,), "implied")
+        failed = AnswerPart(
+            "DMA reads a queue.", (a,), UNCONFIRMED, "the quoted words do not state it"
+        )
+        return Answer(
+            parts=(stated, implied) if covered else (),
+            covered=covered,
+            sources=(a,),
+            blocks=(
+                AnswerBlock("prose", parts=(stated, implied)),
+                AnswerBlock("steps", parts=(implied,)),
+                AnswerBlock(
+                    "table",
+                    columns=("R",),
+                    rows=(AnswerRow(("WDT_EN",), (a,), "implied", ((a, "sets"),)),),
+                ),
+            )
+            if covered
+            else (),
+            unconfirmed=(failed,),
+        )
+
+    def test_an_inference_is_marked_where_it_stands(self) -> None:
+        from ish.interfaces.format import format_answer
+
+        text = format_answer(self._answer(), "q", lambda c: "x")
+        assert (
+            "DMA sets the window. [^1] Inference: The host can invert it. [^1]" in text
+        )
+        assert "1. Inference: The host can invert it. [^1]" in text
+        assert "| WDT_EN | [^1] (inference) |" in text
+
+    def test_the_unconfirmed_claims_stand_apart_with_their_reasons(self) -> None:
+        from ish.interfaces.format import UNCONFIRMED_HEADING, format_answer
+
+        text = format_answer(self._answer(), "q", lambda c: "x")
+        assert f"> **{UNCONFIRMED_HEADING}**" in text
+        assert (
+            "> - DMA reads a queue. (the quoted words do not state it.) "
+            "Cites a.adoc:3-9." in text
+        )
+        assert text.index("Unconfirmed") < text.index("## Sources")
+
+    def test_an_answer_with_no_claim_left_still_shows_what_failed(self) -> None:
+        from ish.interfaces.format import format_answer, format_chat
+
+        text = format_answer(self._answer(covered=False), "q", lambda c: "x")
+        assert "DMA reads a queue." in text
+        assert "## Closest sources" in text
+        chat, cited = format_chat(
+            self._answer(covered=False), "q", lambda c: "x", brief=True
+        )
+        assert chat.startswith("The documents do not answer this.\n\n> **Unconfirmed")
+        assert cited == []
+
+    def test_a_chat_with_nothing_unconfirmed_says_one_line(self) -> None:
+        from dataclasses import replace
+
+        from ish.interfaces.format import format_chat
+
+        answer = replace(self._answer(covered=False), unconfirmed=())
+        chat, _ = format_chat(answer, "q", lambda c: "x", brief=True)
+        assert chat == "The documents do not answer this."
+
+    def test_the_data_marks_an_inferred_row_and_step(self) -> None:
+        from ish.interfaces.format import layout_data
+
+        data, _ = layout_data(self._answer())
+        assert data[1]["items"] == ["Inference: The host can invert it.[1]"]
+        assert data[2]["rows"][0]["basis"] == "implied"
+        assert data[2]["rows"][0]["cites"] == "[1] (inference)"
+
+    def test_each_cited_chunk_lists_the_words_it_gave(self) -> None:
+        from ish.interfaces.format import quotes_by_chunk
+
+        assert quotes_by_chunk(self._answer()) == {self._chunk(): ["sets"]}
+
+    def test_the_usage_names_the_check(self) -> None:
+        from dataclasses import replace
+
+        from ish.interfaces.format import answer_usage, format_usage
+
+        answer = replace(
+            self._answer(),
+            check_model="judge",
+            check_input_tokens=1200,
+            check_output_tokens=40,
+            claims_checked=6,
+            timings=(("checking", 1.5),),
+        )
+        table = format_usage(answer_usage(answer))
+        assert "check  1.5 s  judge, 6 claims, 1 unconfirmed  1,200   40" in table

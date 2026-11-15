@@ -15,7 +15,13 @@ from ish.adapters.language_model.anthropic import (
     NOT_COVERED,
     AnthropicLanguageModel,
 )
-from ish.application.ports.language_model import LanguageModelError, Source
+from ish.application.ports.language_model import (
+    Claim,
+    LanguageModelError,
+    Quote,
+    Source,
+    Verdicts,
+)
 
 PROMPTS = load_prompts()
 
@@ -154,6 +160,15 @@ class TestReply:
         ]
         assert (reply.input_tokens, reply.output_tokens) == (900, 40)
 
+    def test_each_citation_gives_the_words_it_quotes(self, recorder) -> None:
+        """A native citation quotes its document, so a check can find the words."""
+        cited = recorder.reply["content"][2]["citations"]
+        cited[0]["cited_text"] = "It starts at boot."
+        cited[1]["cited_text"] = "  "
+        reply = _model().answer("q", SOURCES)
+        assert reply.passages[1].quotes == (Quote("1", "It starts at boot."),)
+        assert reply.passages[2].quotes == ()
+
     def test_not_covered_is_read_from_the_reply_word(self, recorder) -> None:
         recorder.reply = {
             "stop_reason": "end_turn",
@@ -279,6 +294,37 @@ class TestStep:
         )
         assert reply.covered and reply.passages[0].source_ids == ("1",)
         assert (reply.input_tokens, reply.output_tokens) == (90, 7)
+
+    def test_step_sends_the_notes_of_ish(self, recorder) -> None:
+        recorder.reply = {
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": '{"covered": false, "search": []}'}],
+        }
+        _model().step("q", SOURCES, [], 0, notes=("Fix the claim.",))
+        assert recorder.body["messages"][0]["content"] == _grounded.step_prompt(
+            "q", SOURCES, [], 0, ("Fix the claim.",)
+        )
+
+
+class TestCheck:
+    def test_check_fixes_the_reply_to_the_check_schema(self, recorder) -> None:
+        recorder.reply = {
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 60, "output_tokens": 6},
+            "content": [
+                {
+                    "type": "text",
+                    "text": '{"verdicts": [{"id": "1", "verdict": "stated"}]}',
+                }
+            ],
+        }
+        claims = [Claim("1", "It starts at boot.", ("It starts at boot.",))]
+        verdicts = _model().check(claims)
+        assert recorder.body["system"] == PROMPTS.check
+        schema = recorder.body["output_config"]["format"]["schema"]
+        assert schema == _grounded.CHECK_SCHEMA
+        assert recorder.body["messages"][0]["content"] == _grounded.check_prompt(claims)
+        assert verdicts == Verdicts(("stated",), 60, 6)
 
 
 class TestQuery:

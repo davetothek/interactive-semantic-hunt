@@ -33,6 +33,7 @@ from ish.interfaces.format import (
     format_brief,
     layout_data,
     number_citations,
+    quotes_by_chunk,
     render,
     symbol_of,
     terms_data,
@@ -63,8 +64,8 @@ says. Follow these rules before you state a fact from a result.
 the text of a chunk before you state what it says. Call search_code with \
 format "text", or open the file.
 - A heading, a symbol name, or a short comment is not evidence of what the \
-code does. A field that names a histogram does not show that the code \
-reads a histogram.
+code does. A field that names a queue does not show that the code \
+reads the queue.
 - A source that is not in the top results can still be in the tree. Before \
 you report that the tree does not say a thing, search again in other \
 words or with a type filter.
@@ -626,7 +627,12 @@ def ask_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
             "models, their tokens, and the seconds of each stage in "
             "'timings'. When the "
             "documents do not answer the question, 'covered' is "
-            "false and 'sources' lists the closest chunks. Use it "
+            "false and 'sources' lists the closest chunks. Each claim "
+            "rests on quoted words of a source, and each citation lists "
+            "them in 'quotes'. A claim that starts with 'Inference:' "
+            "follows from its sources but no source states it. "
+            "'unconfirmed' lists the claims that failed the check: they "
+            "are no fact, so do not repeat them as one. Use it "
             "for questions such as 'how is the watchdog configured'."
         ),
         schema={
@@ -801,13 +807,27 @@ def answer_data(
         text, cited = number_citations(answer)
         layout, _ = layout_data(answer)
         terms, cited = terms_data(answer, cited)
+        quoted = quotes_by_chunk(answer)
         reply["answer"] = text
         reply["layout"] = layout
         reply["terms"] = terms
-        reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
+        reply["citations"] = [
+            described(c, n) | {"quotes": quoted.get(c, [])}
+            for n, c in enumerate(cited, 1)
+        ]
     else:
         reply["answer"] = NOT_COVERED_TEXT
         reply["sources"] = [described(c) for c in answer.sources]
+    # The claims the model wrote that failed the check. They are no part
+    # of the answer, and a client shows them apart, if at all.
+    reply["unconfirmed"] = [
+        {
+            "text": part.text.strip(),
+            "reason": part.note,
+            "sources": [described(c) for c in part.cites],
+        }
+        for part in answer.unconfirmed
+    ]
     # The text `ish --ask` prints, so a client in a terminal shows
     # the answer the way a local run does.
     reply["markdown"] = format_answer(

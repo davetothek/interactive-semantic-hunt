@@ -57,6 +57,30 @@ log = logging.getLogger(__name__)
 ASK_LIMIT = 10
 
 
+def checks(
+    settings: Settings,
+    model: LanguageModel,
+    reranker: LanguageModel | None,
+    brief: bool,
+) -> dict[str, object]:
+    """Return how an answer checks its claims, as keywords of ``AnswerQuestion``.
+
+    A brief answer cites no source, so it has no claim to check, and it
+    writes no draft to search against. The rerank model checks only when
+    the settings ask for it and one is set.
+    """
+    if brief:
+        return {}
+    found: dict[str, object] = {"challenge": settings.challenge}
+    if not settings.check_claims:
+        return found
+    cheap = settings.check_model == "rerank" and reranker is not None
+    return found | {
+        "judge": reranker if cheap else model,
+        "repairs": max(settings.repair_turns, 0),
+    }
+
+
 class Ish:
     """Search one tree by meaning.
 
@@ -363,6 +387,7 @@ class Ish:
             kind_of=self.kind_of,
             on_block=on_block,
             **({"on_step": on_step} if on_step else {}),
+            **checks(self.settings, self._models[brief], self._reranker, brief),
         )
         return use_case.answer(question)
 

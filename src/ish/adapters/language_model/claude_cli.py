@@ -24,12 +24,14 @@ from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
+    Claim,
     LanguageModelError,
     OnBlock,
     Query,
     Reply,
     Selection,
     Source,
+    Verdicts,
 )
 
 EXECUTABLE = "claude"
@@ -180,18 +182,31 @@ class ClaudeCliLanguageModel:
         searched: Sequence[str],
         turns_left: int,
         on_block: OnBlock | None = None,
+        notes: Sequence[str] = (),
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
         structured, read, wrote, cost = self._run(
             self._prompts.step,
             _grounded.STEP_SCHEMA,
-            _grounded.step_prompt(question, sources, searched, turns_left),
+            _grounded.step_prompt(question, sources, searched, turns_left, notes),
             on_block,
         )
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
         )
         return replace(reply, cost_usd=cost)
+
+    def check(self, claims: Sequence[Claim]) -> Verdicts:
+        """Judge each claim against its quotes, in the JSON the schema fixes."""
+        structured, read, wrote, cost = self._run(
+            self._prompts.check,
+            _grounded.CHECK_SCHEMA,
+            _grounded.check_prompt(claims),
+        )
+        verdicts = _grounded.parse_verdicts(
+            json.dumps(structured), f"claude {self.model_name}", claims, read, wrote
+        )
+        return replace(verdicts, cost_usd=cost)
 
     def select(
         self, question: str, candidates: Sequence[Source], limit: int

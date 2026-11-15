@@ -446,6 +446,48 @@ class Settings:
             metavar="N",
         ),
     )
+    check_claims: bool = field(
+        default=True,
+        metadata=_opt(
+            ANSWERS,
+            "Check each claim of an answer: find its quote in the source, and "
+            "let a model say whether the quote states it. A claim that fails "
+            "is set apart as unconfirmed.",
+            scope="query",
+            action="boolean_optional",
+        ),
+    )
+    check_model: str = field(
+        default="answer",
+        metadata=_opt(
+            ANSWERS,
+            "Model that checks the claims: answer, the model that wrote "
+            "them, or rerank, the cheaper rerank model when one is set.",
+            scope="query",
+            choices=["answer", "rerank"],
+        ),
+    )
+    repair_turns: int = field(
+        default=1,
+        metadata=_opt(
+            ANSWERS,
+            "Turns the model gets to fix the claims that fail the check. "
+            "0 sets them apart at once.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    challenge: bool = field(
+        default=True,
+        metadata=_opt(
+            ANSWERS,
+            "With ask_turns of 2 or more, search for evidence against the "
+            "first draft of an answer before the model answers.",
+            scope="query",
+            action="boolean_optional",
+        ),
+    )
     prompt_dir: str = field(
         default="",
         metadata=_opt(

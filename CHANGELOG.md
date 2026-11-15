@@ -17,6 +17,23 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   handshake, on stdio, over HTTP, and through `ish remote mcp`. The agent
   reads a chunk before it states what the chunk says, and does not report a
   gap from the top results alone.
+- Each claim of an answer quotes the words of a source it rests on. ish
+  finds the words in the source, then a model says whether they state
+  the claim, only imply it, or do not support it. An implied claim starts
+  with "Inference:". A claim that fails gets one turn of the model to fix
+  it, and what still fails shows apart as unconfirmed, with the reason.
+  The JSON of `ask` lists the quotes of each citation and the
+  unconfirmed claims. `check_claims`, `check_model`, and `repair_turns`
+  set the check, and `check.md` is its instruction.
+- With `ask_turns` of 2 or more, the model searches against its first draft
+  before it answers, and puts each disagreement in the gaps. `challenge`
+  turns it off.
+
+### Changed
+
+- A checked answer shows on a terminal when the check ends, not part by
+  part as the model writes it. Turn the check off with
+  `--no-check-claims` to stream.
 
 ## 0.10.1 - 2026-11-14
 

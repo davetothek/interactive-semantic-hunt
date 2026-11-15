@@ -7,6 +7,7 @@ import pytest
 from ish import bootstrap
 from ish.interfaces.mcp.remote import NO_PATH, RemoteTools
 from ish.interfaces.mcp.server import IshTools
+from ish.interfaces.python import remote as remote_api
 from ish.settings import Settings
 from tests.unit.interfaces.python.test_remote import (
     EXPOSURE,
@@ -17,6 +18,17 @@ from tests.unit.interfaces.python.test_remote import (
     _found,
     _settings,
 )
+
+
+@pytest.fixture(autouse=True)
+def unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer with no check of the claims and no challenge.
+
+    The tests of this module pin how an answer searches, reads, and
+    reports. The check and the challenge add turns of their own, and
+    ``tests/unit/interfaces/python/test_checks.py`` covers them.
+    """
+    monkeypatch.setattr(remote_api, "checks", lambda *args, **named: {})
 
 
 @pytest.fixture()

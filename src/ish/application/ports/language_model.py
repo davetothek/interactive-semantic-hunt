@@ -16,6 +16,19 @@ from typing import Protocol, runtime_checkable
 # has the rest dropped, so the instruction names this number.
 SEARCHES_A_TURN = 3
 
+# Words a quote holds at least. A quote of a name or two matches a
+# source and proves nothing about a claim, so the instruction names this
+# number and the check refuses a shorter quote.
+MIN_QUOTE_WORDS = 4
+
+# What a check found about one claim. A source writes a stated claim. An
+# implied claim follows from the sources only through a step they do not
+# write. No source supports an unsupported claim, so it is no fact.
+STATED = "stated"
+IMPLIED = "implied"
+UNSUPPORTED = "unsupported"
+VERDICTS = (STATED, IMPLIED, UNSUPPORTED)
+
 
 class LanguageModelError(Exception):
     """Report that a language model cannot be built or did not answer."""
@@ -37,6 +50,19 @@ class Source:
 
 
 @dataclass(frozen=True, slots=True)
+class Quote:
+    """Hold the words of a source that a part of an answer rests on.
+
+    Attributes:
+        source_id: Key of the source the words come from.
+        text: The words, as the source writes them.
+    """
+
+    source_id: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class Passage:
     """Hold one part of an answer and the sources that support it.
 
@@ -44,18 +70,28 @@ class Passage:
         text: The words of this part of the answer.
         source_ids: Keys of the sources this part cites. Empty for a part
             that cites nothing, such as a joining sentence.
+        quotes: The words of each cited source that this part rests on.
+        basis: What a check found: ``stated`` or ``implied``. Empty for a
+            part no check read.
     """
 
     text: str
     source_ids: tuple[str, ...] = ()
+    quotes: tuple[Quote, ...] = ()
+    basis: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class Row:
-    """Hold one row of a table in an answer, and the sources it rests on."""
+    """Hold one row of a table in an answer, and the sources it rests on.
+
+    *quotes* and *basis* mean what they mean for a ``Passage``.
+    """
 
     cells: tuple[str, ...]
     source_ids: tuple[str, ...] = ()
+    quotes: tuple[Quote, ...] = ()
+    basis: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +196,39 @@ class Query:
     cost_usd: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class Claim:
+    """Hold one claim of an answer for a check, with the words it rests on.
+
+    Attributes:
+        id: Key the check names the claim by. Unique within one call.
+        text: The claim, as the answer writes it.
+        quotes: The words of the sources that the claim rests on.
+    """
+
+    id: str
+    text: str
+    quotes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Verdicts:
+    """Hold what a check found about each claim, and what the check cost.
+
+    Attributes:
+        verdicts: One of ``VERDICTS`` for each claim, in the order given.
+        input_tokens: Tokens the model read.
+        output_tokens: Tokens the model wrote.
+        cost_usd: What the backend says the call cost, in US dollars, or 0
+            when it does not say.
+    """
+
+    verdicts: tuple[str, ...]
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+
+
 # Take one block of an answer as soon as the model has written it.
 OnBlock = Callable[[Block], None]
 
@@ -194,6 +263,7 @@ class LanguageModel(Protocol):
         searched: Sequence[str],
         turns_left: int,
         on_block: OnBlock | None = None,
+        notes: Sequence[str] = (),
     ) -> Reply:
         """Answer from *sources*, or ask for more searches first.
 
@@ -201,7 +271,18 @@ class LanguageModel(Protocol):
         results added to *sources* on the next call. *searched* holds the
         queries already run. With no turns left, answer, or say the
         sources do not cover the question. Give *on_block* each block as
-        ``answer`` does. Never answer from knowledge outside *sources*.
+        ``answer`` does. Give the model *notes* from ish beside the
+        question, such as the claims a check found unsupported. Never
+        answer from knowledge outside *sources*.
+        """
+        ...
+
+    def check(self, claims: Sequence[Claim]) -> Verdicts:
+        """Judge whether the quotes of each claim state it.
+
+        Read each claim against its own quotes alone, with no knowledge
+        from outside them. Return one verdict for each claim, in order.
+        Raise ``LanguageModelError`` when the model does not reply.
         """
         ...
 

@@ -13,7 +13,7 @@ from ish.interfaces.cli import run
 from ish.interfaces.mcp.server import AGENT_INSTRUCTIONS
 from ish.settings import MCP_TOKEN_ENV_VAR
 from tests.integration.cli.conftest import Served
-from tests.integration.cli.test_cli_ask import FakeModel, _model
+from tests.integration.cli.test_cli_ask import WATCHDOG, FakeModel, _model
 
 QUESTION = "what does the watchdog do"
 
@@ -83,6 +83,44 @@ class TestRemoteMcp:
         lines = results[1]["content"][0]["text"].splitlines()
         assert lines[0] == "[1.00] docs/boot.md:1-3  document  Watchdog"
         assert lines[1].startswith("    ")
+
+    def test_each_citation_gives_the_words_the_answer_rests_on(
+        self, served: Served, monkeypatch
+    ) -> None:
+        _model(monkeypatch, FakeModel())
+        code, results = _serve(
+            monkeypatch, ["remote", "mcp"], _call(1, "ask", {"question": QUESTION})
+        )
+        assert code == 0
+        answer = json.loads(results[1]["content"][0]["text"])
+        assert answer["citations"][0]["quotes"] == [WATCHDOG]
+        assert answer["unconfirmed"] == []
+        assert answer["claims_checked"] == 1
+
+    def test_a_claim_that_fails_the_check_comes_apart_with_its_reason(
+        self, served: Served, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import UNSUPPORTED, Verdicts
+
+        class Guesser(FakeModel):
+            def check(self, claims):
+                return Verdicts(tuple(UNSUPPORTED for _ in claims))
+
+            def step(self, *args, **named):
+                return self.answer(*args[:2])
+
+        _model(monkeypatch, Guesser())
+        code, results = _serve(
+            monkeypatch, ["remote", "mcp"], _call(1, "ask", {"question": QUESTION})
+        )
+        assert code == 0
+        answer = json.loads(results[1]["content"][0]["text"])
+        assert answer["covered"] is False
+        (failed,) = answer["unconfirmed"]
+        assert failed["text"] == "The watchdog resets the board"
+        assert failed["reason"] == "the quoted words do not state it"
+        assert failed["sources"][0]["path"] == "docs/boot.md"
+        assert "Unconfirmed" in answer["markdown"]
 
     def test_ish_remote_names_the_server(self, served: Served, monkeypatch) -> None:
         _model(monkeypatch, FakeModel())

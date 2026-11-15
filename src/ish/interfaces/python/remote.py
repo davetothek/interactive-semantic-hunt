@@ -27,7 +27,7 @@ from ish.application.glossary import Glossary
 from ish.application.ports.language_model import LanguageModel
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
-from ish.interfaces.python.api import ASK_LIMIT
+from ish.interfaces.python.api import ASK_LIMIT, checks
 from ish.settings import Settings
 
 if TYPE_CHECKING:
@@ -156,6 +156,7 @@ class RemoteIsh:
             kind_of=self.kind_of,
             on_block=on_block,
             **({"on_step": on_step} if on_step else {}),
+            **checks(self.settings, self._models[brief], self._reranker, brief),
         )
         answer = use_case.answer(question)
         # Keep the texts of what this answer read, which a next turn of a

@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerTerm
+from ish.application.ports.language_model import IMPLIED
 from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
 
@@ -15,6 +16,17 @@ EXCERPT_CHARS = 1_000
 
 # The indent of an excerpt line, so a reader tells it from a result line.
 EXCERPT_INDENT = "    "
+
+# What a part of an answer starts with when its sources imply it and do
+# not state it, so a reader tells a conclusion from a fact.
+INFERENCE = "Inference: "
+# The same mark on a row of a table, after the citations of the row.
+INFERENCE_ROW = " (inference)"
+
+# The heading of the claims that failed the check.
+UNCONFIRMED_HEADING = (
+    "Unconfirmed: no quoted source states these, so they are no part of the answer"
+)
 
 
 def display_path(path: Path, base: Path | None = None) -> Path:
@@ -177,7 +189,10 @@ def number_citations(
         # Keep the markers on the claim they cite: a part that ends a
         # paragraph ends in newlines, and the markers go before them.
         body = part.text.rstrip()
-        piece = f"{body}{marks}{part.text[len(body) :]}"
+        ending = part.text[len(body) :]
+        if part.basis == IMPLIED:
+            body = f"{INFERENCE}{body.lstrip()}"
+        piece = f"{body}{marks}{ending}"
         # A model may split sentences into parts with no space between
         # them. Add one, but never before punctuation that ends a clause.
         if (
@@ -246,8 +261,26 @@ def answer_text(
         for paragraph in text.split("\n\n"):
             if paragraph.strip():
                 lines += [_fill(paragraph), ""]
+    lines += unconfirmed_lines(answer)
     tail, cited = answer_tail(answer, numbers, link, base, kind_of, footnotes=footnotes)
     return "\n".join(lines + tail), cited
+
+
+def unconfirmed_lines(answer: Answer) -> list[str]:
+    """Return the claims that failed the check, each with its reason and sources.
+
+    Name each source by its place rather than by a number, because a claim
+    here is no part of the answer and its sources need not be.
+    """
+    if not answer.unconfirmed:
+        return []
+    lines = [f"> **{UNCONFIRMED_HEADING}**", ">"]
+    for part in answer.unconfirmed:
+        places = ", ".join(f"{c.path.name}{c.location.render()}" for c in part.cites)
+        cited = f" Cites {places}." if places else ""
+        text = f"{part.text.strip()} ({part.note}.){cited}"
+        lines += _fill(text, "> - ").replace("\n> - ", "\n>   ").split("\n")
+    return [*lines, ""]
 
 
 def answer_head(question: str) -> list[str]:
@@ -350,7 +383,8 @@ def format_chat(
     not cover says so in one line.
     """
     if not answer.covered:
-        return NOT_COVERED_TEXT.split(".")[0] + ".", []
+        lines = [NOT_COVERED_TEXT.split(".")[0] + ".", "", *unconfirmed_lines(answer)]
+        return "\n".join(lines).rstrip(), []
     if not brief:
         return answer_text(answer, question, link, kind_of=kind_of, footnotes=False)
     summary = next((b for b in answer.blocks if b.kind == "summary"), None)
@@ -374,6 +408,7 @@ _STAGES = (
     ("choosing", "rerank"),
     ("writing", "answer"),
     ("following", "follow-up"),
+    ("checking", "check"),
 )
 
 
@@ -392,6 +427,11 @@ def answer_usage(answer: Answer) -> dict[str, object]:
         "rerank_output_tokens": answer.rerank_output_tokens,
         "turns": answer.turns,
         "searches": list(answer.searches),
+        "check_model": answer.check_model,
+        "check_input_tokens": answer.check_input_tokens,
+        "check_output_tokens": answer.check_output_tokens,
+        "claims_checked": answer.claims_checked,
+        "unconfirmed": len(answer.unconfirmed),
         "timings": {stage: round(seconds, 3) for stage, seconds in answer.timings},
         "seconds": round(answer.seconds, 3),
         "cost_usd": round(answer.cost_usd, 6),
@@ -459,6 +499,16 @@ def _row(stage: str, usage: Mapping[str, object]) -> tuple[str, str, str]:
             f"{_count(usage.get('input_tokens')):,}",
             f"{_count(usage.get('output_tokens')):,}",
         )
+    if stage == "checking" and usage.get("check_model"):
+        failed = _count(usage.get("unconfirmed"))
+        claims = _count(usage.get("claims_checked"))
+        read = f", {claims} claims" if claims else ""
+        out = f", {failed} unconfirmed" if failed else ""
+        return (
+            f"{usage['check_model']}{read}{out}",
+            f"{_count(usage.get('check_input_tokens')):,}",
+            f"{_count(usage.get('check_output_tokens')):,}",
+        )
     if stage == "following":
         searches = usage.get("searches")
         count = len(searches) if isinstance(searches, list) else 0
@@ -495,14 +545,19 @@ def layout_data(answer: Answer) -> tuple[list[dict[str, object]], list[Chunk]]:
         entry: dict[str, object] = {"kind": block.kind, "heading": block.heading}
         if block.kind in ("steps", "gaps"):
             entry["items"] = [
-                f"{p.text.strip()}{_marks(p.cites, numbers)}" for p in block.parts
+                f"{_claimed(p)}{_marks(p.cites, numbers)}" for p in block.parts
             ]
         else:
             entry["text"] = _joined(block.parts, numbers)
         if block.kind == "table":
             entry["columns"] = list(block.columns)
             entry["rows"] = [
-                {"cells": list(r.cells), "cites": _marks(r.cites, numbers)}
+                {
+                    "cells": list(r.cells),
+                    "cites": _marks(r.cites, numbers)
+                    + (INFERENCE_ROW if r.basis == IMPLIED else ""),
+                }
+                | ({"basis": r.basis} if r.basis else {})
                 for r in block.rows
             ]
         data.append(entry)
@@ -580,7 +635,7 @@ def _render(
     if block.kind == "steps":
         for n, part in enumerate(block.parts, 1):
             marker = f"{n}. "
-            text = f"{marker}{part.text.strip()}{_marks(part.cites, numbers, mark)}"
+            text = f"{marker}{_claimed(part)}{_marks(part.cites, numbers, mark)}"
             lines.append(_fill(text, "", " " * len(marker)))
         return lines
     if block.kind == "table":
@@ -600,7 +655,12 @@ def _table(
     width = max([len(block.columns)] + [len(r.cells) for r in block.rows])
     head = [*block.columns, *[""] * (width - len(block.columns)), "Sources"]
     body = [
-        [*r.cells, *[""] * (width - len(r.cells)), _marks(r.cites, numbers, mark)]
+        [
+            *r.cells,
+            *[""] * (width - len(r.cells)),
+            _marks(r.cites, numbers, mark)
+            + (INFERENCE_ROW if r.basis == IMPLIED else ""),
+        ]
         for r in block.rows
     ]
     cells = [[_cell(c) for c in row] for row in [head, *body]]
@@ -615,6 +675,26 @@ def _table(
         if n == 0:
             lines.append("|" + "|".join("-" * (s + 2) for s in sizes) + "|")
     return lines
+
+
+def _claimed(part: AnswerPart) -> str:
+    """Return the text of *part*, marked as an inference when its sources imply it."""
+    text = part.text.strip()
+    return f"{INFERENCE}{text}" if part.basis == IMPLIED else text
+
+
+def quotes_by_chunk(answer: Answer) -> dict[Chunk, list[str]]:
+    """Return the words each cited chunk gave the answer, without repeats."""
+    found: dict[Chunk, list[str]] = {}
+    parts = [p for b in answer.blocks for p in b.parts] or list(answer.parts)
+    rows = [r for b in answer.blocks for r in b.rows]
+    for chunk, text in [q for p in parts for q in p.quotes] + [
+        q for r in rows for q in r.quotes
+    ]:
+        kept = found.setdefault(chunk, [])
+        if text not in kept:
+            kept.append(text)
+    return found
 
 
 def _cell(text: str) -> str:

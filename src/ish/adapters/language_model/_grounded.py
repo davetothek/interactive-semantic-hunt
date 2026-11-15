@@ -16,28 +16,47 @@ from typing import Any
 
 from ish.adapters.language_model._json_stream import JsonValues
 from ish.application.ports.language_model import (
+    UNSUPPORTED,
+    VERDICTS,
     Block,
+    Claim,
     LanguageModelError,
     Passage,
     Query,
+    Quote,
     Reply,
     Row,
     Selection,
     Source,
     Term,
+    Verdicts,
 )
 
 # Points of what the sources leave open that an answer keeps. The answer
 # instruction asks for at most this many, and the parser keeps no more.
 MAX_GAPS = 5
 
+# The words of a source that a claim rests on, copied from it.
+QUOTE: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "source_id": {"type": "string"},
+        "text": {"type": "string"},
+    },
+    "required": ["source_id", "text"],
+    "additionalProperties": False,
+}
+
+QUOTES: dict[str, object] = {"type": "array", "items": QUOTE}
+
 PASSAGE: dict[str, object] = {
     "type": "object",
     "properties": {
         "text": {"type": "string"},
         "source_ids": {"type": "array", "items": {"type": "string"}},
+        "quotes": QUOTES,
     },
-    "required": ["text", "source_ids"],
+    "required": ["text", "source_ids", "quotes"],
     "additionalProperties": False,
 }
 
@@ -57,8 +76,9 @@ SECTION: dict[str, object] = {
                 "properties": {
                     "cells": {"type": "array", "items": {"type": "string"}},
                     "source_ids": {"type": "array", "items": {"type": "string"}},
+                    "quotes": QUOTES,
                 },
-                "required": ["cells", "source_ids"],
+                "required": ["cells", "source_ids", "quotes"],
                 "additionalProperties": False,
             },
         },
@@ -154,7 +174,16 @@ def _passage(data: dict) -> Passage:
     return Passage(
         text=_OWN_MARKER.sub("", str(data["text"])),
         source_ids=tuple(str(i) for i in data.get("source_ids") or ()),
+        quotes=_quotes(data),
     )
+
+
+def _quotes(data: dict) -> tuple[Quote, ...]:
+    """Read the quotes of a passage or a row, and drop an empty one."""
+    found = (
+        Quote(str(q["source_id"]), str(q["text"])) for q in data.get("quotes") or ()
+    )
+    return tuple(q for q in found if q.text.strip())
 
 
 def _blocks(data: dict) -> tuple[Block, ...]:
@@ -182,6 +211,7 @@ def _section_block(section: dict) -> Block | None:
         Row(
             cells=tuple(_OWN_MARKER.sub("", str(c)) for c in row["cells"]),
             source_ids=tuple(str(i) for i in row.get("source_ids") or ()),
+            quotes=_quotes(row),
         )
         for row in section.get("rows") or ()
     )
@@ -264,7 +294,10 @@ def _flat(blocks: Sequence[Block]) -> list[Passage]:
     flat: list[Passage] = []
     for block in blocks:
         flat.extend(block.passages)
-        flat.extend(Passage(" | ".join(r.cells), r.source_ids) for r in block.rows)
+        flat.extend(
+            Passage(" | ".join(r.cells), r.source_ids, r.quotes, r.basis)
+            for r in block.rows
+        )
     return flat
 
 
@@ -347,17 +380,26 @@ STEP_SCHEMA: dict[str, object] = {
 
 
 def step_prompt(
-    question: str, sources: Sequence[Source], searched: Sequence[str], turns_left: int
+    question: str,
+    sources: Sequence[Source],
+    searched: Sequence[str],
+    turns_left: int,
+    notes: Sequence[str] = (),
 ) -> str:
-    """Return the user message of one turn: the sources, what ran, what is left."""
+    """Return the user message of one turn: the sources, what ran, what is left.
+
+    Add the *notes* of ish last, so the model reads them just before it
+    replies.
+    """
     ran = "\n".join(f"- {q}" for q in searched) or "- none"
-    return "\n\n".join(
-        [
-            prompt(question, sources),
-            f"Searches already run:\n{ran}",
-            f"Turns left for searches: {turns_left}",
-        ]
-    )
+    parts = [
+        prompt(question, sources),
+        f"Searches already run:\n{ran}",
+        f"Turns left for searches: {turns_left}",
+    ]
+    if notes:
+        parts.append("Notes from ish:\n\n" + "\n\n".join(notes))
+    return "\n\n".join(parts)
 
 
 def parse_step(
@@ -376,3 +418,59 @@ def parse_step(
         blocks=reply.blocks,
         terms=reply.terms,
     )
+
+
+CHECK_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "verdicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "verdict": {"type": "string", "enum": list(VERDICTS)},
+                },
+                "required": ["id", "verdict"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["verdicts"],
+    "additionalProperties": False,
+}
+
+
+def check_prompt(claims: Sequence[Claim]) -> str:
+    """Return the user message of a check: each claim under its id, with its quotes."""
+    blocks = []
+    for claim in claims:
+        quoted = "\n".join(f'- "{q}"' for q in claim.quotes) or "- (none)"
+        blocks.append(f"[{claim.id}] {claim.text}\nQuoted sentences:\n{quoted}")
+    return "\n\n".join(blocks)
+
+
+def parse_verdicts(
+    text: str,
+    backend: str,
+    claims: Sequence[Claim],
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+) -> Verdicts:
+    """Turn the JSON of a check into one verdict for each claim, in order.
+
+    A claim the model gave no verdict, or a verdict outside ``VERDICTS``,
+    counts as unsupported: a check that says nothing confirms nothing.
+    Raise ``LanguageModelError`` naming *backend* when the text is not the
+    JSON the schema asks for.
+    """
+    try:
+        found = {str(v["id"]): str(v["verdict"]) for v in json.loads(text)["verdicts"]}
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise LanguageModelError(
+            f"{backend} did not reply with the verdicts of a check: {exc}"
+        ) from exc
+    verdicts = tuple(
+        found[c.id] if found.get(c.id) in VERDICTS else UNSUPPORTED for c in claims
+    )
+    return Verdicts(verdicts, input_tokens, output_tokens)
