@@ -38,7 +38,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   before it replies, with Read, Grep, and Glob and no other tool, inside the
   tree only. A model that saw only the chunks of a search wrote what they
   implied. It cites a file it read as `path:first-last`, and the check finds
-  each quote in those lines. `answer_tools` turns it off.
+  each quote in those lines. The timing table counts its rounds of reading.
+  `answer_tools` turns it off.
 - With `ask_turns` of 2 or more, the model searches against its first draft
   before it answers, and puts each disagreement in the gaps. `challenge`
   turns it off.

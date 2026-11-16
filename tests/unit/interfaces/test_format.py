@@ -965,3 +965,11 @@ class TestCheckedClaims:
         )
         table = format_usage(answer_usage(answer))
         assert "check  1.5 s  judge, 6 claims, 1 unconfirmed  1,200   40" in table
+
+    def test_the_usage_names_the_rounds_of_reading(self) -> None:
+        from dataclasses import replace
+
+        from ish.interfaces.format import answer_usage, format_usage
+
+        answer = replace(self._answer(), model="m", turns=2, reads=7)
+        assert "m, 2 turns, 7 rounds of reading" in format_usage(answer_usage(answer))

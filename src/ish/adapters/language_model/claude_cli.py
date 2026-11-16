@@ -176,6 +176,9 @@ class ClaudeCliLanguageModel:
         self._prompts = prompts or load_prompts()
         self._executable = found
         self._tree = tree
+        # The rounds of reading of the last call, which claude counts as
+        # the turns before its reply.
+        self._reads = 0
         self._timeout = timeout
 
     def answer(
@@ -202,7 +205,7 @@ class ClaudeCliLanguageModel:
             input_tokens=read,
             output_tokens=wrote,
         )
-        return replace(reply, cost_usd=cost)
+        return replace(reply, cost_usd=cost, reads=self._reads)
 
     def step(
         self,
@@ -224,7 +227,7 @@ class ClaudeCliLanguageModel:
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
         )
-        return replace(reply, cost_usd=cost)
+        return replace(reply, cost_usd=cost, reads=self._reads)
 
     def check(self, claims: Sequence[Claim]) -> Verdicts:
         """Judge each claim against its quotes, in the JSON the schema fixes."""
@@ -308,6 +311,7 @@ class ClaudeCliLanguageModel:
         )
         wrote = int(usage.get("output_tokens") or 0)
         cost = float(body.get("total_cost_usd") or 0.0)
+        self._reads = max(0, int(body.get("num_turns") or 1) - 1) if tools else 0
         return body["structured_output"], read, wrote, cost
 
     def _whole(

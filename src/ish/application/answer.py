@@ -220,6 +220,8 @@ class Answer:
         check_input_tokens: Tokens the checking model read.
         check_output_tokens: Tokens the checking model wrote.
         claims_checked: Claims the checking model read, over every round.
+        reads: Rounds in which the model read files of the tree, over
+            every turn.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -244,6 +246,7 @@ class Answer:
     check_input_tokens: int = 0
     check_output_tokens: int = 0
     claims_checked: int = 0
+    reads: int = 0
 
 
 class AnswerQuestion:
@@ -463,6 +466,7 @@ class AnswerQuestion:
             check_input_tokens=checked.input_tokens if checked else 0,
             check_output_tokens=checked.output_tokens if checked else 0,
             claims_checked=checked.claims if checked else 0,
+            reads=reply.reads,
         )
 
     def _checked(
@@ -512,6 +516,7 @@ class AnswerQuestion:
                 input_tokens=used.input_tokens,
                 output_tokens=used.output_tokens,
                 cost_usd=used.cost_usd,
+                reads=used.reads,
             ),
             failures=checked.failures,
             claims=sum(r.claims for r in spent),
@@ -656,7 +661,7 @@ class AnswerQuestion:
         searches against it, then for the answer from all the sources.
         """
         ran: list[str] = []
-        read_in = wrote = turns = 0
+        read_in = wrote = turns = reads = 0
         cost = 0.0
         told = tuple(notes)
         challenged = False
@@ -684,6 +689,7 @@ class AnswerQuestion:
             read_in += reply.input_tokens
             wrote += reply.output_tokens
             cost += reply.cost_usd
+            reads += reply.reads
             # The challenge needs a turn to ask for searches and a turn
             # after them, or its searches never run.
             if (
@@ -729,6 +735,7 @@ class AnswerQuestion:
             cost_usd=cost,
             blocks=reply.blocks,
             terms=reply.terms,
+            reads=reads,
         )
         return final, texts, ran, turns, left
 
@@ -919,4 +926,5 @@ def _summed(first: Reply, last: Reply) -> Reply:
         input_tokens=first.input_tokens + last.input_tokens,
         output_tokens=first.output_tokens + last.output_tokens,
         cost_usd=first.cost_usd + last.cost_usd,
+        reads=first.reads + last.reads,
     )

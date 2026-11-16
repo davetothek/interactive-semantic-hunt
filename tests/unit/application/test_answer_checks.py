@@ -361,3 +361,31 @@ class TestCitedFiles:
             repairs=0,
         ).answer("q")
         assert [p.text for p in result.unconfirmed] == [claim.text]
+
+
+class TestReadsAreCounted:
+    def test_the_rounds_of_reading_of_every_turn_add_up(self) -> None:
+        from dataclasses import replace
+
+        searches = replace(
+            Reply(passages=(), covered=False, searches=("reset",)), reads=3
+        )
+        writer = Writer(searches, replace(answer_of(STARTS), reads=2))
+        result = AnswerQuestion(
+            search=routed(BOOT, reset=[RESET]), model=writer, turns=1
+        ).answer("q")
+        assert result.reads == 5
+
+    def test_a_repair_adds_its_reading(self) -> None:
+        from dataclasses import replace
+
+        writer = Writer(
+            replace(answer_of(STARTS, GUESS), reads=1),
+            replace(answer_of(STARTS), reads=2),
+        )
+        result = AnswerQuestion(
+            search=searching(BOOT),
+            model=writer,
+            judge=Judge(**{GUESS.text: UNSUPPORTED}),
+        ).answer("q")
+        assert result.reads == 3

@@ -443,6 +443,7 @@ def answer_usage(answer: Answer) -> dict[str, object]:
         "check_input_tokens": answer.check_input_tokens,
         "check_output_tokens": answer.check_output_tokens,
         "claims_checked": answer.claims_checked,
+        "reads": answer.reads,
         "unconfirmed": len(answer.unconfirmed),
         "timings": {stage: round(seconds, 3) for stage, seconds in answer.timings},
         "seconds": round(answer.seconds, 3),
@@ -506,6 +507,8 @@ def _row(stage: str, usage: Mapping[str, object]) -> tuple[str, str, str]:
     if stage == "writing" and usage.get("model"):
         turns = _count(usage.get("turns"))
         many = f", {turns} turns" if turns > 1 else ""
+        reads = _count(usage.get("reads"))
+        many += f", {reads} rounds of reading" if reads else ""
         return (
             f"{usage['model']}{many}",
             f"{_count(usage.get('input_tokens')):,}",

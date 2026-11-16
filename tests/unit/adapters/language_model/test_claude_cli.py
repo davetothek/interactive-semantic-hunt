@@ -147,6 +147,17 @@ class TestReadingTheTree:
         assert system == f"{PROMPTS.answer}\n\n{PROMPTS.tools}"
         assert "Read,Grep,Glob" in call["args"]
 
+    def test_the_rounds_of_reading_are_counted(self, runner, tmp_path: Path) -> None:
+        """A reader of the answer sees whether the model read anything."""
+        body = json.loads(runner.stdout) | {"num_turns": 5}
+        runner.stdout = json.dumps(body)
+        reading = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
+        assert reading.answer("How?", SOURCES).reads == 4
+        assert (
+            ClaudeCliLanguageModel("sonnet", timeout=5).answer("How?", SOURCES).reads
+            == 0
+        )
+
     def test_a_step_reads_the_tree_too(self, runner, tmp_path: Path) -> None:
         runner.stdout = json.dumps(
             {

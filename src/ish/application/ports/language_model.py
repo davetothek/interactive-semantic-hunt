@@ -153,6 +153,8 @@ class Reply:
             The use case keeps only a meaning that a source writes.
         cost_usd: What the backend says the call cost, in US dollars, or 0
             when it does not say.
+        reads: Rounds in which the model read files of the tree before it
+            replied, or 0 for a model that reads none.
     """
 
     passages: tuple[Passage, ...]
@@ -163,6 +165,7 @@ class Reply:
     blocks: tuple[Block, ...] = ()
     terms: tuple[Term, ...] = ()
     cost_usd: float = 0.0
+    reads: int = 0
 
 
 @dataclass(frozen=True, slots=True)
