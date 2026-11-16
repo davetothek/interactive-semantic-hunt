@@ -17,19 +17,29 @@ result and an answer still read the whole section.
 # short list, with the heading path of the section in front.
 WINDOW_CHARS = 400
 
+# The share of the lines of a text that are table cells, at or above which
+# the text is a table and gets no windows. A window of register rows names
+# a few registers, and a file of registers then held dozens of vectors.
+# Measured on a specification tree: 290 generated register files got
+# 14,751 windows, and took 156 of the 240 places of 24 top 10s.
+TABLE_SHARE = 0.7
+
 
 def windows(text: str, size: int = WINDOW_CHARS) -> list[str]:
     """Return *text* as windows of whole lines, about *size* characters each.
 
     Return no window for a text of fewer than twice *size* characters:
-    its own vector already stands for each of its few sentences. Skip
-    empty lines. Start each window with the last line of the window
+    its own vector already stands for each of its few sentences. Return
+    none for a table either, which names values rather than says things.
+    Skip empty lines. Start each window with the last line of the window
     before it, so a sentence that a break divides stands whole in one of
     them. A line longer than *size* is a window by itself.
     """
     if len(text) < 2 * size:
         return []
     lines = [line for line in text.splitlines() if line.strip()]
+    if is_table(lines):
+        return []
     found: list[str] = []
     held: list[str] = []
     size_held = 0
@@ -43,3 +53,9 @@ def windows(text: str, size: int = WINDOW_CHARS) -> list[str]:
     if held and (not found or held != [found[-1].splitlines()[-1]]):
         found.append("\n".join(held))
     return found
+
+
+def is_table(lines: list[str]) -> bool:
+    """Say whether most of *lines* are cells of a table, in AsciiDoc or Markdown."""
+    cells = sum(1 for line in lines if line.lstrip().startswith("|"))
+    return bool(lines) and cells >= TABLE_SHARE * len(lines)

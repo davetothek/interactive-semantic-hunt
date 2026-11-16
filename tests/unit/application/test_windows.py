@@ -44,3 +44,27 @@ class TestWindows:
     def test_the_last_window_is_not_the_overlap_alone(self) -> None:
         found = windows(lines(9, width=100))
         assert len(found[-1].splitlines()) > 1 or len(found) == 1
+
+
+class TestTablesGetNoWindows:
+    """A table names values. Windows of its rows made a file of registers
+    dozens of vectors, and 290 such files took 156 of 240 result places.
+    """
+
+    def test_an_asciidoc_table_gets_no_window(self) -> None:
+        rows = "".join(
+            f"|REG_{n:03d}\n|u1.0\n|A setting of the block {n}\n" for n in range(60)
+        )
+        assert windows(rows) == []
+
+    def test_a_markdown_table_gets_no_window(self) -> None:
+        rows = "".join(
+            f"| reg{n} | 0x{n:02x} | a setting of the block |\n" for n in range(40)
+        )
+        assert windows(rows) == []
+
+    def test_prose_with_a_few_rows_keeps_its_windows(self) -> None:
+        prose = "".join(
+            f"Sentence {n} of the section says one thing.\n" for n in range(30)
+        )
+        assert windows(prose + "|A |B\n|C |D\n")

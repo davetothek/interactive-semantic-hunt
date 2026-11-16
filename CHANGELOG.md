@@ -29,6 +29,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   section as one more vector of it, so a search finds one sentence of a
   long section. A section scores the best of its own vector and its
   windows. Off by default. Turning it on reads every file again.
+  A table, a chunk with 70 % or more of its lines in table cells, gets no
+  windows.
 - With `ask_turns` of 2 or more, the model searches against its first draft
   before it answers, and puts each disagreement in the gaps. `challenge`
   turns it off.

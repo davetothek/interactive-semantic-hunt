@@ -168,6 +168,13 @@ top-1 for questions in plain words went from 3 of 7 to 5 of 7, and MRR from
 0.464 to 0.833. A question that quotes one sentence of a 4,000-character
 section found that section first, where it ranked 57th before.
 
+A table gets no windows: a chunk with 70 % or more of its lines in table
+cells names values rather than says things, and a window of its rows names a
+few values. A tree of generated register tables is better left out of the
+index altogether, with `exclude`, when the sections that use them include
+their rows. On one specification tree, 290 such files held more than half
+of the vectors, and took 156 of 240 places of 24 top 10s with windows.
+
 Code keeps one vector a chunk, because a definition says one thing. Windows
 stay off by default: on this repository, which is mostly code, they gave
 the documents more chances than the code and cost 8 points of top-1. A
