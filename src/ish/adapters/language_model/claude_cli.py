@@ -194,10 +194,13 @@ class Conversation:
         session: The session that claude kept on disk.
         sources: The id, the title, and the text of each source the
             session holds, in order.
+        spent_usd: What claude says the session has cost so far. A
+            resumed call reports the cost of its whole session.
     """
 
     session: str
     sources: tuple[tuple[str, str, str], ...]
+    spent_usd: float = 0.0
 
 
 def held(sources: Sequence[Source]) -> tuple[tuple[str, str, str], ...]:
@@ -333,6 +336,7 @@ class ClaudeCliLanguageModel:
         # The session of the last call, and the conversation of each
         # question under way, which a later turn resumes.
         self._session = ""
+        self._session_usd = 0.0
         self._conversations: dict[str, Conversation] = {}
         self._lock = threading.Lock()
         atexit.register(self.forget)
@@ -392,6 +396,7 @@ class ClaudeCliLanguageModel:
             reads=True,
             persist=resume,
             session=earlier.session if earlier else "",
+            spent_usd=earlier.spent_usd if earlier else 0.0,
         )
         if resume:
             self._keep(question, sources)
@@ -416,7 +421,9 @@ class ClaudeCliLanguageModel:
         """
         with self._lock:
             before = self._conversations.pop(question, None)
-            self._conversations[question] = Conversation(self._session, held(sources))
+            self._conversations[question] = Conversation(
+                self._session, held(sources), self._session_usd
+            )
             gone = [before] if before and before.session != self._session else []
             while len(self._conversations) > MAX_CONVERSATIONS:
                 gone.append(self._conversations.pop(next(iter(self._conversations))))
@@ -503,6 +510,7 @@ class ClaudeCliLanguageModel:
         reads: bool = False,
         persist: bool = False,
         session: str = "",
+        spent_usd: float = 0.0,
     ) -> tuple[object, int, int, float]:
         """Run one call, and return its structured output, tokens, and cost.
 
@@ -512,7 +520,9 @@ class ClaudeCliLanguageModel:
         *reads* and a tree, run in the tree, and let claude read it.
         Otherwise run in an empty directory, with no tool. With a trace,
         write the call there under *kind*, the method that made it. With
-        *persist*, keep the session on disk. With *session*, resume it.
+        *persist*, keep the session on disk. With *session*, resume it,
+        and take *spent_usd*, what the session cost before, off the cost
+        claude reports, which is that of the whole session.
         """
         tools = reads and self._tree is not None
         if tools:
@@ -540,6 +550,8 @@ class ClaudeCliLanguageModel:
         failed = bool(body.get("is_error")) or "structured_output" not in body
         used = usage_of(body)
         self._session = str(body.get("session_id") or "")
+        self._session_usd = used.cost_usd
+        cost = max(0.0, used.cost_usd - spent_usd) if session else used.cost_usd
         if self._options.trace is not None:
             write_trace(
                 self._options.trace,
@@ -565,7 +577,8 @@ class ClaudeCliLanguageModel:
                         "wrote": used.wrote,
                     },
                     "requests": used.requests,
-                    "cost_usd": used.cost_usd,
+                    "cost_usd": cost,
+                    "session_cost_usd": used.cost_usd,
                     "reply": body.get("structured_output"),
                     "error": str(body.get("result")) if failed else "",
                 },
@@ -584,9 +597,9 @@ class ClaudeCliLanguageModel:
             used.written,
             used.cached,
             used.wrote,
-            used.cost_usd,
+            cost,
         )
-        return body["structured_output"], used.read, used.wrote, used.cost_usd
+        return body["structured_output"], used.read, used.wrote, cost
 
     def _whole(self, args: list[str], prompt: str, cwd: str) -> dict:
         """Run one call in *cwd*, and return the reply claude writes at its end."""

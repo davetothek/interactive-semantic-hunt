@@ -951,3 +951,41 @@ class TestResume:
         model = self._model(tmp_path)
         model.step("How?", [FIRST], [], 0, on_block=lambda block: None)
         assert "--no-session-persistence" not in made.args
+
+
+class TestAResumedCallCostsItsOwnPart:
+    """claude reports the cost of the whole session on a resumed call.
+
+    Summed over the turns, the cost of each earlier turn counted again on
+    every turn after it, and an answer that cost $0.107 reported $0.206.
+    """
+
+    def test_each_turn_reports_its_own_cost(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+        totals = [0.0135, 0.0201, 0.0652]
+        runner.replies = [
+            json.dumps(
+                {
+                    "is_error": False,
+                    "structured_output": STEP,
+                    "session_id": "s1",
+                    "total_cost_usd": total,
+                }
+            )
+            for total in totals
+        ]
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        options = CallOptions(resume=True, trace=tmp_path / "trace")
+        model = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tree, options=options)
+        costs = [
+            model.step("How?", [FIRST], [], 2).cost_usd,
+            model.step("How?", [FIRST, SECOND], [], 1).cost_usd,
+            model.step("How?", [FIRST, SECOND], [], 0).cost_usd,
+        ]
+        assert costs == pytest.approx([0.0135, 0.0066, 0.0451])
+        last = json.loads(sorted((tmp_path / "trace").iterdir())[-1].read_text())
+        assert last["cost_usd"] == pytest.approx(0.0451)
+        assert last["session_cost_usd"] == 0.0652

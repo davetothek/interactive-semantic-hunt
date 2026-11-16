@@ -163,3 +163,11 @@ class TestEffort:
         rc.main([str(call), "--effort", "max"])
         args = sent[0]["args"]
         assert args[args.index("--effort") + 1] == "max"
+
+
+class TestAResumedCall:
+    def test_a_resumed_call_says_what_it_lacks(self, call, sent, capsys) -> None:
+        record = json.loads(call.read_text())
+        call.write_text(json.dumps(record | {"resumed": "s1"}))
+        rc.main([str(call)])
+        assert "lacks the turns before it" in capsys.readouterr().err

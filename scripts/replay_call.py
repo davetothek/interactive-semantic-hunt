@@ -149,6 +149,12 @@ def main(argv: list[str] | None = None) -> int:
         record = load(args.call)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
+    if record.get("resumed"):
+        print(
+            "This call resumed a session. Alone, it lacks the turns before it, "
+            "and its message holds only what was new.",
+            file=sys.stderr,
+        )
     if args.system:
         record["system"] = args.system.read_text(encoding="utf-8")
     if args.prompt:
