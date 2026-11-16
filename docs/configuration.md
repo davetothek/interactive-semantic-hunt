@@ -236,7 +236,9 @@ a name, with the Read, Grep, and Glob tools of `claude` and no other. It can
 read no file outside the tree, and one call stops at a cost of one US dollar.
 It cites a file it read as `path:first-last`, and ish reads those lines, so
 the check of the claims finds each quote in them. `--no-answer-tools` turns
-the reading off. An answer from a server, and a brief answer, read no file.
+the reading off. The `ask` tool of a local `ish-mcp` on stdio reads the
+tree the same way. An answer over HTTP, an answer from `ish remote`, and a
+brief answer read no file.
 
 `ask_turns` lets the model ask for follow-up searches before it answers,
 up to that many turns. It reads the first sources, and when they fall short

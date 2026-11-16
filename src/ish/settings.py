@@ -461,8 +461,9 @@ class Settings:
         metadata=_opt(
             ANSWERS,
             "Let the claude-cli model read the files of the tree with Read, "
-            "Grep, and Glob before it answers, and of no other place. An "
-            "answer from a server reads no file.",
+            "Grep, and Glob before it answers, and of no other place. The "
+            "ask tool of a local ish-mcp reads the tree too. An answer over "
+            "HTTP or from ish remote reads no file.",
             action="boolean_optional",
         ),
     )
