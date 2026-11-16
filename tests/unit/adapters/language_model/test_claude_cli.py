@@ -158,7 +158,7 @@ class TestReadingTheTree:
         body = json.loads(runner.stdout) | {"num_turns": 5}
         runner.stdout = json.dumps(body)
         reading = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
-        assert reading.answer("How?", SOURCES).reads == 4
+        assert reading.answer("How?", SOURCES).reads == 3
         assert (
             ClaudeCliLanguageModel("sonnet", timeout=5).answer("How?", SOURCES).reads
             == 0
@@ -787,3 +787,20 @@ class TestCommandAndTimeout:
             "q", SOURCES
         )
         assert runner.calls[0]["timeout"] == 42
+
+
+class TestReadsLeaveOutTheReplyRound:
+    """The reply that the schema fixes takes two requests of every call.
+
+    A rerank with no tool reported 2 requests, so a call that read no file
+    counted one round of reading, and an answer of four turns that read
+    the tree once counted five.
+    """
+
+    @pytest.mark.parametrize(("requests", "reads"), [(1, 0), (2, 0), (3, 1), (6, 4)])
+    def test_the_reply_round_is_no_reading(
+        self, runner, tmp_path: Path, requests, reads
+    ) -> None:
+        runner.stdout = json.dumps(json.loads(runner.stdout) | {"num_turns": requests})
+        model = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
+        assert model.answer("How?", SOURCES).reads == reads

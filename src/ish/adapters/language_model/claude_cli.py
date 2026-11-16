@@ -95,6 +95,11 @@ PASSED_ON = (
 )
 
 
+# The requests of a call that reads no file. claude writes the reply that
+# the schema fixes as a call of a tool, and the result of that tool takes
+# one more request. A rerank, which has no tool to read with, makes two.
+REPLY_REQUESTS = 2
+
 # The variables that tell claude how long to keep a prompt in its cache.
 # With none set, claude writes it for 1 hour.
 CACHE_VARIABLES = {
@@ -283,8 +288,8 @@ class ClaudeCliLanguageModel:
         self._prompts = prompts or load_prompts()
         self._executable = found
         self._tree = tree
-        # The rounds of reading of the last call, which claude counts as
-        # the turns before its reply.
+        # The rounds of reading of the last call: the requests of the call,
+        # less the request that writes the reply and the one after it.
         self._reads = 0
         # The tokens of the last call that claude wrote to its prompt
         # cache, and those it read from it.
@@ -463,7 +468,7 @@ class ClaudeCliLanguageModel:
             )
         if failed:
             raise LanguageModelError(f"claude did not answer: {body.get('result')}")
-        self._reads = max(0, used.requests - 1) if tools else 0
+        self._reads = max(0, used.requests - REPLY_REQUESTS) if tools else 0
         self._cached = (used.written, used.cached)
         log.info(
             "claude %s read %d tokens in %d requests: %d uncached, %d written to "
