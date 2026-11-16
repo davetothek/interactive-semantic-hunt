@@ -221,6 +221,28 @@ class TestBoolCoercion:
         assert _coerce("flag", 1, False) is True
 
 
+class TestCoerceFloat:
+    """A cost in dollars is a float, and a file gives it as text or a number."""
+
+    @pytest.mark.parametrize("value", ["0.5", 0.5])
+    def test_a_float(self, value) -> None:
+        from ish.settings import _coerce
+
+        assert _coerce("ask_read_usd", value, 1.0) == 0.5
+
+    def test_a_float_from_a_file(self, tmp_path) -> None:
+        config = tmp_path / ".ish" / CONFIG_BASENAME
+        config.parent.mkdir()
+        config.write_text('ask_read_usd = "0.25"\n')
+        assert load_settings(start=tmp_path, environ={}).ask_read_usd == 0.25
+
+    def test_not_a_float(self) -> None:
+        from ish.settings import _coerce
+
+        with pytest.raises(ConfigError, match="invalid value"):
+            _coerce("ask_read_usd", "cheap", 1.0)
+
+
 class TestUnreadableConfig:
     """Verify that an unreadable config file is reported, not skipped."""
 

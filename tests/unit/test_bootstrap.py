@@ -1801,7 +1801,7 @@ class TestAnAnswerReadsTheTree:
 
         seen: list = []
 
-        def stub(model: str, *, prompts, tree=None):
+        def stub(model: str, *, prompts, tree=None, options=None):
             seen.append(tree)
             return _StubModel(model)
 
@@ -1823,3 +1823,45 @@ class TestAnAnswerReadsTheTree:
 
     def test_the_option_turns_reading_off(self, monkeypatch) -> None:
         assert self._built(monkeypatch, answer_tools=False) == [None, None]
+
+
+class TestCallOptions:
+    """What each call may do comes from the settings, into every backend."""
+
+    def test_the_settings_reach_the_backend(self, monkeypatch) -> None:
+        from ish.adapters.language_model._calls import CallOptions
+        from ish.settings import Settings
+
+        given: list = []
+
+        def stub(model: str, *, prompts, tree=None, options=None):
+            given.append(options)
+            return _StubModel(model)
+
+        monkeypatch.setitem(bootstrap.LANGUAGE_MODELS, "stub", stub)
+        monkeypatch.setenv("HOME", "/home/u")
+        chosen = Settings(
+            language_model="stub",
+            allowed_language_models=("stub",),
+            answer_model="m",
+            rerank_model="r",
+            prompt_cache="off",
+            ask_read_usd=0.5,
+            ask_trace="~/trace",
+        )
+        bootstrap.build_language_model(chosen)
+        bootstrap.build_reranker(chosen)
+        wanted = CallOptions(
+            prompt_cache="off", read_usd=0.5, trace=Path("/home/u/trace")
+        )
+        assert given == [wanted, wanted]
+
+    def test_no_trace_by_default(self) -> None:
+        from ish.settings import Settings
+
+        options = bootstrap.call_options(Settings())
+        assert (options.prompt_cache, options.read_usd, options.trace) == (
+            "5m",
+            1.0,
+            None,
+        )

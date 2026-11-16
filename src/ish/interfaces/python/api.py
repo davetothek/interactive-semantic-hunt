@@ -53,10 +53,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Chunks a question reads. More chunks find more, and every one is paid
-# for in tokens the model reads.
-ASK_LIMIT = 10
-
 # Lines one citation of a file may name. A model that reads the tree cites
 # the lines it read, and a citation of a whole file would let a quote of any
 # of its lines stand for a claim about one part of it.
@@ -65,6 +61,18 @@ MAX_CITED_LINES = 400
 # A citation of lines of a file: the path from the top of the tree, then
 # the first line and the last.
 _CITED = re.compile(r"(?P<path>[^:]+):(?P<first>\d+)(?:-(?P<last>\d+))?")
+
+
+def sizes(settings: Settings) -> dict[str, object]:
+    """Return how much an answer reads, as keywords of ``AnswerQuestion``.
+
+    More chunks find more, and the model reads each of them in every turn.
+    """
+    return {
+        "pick": settings.ask_chunks,
+        "budget_chars": settings.ask_chars,
+        "search_chunks": settings.ask_search_chunks,
+    }
 
 
 def checks(
@@ -375,7 +383,7 @@ class Ish:
         # A rerank model sorts a wide search cheaply from the start of each
         # chunk. Without one, the best chunks as ranked are read in full.
         wide = self._reranker is not None
-        limit = self.settings.rerank_candidates if wide else ASK_LIMIT
+        limit = self.settings.rerank_candidates if wide else self.settings.ask_chunks
 
         def narrowed(text: str, kinds: Sequence[str], count: int) -> list[Match]:
             return self.search(text, count, lang=lang, under=under, type=kinds or type)
@@ -396,13 +404,13 @@ class Ish:
             search=found,
             model=self._models[brief],
             reranker=reranker,
-            pick=ASK_LIMIT,
             turns=self.settings.ask_turns if turns is None else turns,
             read=read,
             glossary=self._glossary,
             kind_of=self.kind_of,
             on_block=on_block,
             **({"on_step": on_step} if on_step else {}),
+            **sizes(self.settings),
             **checks(self.settings, self._models[brief], self._reranker, brief),
             lookup=self.cited_lines,
         )

@@ -44,7 +44,7 @@ DEFAULT_PICK = 10
 # it. Enough for the heading and the first sentences.
 PREVIEW_CHARS = 300
 
-# Chunks each follow-up search adds.
+# Chunks each follow-up search adds, unless the caller says.
 CHUNKS_A_SEARCH = 5
 
 # Turns a challenge needs left after the draft: one to ask for searches
@@ -277,6 +277,7 @@ class AnswerQuestion:
         repairs: int = 1,
         challenge: bool = False,
         lookup: Callable[[str], tuple[Chunk, str] | None] | None = None,
+        search_chunks: int = CHUNKS_A_SEARCH,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -292,8 +293,9 @@ class AnswerQuestion:
 
         With *turns* above 0, let the model ask for follow-up searches up
         to that many times before it answers. Each search runs through
-        *search*, so it reads the same indexes and filters, and adds the
-        best chunks the model has not read, within the same budget.
+        *search*, so it reads the same indexes and filters, and adds at
+        most *search_chunks* of the best chunks the model has not read,
+        within the same budget.
 
         Time each stage on *clock*, so a reader of the answer sees where
         its seconds went.
@@ -335,6 +337,7 @@ class AnswerQuestion:
         self._read = read
         self._reranker = reranker
         self._pick = pick
+        self._search_chunks = search_chunks
         self._turns = turns
         self._on_step = on_step
         self._clock = clock
@@ -735,7 +738,7 @@ class AnswerQuestion:
                         if c not in seen
                     ]
                 )
-                added, _, left = self._fit(fresh[:CHUNKS_A_SEARCH], left)
+                added, _, left = self._fit(fresh[: self._search_chunks], left)
                 texts = texts + added
                 seen.update(chunk for chunk, _ in added)
             log.info("Turn %d searched %s", turns, fresh_queries[:SEARCHES_A_TURN])

@@ -14,6 +14,7 @@ from pathlib import Path
 from ish.adapters import _http
 from ish.adapters._ollama import is_loopback, resolve_host
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model._calls import CallOptions
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
@@ -50,12 +51,15 @@ class OllamaLanguageModel:
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
         tree: Path | None = None,
+        options: CallOptions | None = None,
     ) -> None:
         """Use *model*, such as ``qwen3:8b``, on the daemon at *host*.
 
         Read ``OLLAMA_HOST`` when no host is given. Require the model, and
         refuse a host that is not this machine.
-        The model reads no file, so *tree* changes nothing.
+        The model reads no file, so *tree* changes nothing. The backend
+        keeps no prompt cache and writes no trace, so *options* change
+        nothing.
         """
         if not model:
             raise LanguageModelError(

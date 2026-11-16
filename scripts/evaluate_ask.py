@@ -53,6 +53,19 @@ cost, then time. A line is a label, a 1-based line number, or a negative
 number that counts from the end:
 
     uv run python scripts/evaluate_ask.py --compare baseline -1
+
+Every setting of ish can change for one run, with no change to the
+code. ``--config FILE`` reads one config file in place of the files of
+the tree, and ``--set KEY=VALUE`` sets one option, such as
+``--set challenge=false`` or ``--set prompt_cache=off``. With either,
+the run takes its settings from the files, the environment, and
+``--set``, and only the model flags given override them. The history
+line keeps every answer setting of the run, and ``--compare`` names the
+settings that differ.
+
+``--trace DIR`` keeps the input and the output of every model call, in
+one directory for each question. ``scripts/replay_call.py`` runs one of
+those calls again alone.
 """
 
 import argparse
@@ -65,7 +78,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -74,7 +87,7 @@ import yaml
 from ish.application.answer import Answer
 from ish.interfaces.python.api import Ish
 from ish.interfaces.python.remote import RemoteIsh
-from ish.settings import Settings, load_settings
+from ish.settings import ANSWERS, ConfigError, Settings, load_settings
 
 # The words of an error that says the model usage of the account is spent.
 # claude-cli writes "You've hit your 5-hour limit" or "weekly limit".
@@ -289,33 +302,95 @@ def table(rows: list[Scored], numbers: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+# The flags of the run that set an option, and the value each one sets
+# when it is not given and no --config or --set describes the run.
+FLAGS = {
+    "language_model": "",
+    "answer_model": "",
+    "rerank_model": "",
+    "ask_turns": 0,
+    "prompt_dir": "",
+}
+
+
 def chosen(settings: Settings, args: argparse.Namespace) -> Settings:
-    """Return *settings* with the models and the instructions of this run."""
-    return replace(
-        settings,
-        language_model=args.language_model,
-        answer_model=args.answer_model,
-        rerank_model=args.rerank_model,
-        ask_turns=args.ask_turns,
-        prompt_dir=args.prompt_dir,
-        allowed_language_models=(args.language_model,),
-    )
+    """Return *settings* with the models and the instructions of this run.
+
+    A flag that is given always wins, except over ``--set`` of the same
+    option. With no ``--config`` and no ``--set``, a flag that is not
+    given sets its value from ``FLAGS``. Allow the language model that
+    the run uses, and no other.
+    """
+    described = bool(args.config or args.set)
+    sets = dict(parse_sets(args.set))
+    given = {}
+    for name, default in FLAGS.items():
+        value = getattr(args, name)
+        if name in sets:
+            continue
+        if value is not None:
+            given[name] = value
+        elif not described:
+            given[name] = default
+    picked = replace(settings, **given)
+    return replace(picked, allowed_language_models=(picked.language_model,))
+
+
+def parse_sets(words: list[str]) -> list[tuple[str, str]]:
+    """Return each ``KEY=VALUE`` of ``--set``, and refuse an unknown option."""
+    known = {f.name for f in fields(Settings)}
+    found = []
+    for word in words:
+        key, equals, value = word.partition("=")
+        key = key.strip().replace("-", "_")
+        if not equals or not key:
+            raise ValueError(f"--set takes KEY=VALUE, not {word!r}.")
+        if key not in known:
+            raise ValueError(f"--set names no option of ish: {key!r}.")
+        found.append((key, value))
+    return found
+
+
+def answer_settings(settings: Settings) -> dict[str, object]:
+    """Return every answer setting of a run, as JSON can hold it."""
+    return {
+        f.name: list(value) if isinstance(value, tuple) else value
+        for f in fields(Settings)
+        if f.metadata.get("section") == ANSWERS
+        for value in [getattr(settings, f.name)]
+    }
+
+
+def filed(trace: Path, row: "Scored", repeat: int) -> None:
+    """Move the calls of the question of *row* into a directory of its own."""
+    name = f"{row.id}-{row.round}" if repeat > 1 else row.id
+    target = trace / name
+    target.mkdir(parents=True, exist_ok=True)
+    for call in sorted(trace.glob("*.json")):
+        call.rename(target / call.name)
 
 
 def run(
-    items: list[dict], ish: Ish | RemoteIsh, tree: Path | None, repeat: int = 1
+    items: list[dict],
+    ish: Ish | RemoteIsh,
+    tree: Path | None,
+    repeat: int = 1,
+    trace: Path | None = None,
 ) -> tuple[list[Scored], str]:
     """Ask each question *repeat* times, a round at a time, and name each score.
 
     Stop at the first error that names a model usage limit, and return
     that error with the rows before it. Return an empty error when the
-    run asked every question.
+    run asked every question. With a *trace*, file the calls of each
+    question in a directory of its own.
     """
     rows = []
     for number in range(1, repeat + 1):
         for item in items:
             row = score(item, ish, tree)
             row.round = number
+            if trace is not None:
+                filed(trace, row, repeat)
             mark = f" #{number}" if repeat > 1 else ""
             print(
                 f"{row.id}{mark}: covered={row.covered} hit={row.hit} "
@@ -493,6 +568,7 @@ def history_line(
     rows: list[Scored],
     stopped: str,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    settings: Settings | None = None,
 ) -> dict[str, object]:
     """Return the history line of one run."""
     used = rounds_of(rows, complete=not stopped)
@@ -517,6 +593,7 @@ def history_line(
         "stopped": stopped,
         "scores": mean,
         "spread": span,
+        "settings": answer_settings(settings) if settings else {},
     }
 
 
@@ -577,6 +654,9 @@ def compare(a: tuple[int, dict], b: tuple[int, dict]) -> str:
     for line, name in ((la, "A"), (lb, "B")):
         if not line.get("complete"):
             lines += [f"Run {name} is incomplete.", ""]
+    changed = differences(la.get("settings") or {}, lb.get("settings") or {})
+    if changed:
+        lines += ["Settings that differ:", "", *changed, ""]
     lines += [
         "| measure | A | B | B - A | spread | verdict |",
         "|---|---|---|---|---|---|",
@@ -604,6 +684,15 @@ def compare(a: tuple[int, dict], b: tuple[int, dict]) -> str:
             f"| {signed(m, delta)} | {shown(m, width)} | {verdict} |"
         )
     return "\n".join(lines)
+
+
+def differences(a: dict, b: dict) -> list[str]:
+    """Return one line for each setting whose value differs from run A to run B."""
+    return [
+        f"- {name}: {a.get(name, '-')!r} -> {b.get(name, '-')!r}"
+        for name in sorted({*a, *b})
+        if a.get(name) != b.get(name)
+    ]
 
 
 def signed(measure: Measure, delta: float | None) -> str:
@@ -647,18 +736,28 @@ def main(argv: list[str] | None = None) -> int:
         metavar="URL",
         help="Score `ish remote ask` against this server. Give no TREE.",
     )
-    parser.add_argument("--language-model", default="")
-    parser.add_argument("--answer-model", default="")
+    parser.add_argument("--language-model")
+    parser.add_argument("--answer-model")
     parser.add_argument(
-        "--rerank-model", default="", help="Model of the same backend that reranks."
+        "--rerank-model", help="Model of the same backend that reranks."
     )
-    parser.add_argument(
-        "--ask-turns", type=int, default=0, help="Follow-up searches allowed."
-    )
+    parser.add_argument("--ask-turns", type=int, help="Follow-up searches allowed.")
     parser.add_argument(
         "--prompt-dir",
-        default="",
         help="Instruction files that replace the shipped ones.",
+    )
+    parser.add_argument(
+        "--config", type=Path, help="Read this config file in place of the tree's."
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Set one option of ish for this run. Give it once for each option.",
+    )
+    parser.add_argument(
+        "--trace", type=Path, help="Keep every model call, by question, here."
     )
     parser.add_argument("--price-in", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--price-out", type=float, default=0.0, help="USD per 1M.")
@@ -683,25 +782,35 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.questions is None:
         parser.error("Give QUESTIONS, or --compare A B.")
-    if not (args.language_model and args.answer_model):
-        parser.error("Give --language-model and --answer-model.")
     if args.repeat < 1:
         parser.error("--repeat takes a number of 1 or more.")
     if (args.tree is None) == (not args.remote):
         parser.error("Give TREE, or --remote URL, and not both.")
 
+    try:
+        overrides: dict[str, object] = dict(parse_sets(args.set))
+        if args.config:
+            overrides["config"] = str(args.config)
+        if args.trace:
+            overrides["ask_trace"] = str(args.trace)
+        start = None if args.remote else args.tree.resolve()
+        settings = chosen(load_settings(overrides, start=start), args)
+    except (ValueError, ConfigError) as exc:
+        parser.error(str(exc))
+    if not (settings.language_model and settings.answer_model):
+        parser.error("Give --language-model and --answer-model, or set them.")
+
     items = [i for i in load(args.questions) if not args.only or i["id"] in args.only]
     if args.remote:
-        settings = replace(load_settings(), remote=args.remote)
-        rows, stopped = run(items, RemoteIsh(chosen(settings, args)), None, args.repeat)
+        settings = replace(settings, remote=args.remote)
+        rows, stopped = run(items, RemoteIsh(settings), None, args.repeat, args.trace)
     else:
-        tree = args.tree.resolve()
-        settings = chosen(load_settings(start=tree), args)
-        with Ish(tree, settings=settings) as ish:
-            rows, stopped = run(items, ish, tree, args.repeat)
+        assert start is not None
+        with Ish(start, settings=settings) as ish:
+            rows, stopped = run(items, ish, start, args.repeat, args.trace)
     numbers = summary(rows, args.price_in, args.price_out)
     report = table(rows, numbers)
-    line = history_line(args, items, rows, stopped)
+    line = history_line(args, items, rows, stopped, settings=settings)
     if args.repeat > 1 and line["rounds"]:
         mean, span = line["scores"], line["spread"]
         assert isinstance(mean, dict) and isinstance(span, dict)

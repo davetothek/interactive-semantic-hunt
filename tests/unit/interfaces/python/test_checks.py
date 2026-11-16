@@ -12,7 +12,7 @@ from ish.application.ports.language_model import (
     Reply,
     Verdicts,
 )
-from ish.interfaces.python.api import Ish, checks
+from ish.interfaces.python.api import Ish, checks, sizes
 from ish.interfaces.python.remote import RemoteIsh
 from ish.settings import Settings
 from tests.unit.interfaces.python.test_remote import (
@@ -50,6 +50,12 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
 class Named:
     def __init__(self, name: str) -> None:
         self.model_name = name
+
+
+class TestSizes:
+    def test_the_settings_say_how_much_an_answer_reads(self) -> None:
+        chosen = Settings(ask_chunks=4, ask_chars=9_000, ask_search_chunks=2)
+        assert sizes(chosen) == {"pick": 4, "budget_chars": 9_000, "search_chunks": 2}
 
 
 class TestChecks:

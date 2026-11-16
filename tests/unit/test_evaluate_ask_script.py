@@ -239,7 +239,9 @@ class Opened(FakeIsh):
 class TestMain:
     @pytest.fixture()
     def questions(self, tmp_path: Path, monkeypatch) -> Path:
-        monkeypatch.setattr(ev, "load_settings", lambda start=None: Settings())
+        monkeypatch.setattr(
+            ev, "load_settings", lambda overrides=None, start=None: Settings()
+        )
         path = tmp_path / "questions.yaml"
         path.write_text(QUESTIONS)
         return path
@@ -345,7 +347,9 @@ class Harness:
 
     @pytest.fixture()
     def setup(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(ev, "load_settings", lambda start=None: Settings())
+        monkeypatch.setattr(
+            ev, "load_settings", lambda overrides=None, start=None: Settings()
+        )
         monkeypatch.setattr(ev, "revision", lambda: {"sha": "abc1234", "dirty": False})
         questions = tmp_path / "questions.yaml"
         questions.write_text(TWO)
@@ -589,10 +593,126 @@ class TestArguments:
         ("argv", "message"),
         [
             ([], "Give QUESTIONS, or --compare A B."),
-            (["q.yaml", "tree"], "Give --language-model and --answer-model."),
+            (
+                ["q.yaml", "tree"],
+                "Give --language-model and --answer-model, or set them.",
+            ),
         ],
     )
     def test_a_run_needs_its_inputs(self, argv, message, capsys) -> None:
         with pytest.raises(SystemExit):
             ev.main(argv)
         assert message in capsys.readouterr().err
+
+
+class TestTuning:
+    """Every setting changes for one run, with no change to the code."""
+
+    @pytest.fixture()
+    def setup(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(ev, "revision", lambda: {"sha": "abc1234", "dirty": False})
+        questions = tmp_path / "questions.yaml"
+        questions.write_text(TWO)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        opened: list[Settings] = []
+
+        def local(path: Path, *, settings: Settings) -> Turns:
+            opened.append(settings)
+            return Turns(_hit(), _refusal())
+
+        monkeypatch.setattr(ev, "Ish", local)
+
+        def main(*extra: str) -> int:
+            return ev.main([str(questions), str(tree), *extra])
+
+        return main, opened, tmp_path
+
+    def test_set_changes_one_option(self, setup) -> None:
+        main, opened, _ = setup
+        main(*MODELS, "--set", "challenge=false", "--set", "prompt-cache=off")
+        assert (opened[0].challenge, opened[0].prompt_cache) == (False, "off")
+
+    def test_set_wins_over_a_flag(self, setup) -> None:
+        main, opened, _ = setup
+        main(*MODELS, "--ask-turns", "3", "--set", "ask_turns=1")
+        assert opened[0].ask_turns == 1
+
+    def test_set_can_name_the_models(self, setup) -> None:
+        main, opened, _ = setup
+        main("--set", "language_model=claude-cli", "--set", "answer_model=haiku")
+        assert opened[0].allowed_language_models == ("claude-cli",)
+        assert opened[0].answer_model == "haiku"
+
+    def test_a_config_file_describes_the_run(self, setup) -> None:
+        main, opened, tmp_path = setup
+        config = tmp_path / "tuning.toml"
+        config.write_text('rerank_model = "haiku"\nask_turns = 2\nask_chunks = 4\n')
+        main(*MODELS, "--config", str(config))
+        chosen = opened[0]
+        assert (chosen.rerank_model, chosen.ask_turns, chosen.ask_chunks) == (
+            "haiku",
+            2,
+            4,
+        )
+
+    def test_without_a_config_the_flags_keep_their_defaults(
+        self, setup, monkeypatch
+    ) -> None:
+        main, opened, _ = setup
+        monkeypatch.setenv("ISH_RERANK_MODEL", "haiku")
+        monkeypatch.setenv("ISH_ASK_TURNS", "2")
+        main(*MODELS)
+        assert (opened[0].rerank_model, opened[0].ask_turns) == ("", 0)
+
+    @pytest.mark.parametrize(
+        ("word", "message"),
+        [("challenge", "KEY=VALUE"), ("no_such=1", "no option of ish: 'no_such'")],
+    )
+    def test_a_bad_set_is_refused(self, setup, word, message, capsys) -> None:
+        main, _, _ = setup
+        with pytest.raises(SystemExit):
+            main(*MODELS, "--set", word)
+        assert message in capsys.readouterr().err
+
+    def test_a_bad_value_is_refused(self, setup, capsys) -> None:
+        main, _, _ = setup
+        with pytest.raises(SystemExit):
+            main(*MODELS, "--set", "ask_turns=many")
+        assert "invalid value 'many'" in capsys.readouterr().err
+
+    def test_the_history_keeps_every_answer_setting(self, setup) -> None:
+        main, _, _ = setup
+        main(*MODELS, "--set", "repair_turns=0")
+        [line] = _history(ev.history_file())
+        assert line["settings"]["repair_turns"] == 0
+        assert line["settings"]["allowed_language_models"] == ["claude-cli"]
+        assert "embedder" not in line["settings"]
+
+    def test_the_trace_files_each_question(self, setup) -> None:
+        main, opened, tmp_path = setup
+        trace = tmp_path / "trace"
+        main(*MODELS, "--trace", str(trace))
+        assert opened[0].ask_trace == str(trace)
+        assert sorted(p.name for p in trace.iterdir()) == ["q1", "q2"]
+
+    def test_a_trace_files_the_calls_of_each_round(self, tmp_path: Path) -> None:
+        (tmp_path / "001-select.json").write_text("{}")
+        (tmp_path / "002-answer.json").write_text("{}")
+        ev.filed(tmp_path, ev.Scored("q1", True, round=2), repeat=2)
+        moved = sorted(p.name for p in (tmp_path / "q1-2").iterdir())
+        assert moved == ["001-select.json", "002-answer.json"]
+        assert not list(tmp_path.glob("*.json"))
+
+
+class TestCompareSettings:
+    def test_the_settings_that_differ_are_named(self) -> None:
+        a = {**_line("a", 1), "settings": {"challenge": True, "ask_turns": 3}}
+        b = {**_line("b", 1), "settings": {"challenge": False, "ask_turns": 3}}
+        out = ev.compare((1, a), (2, b))
+        assert "Settings that differ:" in out
+        assert "- challenge: True -> False" in out
+        assert "ask_turns" not in out.split("| measure")[0]
+
+    def test_a_setting_one_run_lacks(self) -> None:
+        assert ev.differences({"a": 1}, {}) == ["- a: 1 -> '-'"]

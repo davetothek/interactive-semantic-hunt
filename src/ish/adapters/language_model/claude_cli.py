@@ -18,11 +18,18 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model._calls import (
+    DEFAULT_PROMPT_CACHE,
+    DEFAULT_READ_USD,
+    CallOptions,
+    write_trace,
+)
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
@@ -51,10 +58,6 @@ TIMEOUT_SECONDS = 600
 # under the working directory, which is the tree: claude refuses a read
 # of any other path in print mode, as it refuses every other tool.
 READ_TOOLS = ("Read", "Grep", "Glob")
-
-# What one call that reads the tree may cost, in US dollars, at the prices
-# of the API. A model that reads in circles stops there.
-MAX_TOOL_COST_USD = 1.0
 
 NO_MEMORY = {
     "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
@@ -91,10 +94,21 @@ PASSED_ON = (
 )
 
 
-def environment(source: Mapping[str, str]) -> dict[str, str]:
-    """Return the environment of a call: the allowed names, and no memory."""
+# The variables that tell claude how long to keep a prompt in its cache.
+# With none set, claude writes it for 1 hour.
+CACHE_VARIABLES = {
+    "5m": {"FORCE_PROMPT_CACHING_5M": "1"},
+    "1h": {},
+    "off": {"DISABLE_PROMPT_CACHING": "1"},
+}
+
+
+def environment(
+    source: Mapping[str, str], prompt_cache: str = DEFAULT_PROMPT_CACHE
+) -> dict[str, str]:
+    """Return the environment of a call: the allowed names, no memory, the cache."""
     passed = {name: source[name] for name in PASSED_ON if name in source}
-    return {**passed, **NO_MEMORY}
+    return {**passed, **NO_MEMORY, **CACHE_VARIABLES[prompt_cache]}
 
 
 def command(
@@ -105,13 +119,14 @@ def command(
     *,
     stream: bool = False,
     tools: bool = False,
+    read_usd: float = DEFAULT_READ_USD,
 ) -> list[str]:
     """Return the argument list that asks one question with nothing else loaded.
 
     With *stream*, claude writes one JSON event a line as the reply grows,
     and the reply itself as the last event. With *tools*, claude may read
     the files of its working directory with Read, Grep, and Glob, and no
-    others, and a call stops at ``MAX_TOOL_COST_USD``.
+    others, and a call stops when it has cost *read_usd*.
     """
     allowed = (
         [
@@ -120,7 +135,7 @@ def command(
             "--allowedTools",
             *(f"{tool}(./**)" for tool in READ_TOOLS),
             "--max-budget-usd",
-            str(MAX_TOOL_COST_USD),
+            str(read_usd),
         ]
         if tools
         else ["--tools", ""]
@@ -149,6 +164,84 @@ def command(
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class Usage:
+    """Hold what one call of claude read, wrote, and cost.
+
+    Attributes:
+        uncached: Input tokens that no cache held.
+        written: Input tokens claude wrote to its prompt cache.
+        cached: Input tokens claude read from its prompt cache.
+        wrote: Output tokens, thinking included.
+        cost_usd: What claude says the call cost at the prices of the API.
+        requests: Requests to the model in the call. The reply that the
+            schema fixes takes one of them.
+    """
+
+    uncached: int = 0
+    written: int = 0
+    cached: int = 0
+    wrote: int = 0
+    cost_usd: float = 0.0
+    requests: int = 1
+
+    @property
+    def read(self) -> int:
+        """Return every input token of the call, whatever it cost."""
+        return self.uncached + self.written + self.cached
+
+
+def usage_of(body: Mapping[str, object]) -> Usage:
+    """Return the usage that the reply *body* of claude reports."""
+    usage = body.get("usage")
+    found = usage if isinstance(usage, Mapping) else {}
+
+    def number(key: str) -> int:
+        return int(found.get(key) or 0)
+
+    return Usage(
+        uncached=number("input_tokens"),
+        written=number("cache_creation_input_tokens"),
+        cached=number("cache_read_input_tokens"),
+        wrote=number("output_tokens"),
+        cost_usd=float(str(body.get("total_cost_usd") or 0.0)),
+        requests=int(str(body.get("num_turns") or 1)),
+    )
+
+
+def run_whole(
+    args: Sequence[str],
+    prompt: str,
+    *,
+    cwd: str,
+    env: Mapping[str, str],
+    timeout: float,
+) -> dict:
+    """Run claude with *args* in *cwd*, and return the reply it writes at its end."""
+    try:
+        done = subprocess.run(
+            list(args),
+            input=prompt,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            env=dict(env),
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LanguageModelError(
+            f"claude did not answer within {timeout:g} s."
+        ) from exc
+    try:
+        return json.loads(done.stdout)
+    except json.JSONDecodeError as exc:
+        detail = (done.stderr or done.stdout).strip()[:500]
+        raise LanguageModelError(
+            f"claude exited {done.returncode} without a JSON reply: {detail}"
+        ) from exc
+
+
 class ClaudeCliLanguageModel:
     """Write answers with the ``claude`` command in print mode."""
 
@@ -159,12 +252,14 @@ class ClaudeCliLanguageModel:
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
         tree: Path | None = None,
+        options: CallOptions | None = None,
     ) -> None:
         """Use *model*, a Claude model id or alias such as ``sonnet``.
 
         Require the model and the ``claude`` command on the path. With
         *tree*, an answer may read the files of that tree, and of no other
         place, before it replies. Every other call reads only its message.
+        *options* set the cache, the cost of reading, and the trace.
         """
         if not model:
             raise LanguageModelError(
@@ -186,6 +281,7 @@ class ClaudeCliLanguageModel:
         # cache, and those it read from it.
         self._cached = (0, 0)
         self._timeout = timeout
+        self._options = options or CallOptions()
 
     def answer(
         self,
@@ -199,6 +295,7 @@ class ClaudeCliLanguageModel:
         as soon as its JSON is whole.
         """
         structured, read, wrote, cost = self._run(
+            "answer",
             self._prompts.answer,
             _grounded.SCHEMA,
             _grounded.prompt(question, sources),
@@ -224,6 +321,7 @@ class ClaudeCliLanguageModel:
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
         structured, read, wrote, cost = self._run(
+            "step",
             self._prompts.step,
             _grounded.STEP_SCHEMA,
             _grounded.step_prompt(question, sources, searched, turns_left, notes),
@@ -249,6 +347,7 @@ class ClaudeCliLanguageModel:
     def check(self, claims: Sequence[Claim]) -> Verdicts:
         """Judge each claim against its quotes, in the JSON the schema fixes."""
         structured, read, wrote, cost = self._run(
+            "check",
             self._prompts.check,
             _grounded.CHECK_SCHEMA,
             _grounded.check_prompt(claims),
@@ -263,6 +362,7 @@ class ClaudeCliLanguageModel:
     ) -> Selection:
         """Choose at most *limit* candidates, in the JSON the schema fixes."""
         structured, read, wrote, cost = self._run(
+            "select",
             self._prompts.select,
             _grounded.SELECT_SCHEMA,
             _grounded.select_prompt(question, candidates, limit),
@@ -279,6 +379,7 @@ class ClaudeCliLanguageModel:
     def query(self, question: str, history: str) -> Query:
         """Write one search query, in the JSON the schema fixes."""
         structured, read, wrote, cost = self._run(
+            "query",
             self._prompts.query,
             _grounded.QUERY_SCHEMA,
             _grounded.query_prompt(question, history),
@@ -290,6 +391,7 @@ class ClaudeCliLanguageModel:
 
     def _run(
         self,
+        kind: str,
         system: str,
         schema: dict[str, object],
         prompt: str,
@@ -303,11 +405,13 @@ class ClaudeCliLanguageModel:
         the API, also when a subscription pays for it. With *on_block*,
         stream the reply and give on each block as it completes. With
         *reads* and a tree, run in the tree, and let claude read it.
-        Otherwise run in an empty directory, with no tool.
+        Otherwise run in an empty directory, with no tool. With a trace,
+        write the call there under *kind*, the method that made it.
         """
         tools = reads and self._tree is not None
         if tools:
             system = f"{system}\n\n{self._prompts.tools}"
+        started = time.perf_counter()
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
             cwd = str(self._tree) if tools else empty
             if on_block is None:
@@ -315,36 +419,52 @@ class ClaudeCliLanguageModel:
             else:
                 stream = _grounded.BlockStream(on_block)
                 body = self._streamed(system, schema, prompt, cwd, stream.feed, tools)
-        if body.get("is_error") or "structured_output" not in body:
-            raise LanguageModelError(f"claude did not answer: {body.get('result')}")
-        usage = body.get("usage") or {}
-        fresh, written, cached = (
-            int(usage.get(k) or 0)
-            for k in (
-                "input_tokens",
-                "cache_creation_input_tokens",
-                "cache_read_input_tokens",
+        failed = bool(body.get("is_error")) or "structured_output" not in body
+        used = usage_of(body)
+        if self._options.trace is not None:
+            write_trace(
+                self._options.trace,
+                kind,
+                {
+                    "kind": kind,
+                    "model": self.model_name,
+                    "tools": tools,
+                    "tree": str(self._tree) if tools else "",
+                    "prompt_cache": self._options.prompt_cache,
+                    "read_usd": self._options.read_usd,
+                    "system": system,
+                    "schema": schema,
+                    "prompt": prompt,
+                    "seconds": round(time.perf_counter() - started, 3),
+                    "usage": {
+                        "uncached": used.uncached,
+                        "written": used.written,
+                        "cached": used.cached,
+                        "wrote": used.wrote,
+                    },
+                    "requests": used.requests,
+                    "cost_usd": used.cost_usd,
+                    "reply": body.get("structured_output"),
+                    "error": str(body.get("result")) if failed else "",
+                },
             )
-        )
-        read = fresh + written + cached
-        wrote = int(usage.get("output_tokens") or 0)
-        cost = float(body.get("total_cost_usd") or 0.0)
-        requests = int(body.get("num_turns") or 1)
-        self._reads = max(0, requests - 1) if tools else 0
-        self._cached = (written, cached)
+        if failed:
+            raise LanguageModelError(f"claude did not answer: {body.get('result')}")
+        self._reads = max(0, used.requests - 1) if tools else 0
+        self._cached = (used.written, used.cached)
         log.info(
             "claude %s read %d tokens in %d requests: %d uncached, %d written to "
             "the cache, %d read from it. It wrote %d, for $%.4f",
             self.model_name,
-            read,
-            requests,
-            fresh,
-            written,
-            cached,
-            wrote,
-            cost,
+            used.read,
+            used.requests,
+            used.uncached,
+            used.written,
+            used.cached,
+            used.wrote,
+            used.cost_usd,
         )
-        return body["structured_output"], read, wrote, cost
+        return body["structured_output"], used.read, used.wrote, used.cost_usd
 
     def _whole(
         self,
@@ -355,28 +475,32 @@ class ClaudeCliLanguageModel:
         tools: bool = False,
     ) -> dict:
         """Run one call in *cwd*, and return the reply claude writes at its end."""
-        try:
-            done = subprocess.run(
-                command(self._executable, self.model_name, system, schema, tools=tools),
-                input=prompt,
-                capture_output=True,
-                text=True,
-                cwd=cwd,
-                env=environment(os.environ),
-                timeout=self._timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise LanguageModelError(
-                f"claude did not answer within {self._timeout:g} s."
-            ) from exc
-        try:
-            return json.loads(done.stdout)
-        except json.JSONDecodeError as exc:
-            detail = (done.stderr or done.stdout).strip()[:500]
-            raise LanguageModelError(
-                f"claude exited {done.returncode} without a JSON reply: {detail}"
-            ) from exc
+        return run_whole(
+            self._command(system, schema, tools=tools),
+            prompt,
+            cwd=cwd,
+            env=environment(os.environ, self._options.prompt_cache),
+            timeout=self._timeout,
+        )
+
+    def _command(
+        self,
+        system: str,
+        schema: dict[str, object],
+        *,
+        stream: bool = False,
+        tools: bool = False,
+    ) -> list[str]:
+        """Return the arguments of one call of this model, under its options."""
+        return command(
+            self._executable,
+            self.model_name,
+            system,
+            schema,
+            stream=stream,
+            tools=tools,
+            read_usd=self._options.read_usd,
+        )
 
     def _streamed(
         self,
@@ -396,20 +520,13 @@ class ClaudeCliLanguageModel:
         late = threading.Event()
         with tempfile.TemporaryFile("w+") as errors:
             process = subprocess.Popen(
-                command(
-                    self._executable,
-                    self.model_name,
-                    system,
-                    schema,
-                    stream=True,
-                    tools=tools,
-                ),
+                self._command(system, schema, stream=True, tools=tools),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=errors,
                 text=True,
                 cwd=cwd,
-                env=environment(os.environ),
+                env=environment(os.environ, self._options.prompt_cache),
             )
             timer = threading.Timer(self._timeout, _stop, (process, late))
             timer.start()

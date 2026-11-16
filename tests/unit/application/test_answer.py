@@ -393,6 +393,17 @@ class TestFollowUpSearches:
         ).answer("q")
         assert result.sources == (start, small)
 
+    def test_a_follow_up_search_adds_at_most_its_chunks(self) -> None:
+        start = make_chunk("start", "s")
+        more = [make_chunk(f"m{n}", f"t{n}") for n in range(4)]
+        result = AnswerQuestion(
+            search=routed(start, more=more),
+            model=FakeAgent(("more",)),
+            turns=1,
+            search_chunks=2,
+        ).answer("q")
+        assert result.sources == (start, *more[:2])
+
     def test_no_turns_answers_in_one_call(self) -> None:
         model = FakeModel()
         result = AnswerQuestion(search=searching(make_chunk("a")), model=model).answer(

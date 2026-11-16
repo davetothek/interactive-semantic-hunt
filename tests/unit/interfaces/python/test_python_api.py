@@ -438,15 +438,26 @@ class TestAsk:
     def test_at_most_ask_limit_chunks_are_read(
         self, project: Path, offline, monkeypatch
     ) -> None:
-        from ish.interfaces.python import api
 
-        for n in range(api.ASK_LIMIT + 3):
+        for n in range(Settings().ask_chunks + 3):
             (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
         model = self.Model()
         monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
         with _ish(project) as ish:
             ish.ask("function")
-        assert len(model.sources) == api.ASK_LIMIT
+        assert len(model.sources) == Settings().ask_chunks
+
+    def test_the_setting_says_how_many_chunks_are_read(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        for n in range(6):
+            (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
+        chosen = Settings(no_cache=True, git=False, ask_chunks=3)
+        with Ish(project, settings=chosen) as ish:
+            ish.ask("function")
+        assert len(model.sources) == 3
 
 
 class TestLink:
@@ -485,9 +496,8 @@ class TestAskWithRerank:
         self, project: Path, offline, monkeypatch
     ) -> None:
         from ish.application.ports.language_model import Passage, Reply, Selection
-        from ish.interfaces.python import api
 
-        for n in range(api.ASK_LIMIT + 5):
+        for n in range(Settings().ask_chunks + 5):
             (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
         shown: list[int] = []
 
@@ -507,7 +517,7 @@ class TestAskWithRerank:
         with Ish(project, settings=settings) as ish:
             answer = ish.ask("function")
         assert shown == [14]
-        assert len(answer.sources) == api.ASK_LIMIT
+        assert len(answer.sources) == Settings().ask_chunks
 
 
 class TestAskTurns:

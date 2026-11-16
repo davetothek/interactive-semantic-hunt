@@ -7,11 +7,17 @@ from pathlib import Path
 import pytest
 
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded, claude_cli
+from ish.adapters.language_model._calls import (
+    DEFAULT_READ_USD,
+    CallOptions,
+    write_trace,
+)
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.adapters.language_model.claude_cli import (
-    MAX_TOOL_COST_USD,
     ClaudeCliLanguageModel,
     command,
+    environment,
+    usage_of,
 )
 from ish.application.ports.language_model import (
     Claim,
@@ -134,7 +140,7 @@ class TestReadingTheTree:
             args.index("--allowedTools") + 1 : args.index("--max-budget-usd")
         ]
         assert allowed == ["Read(./**)", "Grep(./**)", "Glob(./**)"]
-        assert args[args.index("--max-budget-usd") + 1] == str(MAX_TOOL_COST_USD)
+        assert args[args.index("--max-budget-usd") + 1] == str(DEFAULT_READ_USD)
 
     def test_an_answer_runs_in_the_tree_with_the_tools_prompt(
         self, runner, tmp_path: Path
@@ -287,6 +293,7 @@ class TestEnvironment:
             "HOME": "/home/u",
             "HTTPS_PROXY": "http://proxy.example.com:8080",
             **claude_cli.NO_MEMORY,
+            **claude_cli.CACHE_VARIABLES["5m"],
         }
 
     def test_a_call_gets_no_secret_of_the_server(self, runner, monkeypatch) -> None:
@@ -608,3 +615,96 @@ class TestStreaming:
                 "q", SOURCES, on_block=stop
             )
         assert made.killed
+
+
+class TestCallOptions:
+    """The settings of a call reach claude as variables and flags."""
+
+    @pytest.mark.parametrize(
+        ("cache", "set_", "unset"),
+        [
+            ("5m", "FORCE_PROMPT_CACHING_5M", "DISABLE_PROMPT_CACHING"),
+            ("off", "DISABLE_PROMPT_CACHING", "FORCE_PROMPT_CACHING_5M"),
+        ],
+    )
+    def test_the_cache_is_a_variable(self, cache, set_, unset) -> None:
+        env = environment({"PATH": "/bin"}, cache)
+        assert env[set_] == "1" and unset not in env
+
+    def test_an_hour_is_what_claude_does_unasked(self) -> None:
+        env = environment({"PATH": "/bin", "FORCE_PROMPT_CACHING_5M": "1"}, "1h")
+        assert "FORCE_PROMPT_CACHING_5M" not in env
+        assert "DISABLE_PROMPT_CACHING" not in env
+
+    def test_a_call_caches_for_five_minutes_unless_told(self, runner) -> None:
+        ClaudeCliLanguageModel("sonnet", timeout=5).answer("How?", SOURCES)
+        assert runner.calls[0]["env"]["FORCE_PROMPT_CACHING_5M"] == "1"
+
+    def test_a_call_takes_its_cache_and_its_cost_of_reading(
+        self, runner, tmp_path: Path
+    ) -> None:
+        options = CallOptions(prompt_cache="off", read_usd=0.25)
+        model = ClaudeCliLanguageModel(
+            "sonnet", timeout=5, tree=tmp_path, options=options
+        )
+        model.answer("How?", SOURCES)
+        call = runner.calls[0]
+        assert call["env"]["DISABLE_PROMPT_CACHING"] == "1"
+        assert call["args"][call["args"].index("--max-budget-usd") + 1] == "0.25"
+
+    def test_an_unknown_cache_is_refused(self) -> None:
+        with pytest.raises(LanguageModelError, match="prompt_cache 'forever'"):
+            CallOptions(prompt_cache="forever")
+
+
+class TestTrace:
+    """A trace lets a reader follow the data of an answer call by call."""
+
+    def test_each_call_leaves_one_file(self, runner, tmp_path: Path) -> None:
+        trace = tmp_path / "trace"
+        model = ClaudeCliLanguageModel(
+            "sonnet", timeout=5, tree=tmp_path, options=CallOptions(trace=trace)
+        )
+        model.answer("How?", SOURCES)
+        runner.stdout = json.dumps(
+            {"is_error": False, "structured_output": {"verdicts": []}}
+        )
+        model.check([])
+        first, second = sorted(trace.iterdir())
+        assert (first.name, second.name) == ("001-answer.json", "002-check.json")
+        record = json.loads(first.read_text())
+        assert (record["kind"], record["model"], record["tools"]) == (
+            "answer",
+            "sonnet",
+            True,
+        )
+        assert record["tree"] == str(tmp_path)
+        assert "Question: How?" in record["prompt"]
+        assert record["system"].endswith(PROMPTS.tools)
+        assert record["schema"] == _grounded.SCHEMA
+        assert record["usage"] == {
+            "uncached": 2,
+            "written": 300,
+            "cached": 50,
+            "wrote": 40,
+        }
+        assert record["reply"]["covered"] is True and record["error"] == ""
+        assert json.loads(second.read_text())["tree"] == ""
+
+    def test_a_call_that_fails_is_traced_too(self, runner, tmp_path: Path) -> None:
+        runner.stdout = json.dumps({"is_error": True, "result": "limit"})
+        model = ClaudeCliLanguageModel(
+            "sonnet", timeout=5, options=CallOptions(trace=tmp_path)
+        )
+        with pytest.raises(LanguageModelError, match="limit"):
+            model.answer("How?", SOURCES)
+        record = json.loads((tmp_path / "001-answer.json").read_text())
+        assert (record["error"], record["reply"]) == ("limit", None)
+
+    def test_a_name_that_is_taken_is_passed_over(self, tmp_path: Path) -> None:
+        (tmp_path / "002-check.json").write_text("{}")
+        assert write_trace(tmp_path, "check", {}).name == "003-check.json"
+
+    def test_usage_that_is_not_a_table(self) -> None:
+        used = usage_of({"usage": "none", "num_turns": 3})
+        assert (used.read, used.requests) == (0, 3)

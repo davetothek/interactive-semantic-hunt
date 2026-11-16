@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ish.adapters.embedder import EMBEDDERS
 from ish.adapters.language_model import LANGUAGE_MODELS
+from ish.adapters.language_model._calls import CallOptions
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.adapters.link.base_url import BaseUrl
@@ -322,7 +323,22 @@ def _language_model(
             f"Unknown language model {name!r}. Valid backends: {valid}"
         ) from None
     prompts = build_prompts(settings)
-    return backend(model, prompts=prompts.briefly() if brief else prompts, tree=tree)
+    return backend(
+        model,
+        prompts=prompts.briefly() if brief else prompts,
+        tree=tree,
+        options=call_options(settings),
+    )
+
+
+def call_options(settings: Settings) -> CallOptions:
+    """Return what each call of a language model may do, from *settings*."""
+    trace = Path(settings.ask_trace).expanduser() if settings.ask_trace else None
+    return CallOptions(
+        prompt_cache=settings.prompt_cache,
+        read_usd=settings.ask_read_usd,
+        trace=trace,
+    )
 
 
 def build_prompts(settings: Settings) -> Prompts:

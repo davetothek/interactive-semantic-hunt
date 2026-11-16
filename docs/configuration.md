@@ -207,8 +207,10 @@ these three options, because they decide where the text of a document goes.
 | `ollama` | A generation model on the local daemon. A host that is not this machine is refused | From a JSON schema | Text that must stay on the machine |
 | `claude-cli` | The Claude Code CLI, on the account it is logged in to, with every tool and settings file off | From a JSON schema | One person on their own machine |
 
-An answer reads at most ten chunks and at most 60,000 characters of them.
-A chunk that does not fit is skipped, and the answer counts it.
+An answer reads at most `ask_chunks` chunks, 10 by default, and at most
+`ask_chars` characters of them over every turn, 60,000 by default. A
+chunk that does not fit is skipped, and the answer counts it. Each
+follow-up search adds at most `ask_search_chunks` chunks, 5 by default.
 
 A search ranks the right source too low when other chunks share the
 wording of the question, such as test cases of the rule the question
@@ -364,6 +366,50 @@ uv run python scripts/evaluate_ask.py --compare baseline -1
 ```
 
 A delta is real only when it is larger than the range of the two runs.
+
+### Tune an answer
+
+An answer of `claude-cli` makes several calls: one rerank, one call for
+each turn of the answer, and one check for each version of the answer.
+Each setting below changes one stage, and none needs a change to the
+code. Turn a stage off to see what it costs and what it finds:
+
+| Stage | Setting | Off |
+|---|---|---|
+| Choose what to read | `rerank_model` | `""` |
+| Search again | `ask_turns` | `0` |
+| Search against the draft | `challenge` | `false` |
+| Read the tree | `answer_tools` | `false` |
+| Check the claims | `check_claims` | `false` |
+| Fix a claim that fails | `repair_turns` | `0` |
+
+With all six off, an answer is one call. `ask_chunks`, `ask_chars`, and
+`ask_search_chunks` set how much each call sends.
+
+Each call of `claude` is a new process with a new message. claude keeps
+the prompt in its cache, and a later call reads only the part that stays
+the same, which is the instructions. `prompt_cache` sets how long the
+cache lasts. A write for `5m` costs 1.25 times an uncached token, a
+write for `1h` 2 times, and a read a tenth. `off` sends every token
+uncached, and a call that reads the tree then pays in full for each
+round of reading.
+
+Give the evaluation a setting with `--set`, or a file of settings with
+`--config`. `--trace DIR` keeps every call of every question:
+
+```sh
+uv run python scripts/evaluate_ask.py questions.yaml TREE \
+  --config tuning.toml --set challenge=false --trace trace/ --label no-challenge
+```
+
+Each call is one JSON file: the instructions, the message, the reply,
+the tokens written to the cache and read from it, and the cost. Run one
+call again alone, with one part changed:
+
+```sh
+uv run python scripts/replay_call.py trace/q07/005-check.json \
+  --model claude-haiku-5-5 --repeat 3
+```
 
 `link_base` publishes the links of an answer under a base URL. With
 `link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164

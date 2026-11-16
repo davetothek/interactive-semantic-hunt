@@ -16,7 +16,6 @@ from ish.application.ports.language_model import (
 from ish.application.sources import ChunkText, Sources
 from ish.domain.chunk import Chunk
 from ish.interfaces.python import remote as remote_api
-from ish.interfaces.python.api import ASK_LIMIT
 from ish.interfaces.python.remote import RemoteIsh
 from ish.settings import Settings
 
@@ -216,7 +215,7 @@ class TestAsk:
         self, server: Server, model: Model
     ) -> None:
         RemoteIsh(_settings()).ask(QUESTION)
-        assert server.calls == [(QUESTION, ASK_LIMIT, (), "", ())]
+        assert server.calls == [(QUESTION, Settings().ask_chunks, (), "", ())]
 
     def test_a_filter_of_the_call_travels(self, server: Server, model: Model) -> None:
         remote = RemoteIsh(_settings(lang=("python",)))
@@ -302,7 +301,7 @@ class TestRerank:
         self, server: Server, model: Model, chooser
     ) -> None:
         answer = RemoteIsh(_settings(rerank_candidates=40)).ask(QUESTION)
-        assert chooser.seen == [(2, ASK_LIMIT)]
+        assert chooser.seen == [(2, Settings().ask_chunks)]
         assert answer.sources == (GAIN,)
         assert answer.rerank_model == "chooser"
 

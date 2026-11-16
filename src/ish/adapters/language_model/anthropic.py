@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ish.adapters import _http
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model._calls import CallOptions
 from ish.adapters.language_model._prompts import NOT_COVERED, Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
@@ -51,12 +52,15 @@ class AnthropicLanguageModel:
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
         tree: Path | None = None,
+        options: CallOptions | None = None,
     ) -> None:
         """Use *model*, a Claude model id such as ``claude-sonnet-5-5``.
 
         Require the model. A default chosen here would decide the cost of
         every answer without the operator saying so.
-        The model reads no file, so *tree* changes nothing.
+        The model reads no file, so *tree* changes nothing. The backend
+        keeps no prompt cache and writes no trace, so *options* change
+        nothing.
         """
         if not model:
             raise LanguageModelError(

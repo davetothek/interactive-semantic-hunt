@@ -426,6 +426,38 @@ class Settings:
             metavar="N",
         ),
     )
+    ask_chunks: int = field(
+        default=10,
+        metadata=_opt(
+            ANSWERS,
+            "Chunks an answer reads in full: the best of the search, or the "
+            "ones the rerank model chooses.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    ask_chars: int = field(
+        default=60_000,
+        metadata=_opt(
+            ANSWERS,
+            "Characters of chunk text one answer may send to the model, over "
+            "every turn. About four characters make one token.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    ask_search_chunks: int = field(
+        default=5,
+        metadata=_opt(
+            ANSWERS,
+            "Chunks each follow-up search adds to what the model reads.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
     ask_files: int = field(
         default=32,
         metadata=_opt(
@@ -465,6 +497,28 @@ class Settings:
             "ask tool of a local ish-mcp reads the tree too. An answer over "
             "HTTP or from ish remote reads no file.",
             action="boolean_optional",
+        ),
+    )
+    ask_read_usd: float = field(
+        default=1.0,
+        metadata=_opt(
+            ANSWERS,
+            "What one call of claude-cli that reads the tree may cost, in US "
+            "dollars at the prices of the API. A model that reads in circles "
+            "stops there.",
+            type=float,
+            metavar="USD",
+        ),
+    )
+    prompt_cache: str = field(
+        default="5m",
+        metadata=_opt(
+            ANSWERS,
+            "How long claude-cli keeps the prompt of a call in its cache: 5m, "
+            "1h, or off. A write costs 1.25 times an uncached token for 5m "
+            "and 2 times for 1h, and a read costs a tenth. Each turn of an "
+            "answer is a new call, so a write for 1h is rarely read again.",
+            choices=["5m", "1h", "off"],
         ),
     )
     check_claims: bool = field(
@@ -507,6 +561,16 @@ class Settings:
             "first draft of an answer before the model answers.",
             scope="query",
             action="boolean_optional",
+        ),
+    )
+    ask_trace: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Directory where claude-cli writes one JSON file for each call: "
+            "the instructions, the message, the reply, the tokens, and the "
+            "cost. Empty writes none.",
+            metavar="DIR",
         ),
     )
     prompt_dir: str = field(
@@ -714,6 +778,8 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
             return bool(value)
         if isinstance(default, int):
             return int(value)
+        if isinstance(default, float):
+            return float(value)
         return str(value)
     except (TypeError, ValueError) as exc:
         raise ConfigError(
@@ -795,10 +861,12 @@ def _file_options(path: Path) -> Mapping[str, Any]:
 # that sets how a server signs users in chooses the directory that gets
 # each password, and how long a login lasts. A tree that sets what a
 # model is told can tell it to answer from outside the sources. A tree
-# that names a trusted proxy lets a password come from the network.
+# that names a trusted proxy lets a password come from the network. A
+# tree that sets the trace chooses where the text of each prompt goes.
 NOT_FROM_A_TREE = (
     "trusted_proxy",
     "prompt_dir",
+    "ask_trace",
     "answer_notes",
     "rerank_notes",
     "remote",

@@ -30,6 +30,7 @@ nothing anywhere until an operator allows it.
 from pathlib import Path
 from typing import Protocol
 
+from ish.adapters.language_model._calls import CallOptions
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model.anthropic import AnthropicLanguageModel
 from ish.adapters.language_model.claude_cli import ClaudeCliLanguageModel
@@ -41,11 +42,17 @@ class LanguageModelFactory(Protocol):
     """What a registry entry is: a model option and instructions in, a backend out.
 
     *tree* is the tree an answer may read the files of. A backend whose
-    model cannot read files reads none, and needs no tree.
+    model cannot read files reads none, and needs no tree. *options* hold
+    what each call may do. A backend uses the parts that apply to it.
     """
 
     def __call__(
-        self, model: str, *, prompts: Prompts, tree: Path | None = None
+        self,
+        model: str,
+        *,
+        prompts: Prompts,
+        tree: Path | None = None,
+        options: CallOptions | None = None,
     ) -> LanguageModel: ...
 
 

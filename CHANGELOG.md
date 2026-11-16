@@ -43,9 +43,21 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - With `ask_turns` of 2 or more, the model searches against its first draft
   before it answers, and puts each disagreement in the gaps. `challenge`
   turns it off.
+- `ask_chunks`, `ask_chars`, and `ask_search_chunks` set how much an
+  answer reads: the chunks it reads in full, the characters of their
+  text, and the chunks each follow-up search adds. `ask_read_usd` sets
+  what one call of `claude-cli` that reads the tree may cost.
+- `ask_trace` names a directory where `claude-cli` writes one JSON file
+  for each call: the instructions, the message, the reply, the tokens,
+  and the cost. `scripts/replay_call.py` runs one such call again.
 
 ### Changed
 
+- `claude-cli` keeps a prompt in its cache for 5 minutes, not 1 hour.
+  Each turn of an answer is a new call, so the cache of 1 hour was
+  written at twice the price of an uncached token and was rarely read.
+  `prompt_cache` sets `5m`, `1h`, or `off`. On one question, the writes
+  were 76 % of the cost of the answer.
 - A checked answer shows on a terminal when the check ends, not part by
   part as the model writes it. Turn the check off with
   `--no-check-claims` to stream.

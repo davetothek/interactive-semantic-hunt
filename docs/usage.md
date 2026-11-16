@@ -446,6 +446,12 @@ builds a language model and sends no text anywhere.
 | `--rerank-model MODEL` | Model of the same backend that picks the chunks an answer reads |
 | `--rerank-candidates N` | Chunks the rerank model chooses from (default 50) |
 | `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
+| `--ask-chunks N` | Chunks an answer reads in full (default 10) |
+| `--ask-chars N` | Characters of chunk text an answer may send, over every turn (default 60000) |
+| `--ask-search-chunks N` | Chunks each follow-up search adds (default 5) |
+| `--prompt-cache 5m\|1h\|off` | How long `claude-cli` keeps a prompt in its cache (default `5m`) |
+| `--ask-read-usd USD` | What one call of `claude-cli` that reads the tree may cost (default 1.0) |
+| `--ask-trace DIR` | Write one JSON file for each call of `claude-cli` there |
 | `--no-check-claims` | Do not check that a quote of a source states each claim |
 | `--check-model answer\|rerank` | Model that checks the claims (default `answer`) |
 | `--repair-turns N` | Turns the model gets to fix the claims that fail the check (default 1) |
