@@ -21,8 +21,10 @@ ish "parse a python file" src/
 ```
 
 A result line tells where a chunk is, not what it says. `--format text`
-prints the start of each chunk under its line, at most 12 lines, and marks
-a cut:
+prints the text of each chunk under its line, at most 12 lines, and marks a
+cut. The text is the one the index read: an AsciiDoc section shows the rows
+its includes bring, not the `include::` lines. With `doc_windows`, a long
+section shows the window that matched the query, under a line that says so:
 
 ```
 [0.80] src/ish/application/scan.py:186-209  method  Scan.parse_file

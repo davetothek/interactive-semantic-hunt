@@ -17,6 +17,10 @@ EXCERPT_CHARS = 1_000
 # The indent of an excerpt line, so a reader tells it from a result line.
 EXCERPT_INDENT = "    "
 
+# The line above an excerpt that is the part of a chunk that matched, so
+# a reader knows the section holds more than the excerpt shows.
+MATCHED = "(the part of this chunk that matched best; the chunk holds more)"
+
 # What a part of an answer starts with when its sources imply it and do
 # not state it, so a reader tells a conclusion from a fact.
 INFERENCE = "Inference: "
@@ -83,13 +87,17 @@ def render(
     score: float | None = None,
     *,
     base: Path | None = None,
+    text: str | None = None,
+    matched: bool = False,
 ) -> str:
     """Render one chunk in the shape the caller asked for.
 
     Accept a score for a ranked result and none for a plain listing, so
     every interface formats a line through this one function. Write the
     path from *base* when one is given, and from the working directory
-    otherwise.
+    otherwise. The text shape shows *text* when it is given, the text of
+    the file otherwise. With *matched*, *text* is the part of the chunk
+    that matched the query, and the excerpt says so.
     """
     if shape == "grep":
         return format_grep_line(chunk, score, base)
@@ -99,19 +107,21 @@ def render(
         else format_result_line(chunk, score, base)
     )
     if shape == "text":
-        return f"{line}\n{format_excerpt(chunk)}"
+        return f"{line}\n{format_excerpt(chunk, text, matched)}"
     return line
 
 
-def format_excerpt(chunk: Chunk) -> str:
+def format_excerpt(chunk: Chunk, text: str | None = None, matched: bool = False) -> str:
     """Return the start of the text of *chunk*, indented under its result line.
 
     A heading or a name tells where a chunk is, not what it says. The
-    excerpt gives a reader the words to check before a claim. Mark a cut
-    excerpt, and say when the text cannot be read, so that a reader
-    never takes a part for the whole.
+    excerpt gives a reader the words to check before a claim. Show
+    *text* when it is given, and the lines of the file otherwise. Name a
+    part that matched as such. Mark a cut excerpt, and say when the text
+    cannot be read, so that a reader never takes a part for the whole.
     """
-    text = read_lines(chunk)
+    if text is None:
+        text = read_lines(chunk)
     if text is None:
         return f"{EXCERPT_INDENT}(The text of this chunk cannot be read.)"
     lines = text.strip("\n").splitlines()
@@ -128,6 +138,8 @@ def format_excerpt(chunk: Chunk) -> str:
         cut = cut or len(line) > room
         room -= len(line)
     excerpt = "\n".join(f"{EXCERPT_INDENT}{line}".rstrip() for line in shown)
+    if matched:
+        excerpt = f"{EXCERPT_INDENT}{MATCHED}\n{excerpt}"
     if cut:
         excerpt = f"{excerpt}\n{EXCERPT_INDENT}(more text follows)"
     return excerpt

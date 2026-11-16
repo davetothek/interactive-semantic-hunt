@@ -67,6 +67,10 @@ class PurePythonVectorStore:
         """Return the subset of *hashes* that has no stored vector."""
         return {digest for digest in hashes if digest not in self._vectors}
 
+    def vectors(self, hashes: Collection[str]) -> Mapping[str, Sequence[float]]:
+        """Return the vector of each of *hashes* the store holds."""
+        return {d: self._vectors[d] for d in hashes if d in self._vectors}
+
     def add_vectors(self, vectors: Mapping[str, Sequence[float]]) -> None:
         """Store vectors by content hash."""
         self._vectors.update(vectors)

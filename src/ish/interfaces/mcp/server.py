@@ -342,9 +342,15 @@ class IshTools:
         # another directory resolves it against that one, and the
         # working directory of a shared server means nothing to it.
         shape = str(arguments.get("format") or self._settings.format)
-        return "\n".join(
-            render(chunk, shape, score, base=root) for chunk, score in results
-        )
+        lines = []
+        for chunk, score in results:
+            text, matched = (
+                session.excerpt(chunk, query) if shape == "text" else (None, False)
+            )
+            lines.append(
+                render(chunk, shape, score, base=root, text=text, matched=matched)
+            )
+        return "\n".join(lines)
 
     def ask(self, arguments: Mapping[str, Any]) -> str:
         """Answer a question from the chunks a search finds, as JSON.

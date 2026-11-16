@@ -291,3 +291,10 @@ class TestWindows:
         assert store.search([0.0, 1.0], limit=1)[0].chunk.symbol == "other"
         store.clear()
         assert store.search([0.0, 1.0]) == []
+
+
+class TestVectorsByHash:
+    def test_each_stored_hash_gives_its_vector(self) -> None:
+        store = PurePythonVectorStore()
+        store.add_vectors({"a": [1.0, 0.0]})
+        assert store.vectors(["a", "missing"]) == {"a": [1.0, 0.0]}

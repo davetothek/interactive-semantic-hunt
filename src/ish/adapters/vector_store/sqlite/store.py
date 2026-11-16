@@ -525,6 +525,22 @@ class SqliteVectorStore:
             present.update(row[0] for row in rows)
         return wanted - present
 
+    def vectors(self, hashes: Collection[str]) -> Mapping[str, Sequence[float]]:
+        """Return the vector of each of *hashes* this model has stored."""
+        found: dict[str, Sequence[float]] = {}
+        ordered = list(dict.fromkeys(hashes))
+        for start in range(0, len(ordered), 500):
+            batch = ordered[start : start + 500]
+            marks = ",".join("?" * len(batch))
+            with self._lock:
+                rows = self._db.execute(
+                    f"SELECT content_hash, data FROM {self._vectors} "  # noqa: S608
+                    f"WHERE model_id = ? AND content_hash IN ({marks})",
+                    [self._model_id, *batch],
+                ).fetchall()
+            found.update({str(digest): _unpack(data) for digest, data in rows})
+        return found
+
     def add_vectors(self, vectors: Mapping[str, Sequence[float]]) -> None:
         """Store vectors by content hash, at unit length."""
         if not vectors:

@@ -1122,3 +1122,21 @@ class TestWindows:
             return int(db.execute("SELECT COUNT(*) FROM windows").fetchone()[0])
         finally:
             db.close()
+
+
+class TestVectorsByHash:
+    def test_each_stored_hash_gives_its_vector(self, store: SqliteVectorStore) -> None:
+        store.add_vectors({"a": [1.0, 0.0], "b": [0.0, 2.0]})
+        found = store.vectors(["a", "b", "missing"])
+        assert set(found) == {"a", "b"}
+        assert [round(v, 3) for v in found["b"]] == [0.0, 1.0]
+
+    def test_many_hashes_are_read_in_batches(self, store: SqliteVectorStore) -> None:
+        store.add_vectors({f"h{n}": [1.0, float(n)] for n in range(1200)})
+        assert len(store.vectors([f"h{n}" for n in range(1200)])) == 1200
+
+    def test_another_model_reads_none(self, db_path: Path) -> None:
+        with SqliteVectorStore(db_path, model_id="model-a") as first:
+            first.add_vectors({"a": [1.0, 0.0]})
+        with SqliteVectorStore(db_path, model_id="model-b") as second:
+            assert second.vectors(["a"]) == {}

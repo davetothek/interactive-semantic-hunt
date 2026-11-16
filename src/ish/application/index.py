@@ -70,6 +70,14 @@ def window_texts(chunk: Chunk) -> list[str]:
     return [f"{_heading(chunk)}{window}" for window in windows(chunk.text)]
 
 
+def window_digests(chunk: Chunk) -> list[tuple[str, str]]:
+    """Return each window of a chunk with the hash its vector is stored under."""
+    heading = _heading(chunk)
+    return [
+        (window, content_hash(f"{heading}{window}")) for window in windows(chunk.text)
+    ]
+
+
 def _heading(chunk: Chunk) -> str:
     """Return the line that names a chunk before its text is embedded."""
     return f"{chunk.language} {chunk.kind} {chunk.symbol}:\n"

@@ -30,7 +30,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   long section. A section scores the best of its own vector and its
   windows. Off by default. Turning it on reads every file again.
   A table, a chunk with 70 % or more of its lines in table cells, gets no
-  windows.
+  windows. `--format text` and `search_code` with `format: "text"` show
+  the window that matched the query.
 - With `ask_turns` of 2 or more, the model searches against its first draft
   before it answers, and puts each disagreement in the gaps. `challenge`
   turns it off.
@@ -47,6 +48,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `--format text` shows the text the index read, so an AsciiDoc section
+  shows the rows its includes bring and not the `include::` lines.
 - A search with `--cache-dir` builds its own index when an `ish-serve` of
   another index directory keeps the tree current. It read the status of
   that server and built nothing. `ish-serve` now writes the directory of

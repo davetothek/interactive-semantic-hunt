@@ -85,6 +85,14 @@ class VectorReader(Protocol):
         """
         ...
 
+    def vectors(self, hashes: Collection[str]) -> Mapping[str, Sequence[float]]:
+        """Return the stored vector of each of *hashes* that has one.
+
+        Let a caller score the windows of a chunk it has already found,
+        with no embedding.
+        """
+        ...
+
     def close(self) -> None:
         """Release any resource the store holds."""
         ...

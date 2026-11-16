@@ -1,10 +1,11 @@
 """Implement the search use case — refresh the index, then query it."""
 
 import logging
+import math
 from collections.abc import Sequence
 from pathlib import Path
 
-from ish.application.index import Index
+from ish.application.index import Index, window_digests
 from ish.application.ports.embedder import Embedder
 from ish.application.ports.vector_store import VectorReader
 from ish.application.progress import ProgressCallback
@@ -104,6 +105,28 @@ class Search:
             return list(chunks)
         return [chunk for chunk in chunks if chosen(chunk)]
 
+    def passage(self, chunk: Chunk, query: str) -> str | None:
+        """Return the window of *chunk* nearest *query*, or None when it has none.
+
+        *chunk* carries its text as the index parsed it. Score each window
+        by the vector the index stored for it, so nothing is embedded but
+        the query, which the embedder has already seen. A reader then sees
+        the few lines that matched, not the first lines of the section.
+        """
+        pairs = window_digests(chunk)
+        if not pairs or not query.strip():
+            return None
+        stored = self._reader.vectors([digest for _window, digest in pairs])
+        if not stored:
+            return None
+        query_vector = self._embedder.embed_query(query)
+        scored = [
+            (_cosine(query_vector, stored[digest]), window)
+            for window, digest in pairs
+            if digest in stored
+        ]
+        return max(scored, key=lambda pair: pair[0])[1]
+
     def search(
         self,
         query: str,
@@ -129,3 +152,10 @@ class Search:
             limit=limit,
             keep=keep or self._keep,
         )
+
+
+def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
+    """Return the cosine similarity of two vectors, and 0 for a zero vector."""
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return dot / norm if norm else 0.0

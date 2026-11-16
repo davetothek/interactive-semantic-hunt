@@ -143,6 +143,23 @@ class TestTextShape:
         assert out.splitlines()[1:] == [f"    row {n}" for n in range(3, 10)]
 
 
+class TestTheTextGiven:
+    """The text shape shows the text the index parsed, and the part that matched."""
+
+    def test_the_given_text_replaces_the_file(self) -> None:
+        out = render(
+            text_chunk("include::regs.adoc[]"), "text", 0.5, text="|REG_A |0x1"
+        )
+        assert out.splitlines()[1:] == ["    |REG_A |0x1"]
+
+    def test_a_matched_part_says_so(self) -> None:
+        out = render(text_chunk("x"), "text", 0.5, text="The part.", matched=True)
+        assert out.splitlines()[1:] == [
+            "    (the part of this chunk that matched best; the chunk holds more)",
+            "    The part.",
+        ]
+
+
 class TestTheBase:
     """Verify a path is written from the directory a caller asked about.
 

@@ -50,6 +50,9 @@ class FakeVectorStore:
     def set_chunking(self, stamp: str) -> None:
         return None
 
+    def vectors(self, hashes: Collection[str]) -> Mapping[str, Sequence[float]]:
+        return {}
+
     def close(self) -> None:
         return None
 
@@ -79,6 +82,9 @@ class TestVectorStoreProtocol:
 
             def search(self, query_vector, query_text="", limit=5, keep=None):
                 return []
+
+            def vectors(self, hashes):
+                return {}
 
             def close(self):
                 return None

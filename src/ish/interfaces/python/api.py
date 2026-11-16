@@ -449,6 +449,22 @@ class Ish:
         matches = self.search(query, limit, lang=lang, under=under, type=type)
         return read_sources(matches, self._reader_for_answers(), self._glossary)
 
+    def excerpt(self, chunk: Chunk, query: str = "") -> tuple[str | None, bool]:
+        """Return the text of a result, and whether it is the part that matched.
+
+        Read the chunk as the index parsed it, so an AsciiDoc section shows
+        the rows its includes bring and not the directives. Give the window
+        nearest *query* when the chunk has windows, because the first lines
+        of a long section are seldom the ones that matched. Return None for
+        a chunk whose file cannot be read.
+        """
+        text = self._reader_for_answers()(chunk)
+        if text is None:
+            return None, False
+        words, _typed = parse_query(query)
+        part = self._use_case.passage(replace(chunk, text=text), words)
+        return (part, True) if part is not None else (text, False)
+
     def _reader_for_answers(self) -> Callable[[Chunk], str | None]:
         """Return the reader answers share, and build it on the first call.
 

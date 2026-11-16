@@ -175,6 +175,9 @@ index altogether, with `exclude`, when the sections that use them include
 their rows. On one specification tree, 290 such files held more than half
 of the vectors, and took 156 of 240 places of 24 top 10s with windows.
 
+A search with `--format text` shows the window that matched, so a reader
+sees the sentence that answers, not the first lines of the section.
+
 Code keeps one vector a chunk, because a definition says one thing. Windows
 stay off by default: on this repository, which is mostly code, they gave
 the documents more chances than the code and cost 8 points of top-1. A
