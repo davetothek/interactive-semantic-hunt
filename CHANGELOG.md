@@ -58,7 +58,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   Ollama answer gets a window that fits `ask_chars`.
 - `resume_turns` lets each later turn of a `claude-cli` answer resume
   the session of the turn before and send only what is new, so it reads
-  the rest from the cache. Off by default.
+  the rest from the cache. On 7 questions it cited the same sources and
+  cost a third less. `--no-resume-turns` turns it off.
 - `ish chat` and `ish remote chat` keep a prompt in the cache for 1 hour,
   set by `chat_prompt_cache`.
 - `ask_trace` names a directory where `claude-cli` writes one JSON file

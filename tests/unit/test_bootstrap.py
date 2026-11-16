@@ -1852,7 +1852,7 @@ class TestCallOptions:
         bootstrap.build_language_model(chosen)
         bootstrap.build_reranker(chosen)
         wanted = CallOptions(
-            prompt_cache="off", read_usd=0.5, trace=Path("/home/u/trace")
+            prompt_cache="off", read_usd=0.5, trace=Path("/home/u/trace"), resume=True
         )
         assert given == [wanted, wanted]
 

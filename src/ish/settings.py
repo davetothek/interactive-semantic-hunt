@@ -554,7 +554,7 @@ class Settings:
         ),
     )
     resume_turns: bool = field(
-        default=False,
+        default=True,
         metadata=_opt(
             ANSWERS,
             "Let each later turn of a claude-cli answer that reads the tree "
