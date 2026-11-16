@@ -553,6 +553,18 @@ class Settings:
             choices=["5m", "1h", "off"],
         ),
     )
+    resume_turns: bool = field(
+        default=False,
+        metadata=_opt(
+            ANSWERS,
+            "Let each later turn of a claude-cli answer that reads the tree "
+            "resume the session of the turn before, and send only the new "
+            "sources and notes. The turn reads the rest from the cache. ish "
+            "deletes a session it kept when it exits, when a new session of "
+            "the question replaces it, or past 8 questions under way.",
+            action="boolean_optional",
+        ),
+    )
     chat_prompt_cache: str = field(
         default="1h",
         metadata=_opt(

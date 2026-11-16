@@ -407,6 +407,17 @@ round of reading. `ish chat` and `ish remote chat` use
 `chat_prompt_cache`, `1h` by default, since the next question can come
 more than 5 minutes later.
 
+claude marks the cache at the end of the instructions and at the end of
+the message, and a later call reads only a part that ends at such a
+mark. The sources of a turn come first in a message whose end changes
+each turn, so a new call writes them again. With `resume_turns`, each
+later turn of an answer that reads the tree resumes the session of the
+turn before, and sends only the new sources and notes. The turn then
+reads the sources, the files the model read, and its draft from the
+cache. claude keeps each session as a file under its config directory,
+and ish deletes it when the process ends, when a new session of the
+same question takes its place, or past 8 questions under way.
+
 A cache can outlast a run. A second run within the hour reads what the
 first one wrote, such as the rerank of the same question, and costs
 less than a cold run. Compare runs made the same way.

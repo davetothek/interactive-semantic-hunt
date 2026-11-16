@@ -11,6 +11,7 @@ file, and runs in an empty directory, so no hook, project file, or
 memory reaches the model.
 """
 
+import atexit
 import json
 import logging
 import os
@@ -128,6 +129,8 @@ def command(
     read_usd: float = DEFAULT_READ_USD,
     effort: str = "",
     fallback_model: str = "",
+    persist: bool = False,
+    session: str = "",
 ) -> list[str]:
     """Return the argument list that asks one question with nothing else loaded.
 
@@ -136,7 +139,9 @@ def command(
     the files of its working directory with Read, Grep, and Glob, and no
     others, and a call stops when it has cost *read_usd*. Ask for
     *effort*, and for *fallback_model* when the model is overloaded,
-    only when each is set.
+    only when each is set. With *persist*, claude keeps the session on
+    disk, so a later call can resume it. With *session*, the call resumes
+    that session.
     """
     allowed = (
         [
@@ -162,7 +167,8 @@ def command(
         "",
         *allowed,
         "--strict-mcp-config",
-        "--no-session-persistence",
+        *([] if persist or session else ["--no-session-persistence"]),
+        *(["--resume", session] if session else []),
         "--model",
         model,
         *(["--effort", effort] if effort else []),
@@ -174,6 +180,35 @@ def command(
         "--json-schema",
         json.dumps(schema),
     ]
+
+
+# Conversations a model keeps at most: one for each question under way.
+MAX_CONVERSATIONS = 8
+
+
+@dataclass(frozen=True, slots=True)
+class Conversation:
+    """Hold the session of the last turn of a question, and what it holds.
+
+    Attributes:
+        session: The session that claude kept on disk.
+        sources: The id, the title, and the text of each source the
+            session holds, in order.
+    """
+
+    session: str
+    sources: tuple[tuple[str, str, str], ...]
+
+
+def held(sources: Sequence[Source]) -> tuple[tuple[str, str, str], ...]:
+    """Return what a session holds of *sources*, to compare with a later turn."""
+    return tuple((s.id, s.title, s.text) for s in sources)
+
+
+def session_files(session: str, source: Mapping[str, str]) -> list[Path]:
+    """Return the files where claude keeps *session*, under its config directory."""
+    base = Path(source.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    return sorted((base / "projects").glob(f"*/{session}.jsonl"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +330,12 @@ class ClaudeCliLanguageModel:
         # cache, and those it read from it.
         self._cached = (0, 0)
         self._timeout = self._options.timeout or timeout
+        # The session of the last call, and the conversation of each
+        # question under way, which a later turn resumes.
+        self._session = ""
+        self._conversations: dict[str, Conversation] = {}
+        self._lock = threading.Lock()
+        atexit.register(self.forget)
 
     def answer(
         self,
@@ -332,19 +373,68 @@ class ClaudeCliLanguageModel:
         on_block: OnBlock | None = None,
         notes: Sequence[str] = (),
     ) -> Reply:
-        """Answer, or ask for searches, in the JSON the schema fixes."""
+        """Answer, or ask for searches, in the JSON the schema fixes.
+
+        With ``resume`` and a tree, a later turn of the same question
+        resumes the session of the turn before, when that session holds
+        the first of *sources* as they are. It sends only the sources the
+        session does not hold, so claude reads the rest from its cache.
+        """
+        resume = self._options.resume and self._tree is not None
+        earlier = self._earlier(question, sources) if resume else None
+        told = sources[len(earlier.sources) :] if earlier else sources
         structured, read, wrote, cost = self._run(
             "step",
             self._prompts.step,
             _grounded.STEP_SCHEMA,
-            _grounded.step_prompt(question, sources, searched, turns_left, notes),
+            _grounded.step_prompt(question, told, searched, turns_left, notes),
             on_block,
             reads=True,
+            persist=resume,
+            session=earlier.session if earlier else "",
         )
+        if resume:
+            self._keep(question, sources)
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
         )
         return self._with_usage(reply, cost)
+
+    def _earlier(self, question: str, sources: Sequence[Source]) -> Conversation | None:
+        """Return the conversation of *question* that a turn on *sources* resumes."""
+        with self._lock:
+            found = self._conversations.get(question)
+        if found is None or held(sources[: len(found.sources)]) != found.sources:
+            return None
+        return found
+
+    def _keep(self, question: str, sources: Sequence[Source]) -> None:
+        """Keep the session of the last call as the conversation of *question*.
+
+        Delete the session it takes the place of, when the call started a
+        new one, and the oldest conversations past ``MAX_CONVERSATIONS``.
+        """
+        with self._lock:
+            before = self._conversations.pop(question, None)
+            self._conversations[question] = Conversation(self._session, held(sources))
+            gone = [before] if before and before.session != self._session else []
+            while len(self._conversations) > MAX_CONVERSATIONS:
+                gone.append(self._conversations.pop(next(iter(self._conversations))))
+        for conversation in gone:
+            self._delete(conversation.session)
+
+    def forget(self) -> None:
+        """Delete every session this model kept on disk."""
+        with self._lock:
+            gone = list(self._conversations.values())
+            self._conversations.clear()
+        for conversation in gone:
+            self._delete(conversation.session)
+
+    def _delete(self, session: str) -> None:
+        """Delete the files of *session*, which hold the text of the tree."""
+        for path in session_files(session, os.environ):
+            path.unlink(missing_ok=True)
 
     def _with_usage(self, reply: Reply, cost: float) -> Reply:
         """Return *reply* with the cost, reads, and cache use of the last call."""
@@ -411,6 +501,8 @@ class ClaudeCliLanguageModel:
         on_block: OnBlock | None = None,
         *,
         reads: bool = False,
+        persist: bool = False,
+        session: str = "",
     ) -> tuple[object, int, int, float]:
         """Run one call, and return its structured output, tokens, and cost.
 
@@ -419,7 +511,8 @@ class ClaudeCliLanguageModel:
         stream the reply and give on each block as it completes. With
         *reads* and a tree, run in the tree, and let claude read it.
         Otherwise run in an empty directory, with no tool. With a trace,
-        write the call there under *kind*, the method that made it.
+        write the call there under *kind*, the method that made it. With
+        *persist*, keep the session on disk. With *session*, resume it.
         """
         tools = reads and self._tree is not None
         if tools:
@@ -428,15 +521,25 @@ class ClaudeCliLanguageModel:
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
             cwd = str(self._tree) if tools else empty
             if on_block is None:
-                body = self._whole(
-                    self._command(kind, system, schema, tools=tools), prompt, cwd
+                args = self._command(
+                    kind, system, schema, tools=tools, persist=persist, session=session
                 )
+                body = self._whole(args, prompt, cwd)
             else:
                 stream = _grounded.BlockStream(on_block)
-                args = self._command(kind, system, schema, stream=True, tools=tools)
+                args = self._command(
+                    kind,
+                    system,
+                    schema,
+                    stream=True,
+                    tools=tools,
+                    persist=persist,
+                    session=session,
+                )
                 body = self._streamed(args, prompt, cwd, stream.feed)
         failed = bool(body.get("is_error")) or "structured_output" not in body
         used = usage_of(body)
+        self._session = str(body.get("session_id") or "")
         if self._options.trace is not None:
             write_trace(
                 self._options.trace,
@@ -450,6 +553,7 @@ class ClaudeCliLanguageModel:
                     "read_usd": self._options.read_usd,
                     "effort": self._options.effort_of(kind),
                     "fallback_model": self._options.fallback_model,
+                    "resumed": session,
                     "system": system,
                     "schema": schema,
                     "prompt": prompt,
@@ -502,6 +606,8 @@ class ClaudeCliLanguageModel:
         *,
         stream: bool = False,
         tools: bool = False,
+        persist: bool = False,
+        session: str = "",
     ) -> list[str]:
         """Return the arguments of one call of *kind*, under the options."""
         return command(
@@ -514,6 +620,8 @@ class ClaudeCliLanguageModel:
             read_usd=self._options.read_usd,
             effort=self._options.effort_of(kind),
             fallback_model=self._options.fallback_model,
+            persist=persist,
+            session=session,
         )
 
     def _streamed(

@@ -345,6 +345,7 @@ def call_options(settings: Settings) -> CallOptions:
         claude=settings.claude_command,
         timeout=settings.answer_timeout,
         budget_chars=settings.ask_chars,
+        resume=settings.resume_turns,
     )
 
 

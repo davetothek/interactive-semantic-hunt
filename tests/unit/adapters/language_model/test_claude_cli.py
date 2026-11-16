@@ -55,8 +55,12 @@ class Runner:
         self.stderr = ""
         self.returncode = 0
         self.error: Exception | None = None
+        # The replies of the next calls, one each, before stdout.
+        self.replies: list[str] = []
 
     def __call__(self, args, **kwargs):
+        if self.replies:
+            self.stdout = self.replies.pop(0)
         self.calls.append(
             {"args": args, **kwargs, "cwd_existed": Path(kwargs["cwd"]).is_dir()}
         )
@@ -804,3 +808,146 @@ class TestReadsLeaveOutTheReplyRound:
         runner.stdout = json.dumps(json.loads(runner.stdout) | {"num_turns": requests})
         model = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
         assert model.answer("How?", SOURCES).reads == reads
+
+
+STEP = {"covered": False, "passages": [], "search": ["more"]}
+FIRST = Source("1", "/d/a.adoc:1-9 A", "It starts at boot.")
+SECOND = Source("2", "/d/b.adoc:1-5 B", "A reset clears it.")
+
+
+def _sessions(runner: Runner, *ids: str) -> None:
+    """Give each next call of claude the next session id, as claude gives them."""
+    runner.replies = [
+        json.dumps(
+            {
+                "is_error": False,
+                "structured_output": STEP,
+                "session_id": session,
+                "usage": {"input_tokens": 1},
+            }
+        )
+        for session in ids
+    ]
+
+
+class TestResume:
+    """A later turn reads what the turn before wrote, from the cache.
+
+    Each turn of an answer was a new call that sent every source again,
+    and claude wrote all of it to the cache at a price above an uncached
+    token. Only the instructions and the tool definitions were read back.
+    """
+
+    @pytest.fixture()
+    def config(self, tmp_path: Path, monkeypatch) -> Path:
+        home = tmp_path / "claude"
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+        return home
+
+    def _model(self, tmp_path: Path, **options) -> ClaudeCliLanguageModel:
+        tree = tmp_path / "tree"
+        tree.mkdir(exist_ok=True)
+        return ClaudeCliLanguageModel(
+            "sonnet", timeout=5, tree=tree, options=CallOptions(resume=True, **options)
+        )
+
+    def _file(self, config: Path, session: str) -> Path:
+        path = config / "projects" / "-tree" / f"{session}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+        return path
+
+    def test_a_later_turn_resumes_and_sends_only_what_is_new(
+        self, runner, tmp_path, config
+    ) -> None:
+        _sessions(runner, "s1", "s1")
+        model = self._model(tmp_path)
+        model.step("How?", [FIRST], [], 2)
+        model.step("How?", [FIRST, SECOND], ["more"], 1)
+        first, second = (c["args"] for c in runner.calls)
+        assert "--no-session-persistence" not in first and "--resume" not in first
+        assert second[second.index("--resume") + 1] == "s1"
+        sent = runner.calls[1]["input"]
+        assert "A reset clears it." in sent and "It starts at boot." not in sent
+        assert "Question: How?" in sent and "- more" in sent
+
+    def test_a_changed_source_starts_again(self, runner, tmp_path, config) -> None:
+        _sessions(runner, "s1", "s2")
+        old = self._file(config, "s1")
+        model = self._model(tmp_path)
+        model.step("How?", [FIRST], [], 2)
+        changed = Source("1", FIRST.title, "It starts later.")
+        model.step("How?", [changed, SECOND], [], 1)
+        assert "--resume" not in runner.calls[1]["args"]
+        assert "It starts later." in runner.calls[1]["input"]
+        assert not old.exists()
+
+    def test_another_question_is_another_conversation(
+        self, runner, tmp_path, config
+    ) -> None:
+        _sessions(runner, "a", "b", "a")
+        model = self._model(tmp_path)
+        model.step("How?", [FIRST], [], 2)
+        model.step("Why?", [FIRST], [], 2)
+        model.step("How?", [FIRST], [], 1)
+        assert "--resume" not in runner.calls[1]["args"]
+        third = runner.calls[2]["args"]
+        assert third[third.index("--resume") + 1] == "a"
+
+    def test_the_oldest_conversation_goes_past_the_limit(
+        self, runner, tmp_path, config
+    ) -> None:
+        ids = [f"s{n}" for n in range(claude_cli.MAX_CONVERSATIONS + 1)]
+        _sessions(runner, *ids)
+        files = [self._file(config, session) for session in ids]
+        model = self._model(tmp_path)
+        for n in range(len(ids)):
+            model.step(f"q{n}", [FIRST], [], 1)
+        assert not files[0].exists() and all(f.exists() for f in files[1:])
+        model.forget()
+        assert not any(f.exists() for f in files)
+
+    def test_no_resume_without_the_setting_or_a_tree(self, runner, tmp_path) -> None:
+        _sessions(runner, "s1", "s2", "s3", "s4")
+        plain = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
+        plain.step("How?", [FIRST], [], 1)
+        plain.step("How?", [FIRST, SECOND], [], 0)
+        untreed = ClaudeCliLanguageModel(
+            "sonnet", timeout=5, options=CallOptions(resume=True)
+        )
+        untreed.step("How?", [FIRST], [], 1)
+        untreed.step("How?", [FIRST, SECOND], [], 0)
+        for call in runner.calls:
+            assert "--no-session-persistence" in call["args"]
+            assert "--resume" not in call["args"]
+
+    def test_the_trace_names_the_session_it_resumed(
+        self, runner, tmp_path, config
+    ) -> None:
+        _sessions(runner, "s1", "s1")
+        model = self._model(tmp_path, trace=tmp_path / "trace")
+        model.step("How?", [FIRST], [], 2)
+        model.step("How?", [FIRST, SECOND], [], 1)
+        records = [
+            json.loads(p.read_text()) for p in sorted((tmp_path / "trace").iterdir())
+        ]
+        assert [r["resumed"] for r in records] == ["", "s1"]
+
+    def test_the_session_files_are_found_under_the_config(self, tmp_path) -> None:
+        path = tmp_path / "projects" / "-x" / "s9.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
+        assert claude_cli.session_files("s9", {"CLAUDE_CONFIG_DIR": str(tmp_path)}) == [
+            path
+        ]
+        assert claude_cli.session_files("s9", {}) == sorted(
+            (Path.home() / ".claude" / "projects").glob("*/s9.jsonl")
+        )
+
+    def test_a_streamed_turn_keeps_its_session(self, monkeypatch, tmp_path) -> None:
+        made = Process(_events(STRUCTURED, RESULT | {"session_id": "s1"}))
+        monkeypatch.setattr(claude_cli.subprocess, "Popen", made)
+        monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+        model = self._model(tmp_path)
+        model.step("How?", [FIRST], [], 0, on_block=lambda block: None)
+        assert "--no-session-persistence" not in made.args

@@ -52,6 +52,9 @@ class CallOptions:
             backend.
         budget_chars: Characters of chunk text one answer may send. A
             backend with a window of fixed size makes it fit them.
+        resume: Let each later turn of an answer of claude-cli that reads
+            the tree resume the session of the turn before, and send only
+            what is new.
     """
 
     prompt_cache: str = DEFAULT_PROMPT_CACHE
@@ -64,6 +67,7 @@ class CallOptions:
     claude: str = DEFAULT_CLAUDE
     timeout: float = 0.0
     budget_chars: int = DEFAULT_BUDGET_CHARS
+    resume: bool = False
 
     def __post_init__(self) -> None:
         """Refuse a cache or an effort that claude-cli does not know."""

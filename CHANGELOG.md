@@ -56,6 +56,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   (`low` to `max`), `claude_fallback_model`, and `claude_command`.
   `answer_timeout` sets the seconds of a call for every backend. An
   Ollama answer gets a window that fits `ask_chars`.
+- `resume_turns` lets each later turn of a `claude-cli` answer resume
+  the session of the turn before and send only what is new, so it reads
+  the rest from the cache. Off by default.
 - `ish chat` and `ish remote chat` keep a prompt in the cache for 1 hour,
   set by `chat_prompt_cache`.
 - `ask_trace` names a directory where `claude-cli` writes one JSON file

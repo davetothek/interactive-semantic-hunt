@@ -7,3 +7,5 @@ search empty.
 Write a query about the subject of the question, not about the answer you
 expect: a query that states a conclusion finds text that looks like it.
 When notes from ish follow the question, do what they ask first.
+A later message can add sources and notes to the messages before it. Use
+the sources of every message, each by its id.

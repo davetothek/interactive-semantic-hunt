@@ -1868,8 +1868,10 @@ class TestCallOptions:
                 claude_command="claude-beta",
                 answer_timeout=30.0,
                 ask_chars=90_000,
+                resume_turns=True,
             )
         )
+        assert options.resume is True
         assert (options.answer_effort, options.rerank_effort) == ("high", "low")
         assert (options.check_effort, options.fallback_model) == ("medium", "haiku")
         assert (options.claude, options.timeout, options.budget_chars) == (
