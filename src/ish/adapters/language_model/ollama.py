@@ -9,6 +9,7 @@ this backend refuses any host that is not a loopback address.
 """
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from ish.adapters import _http
 from ish.adapters._ollama import is_loopback, resolve_host
@@ -48,11 +49,13 @@ class OllamaLanguageModel:
         host: str | None = None,
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
+        tree: Path | None = None,
     ) -> None:
         """Use *model*, such as ``qwen3:8b``, on the daemon at *host*.
 
         Read ``OLLAMA_HOST`` when no host is given. Require the model, and
         refuse a host that is not this machine.
+        The model reads no file, so *tree* changes nothing.
         """
         if not model:
             raise LanguageModelError(

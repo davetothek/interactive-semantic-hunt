@@ -1060,7 +1060,7 @@ class TestAsk:
         made = self.Model()
         asked: list[bool] = []
 
-        def build(settings, *, brief=False):
+        def build(settings, *, brief=False, **_):
             asked.append(brief)
             return made
 

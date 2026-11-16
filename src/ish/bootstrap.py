@@ -272,15 +272,20 @@ def build_embedder(settings: Settings) -> Embedder:
     return backend.from_option(settings.model, context_tokens=context_window(settings))
 
 
-def build_language_model(settings: Settings, *, brief: bool = False) -> LanguageModel:
+def build_language_model(
+    settings: Settings, *, brief: bool = False, tree: Path | None = None
+) -> LanguageModel:
     """Construct the language model that writes answers.
 
     Build a backend only when ``allowed_language_models`` names it. A
     backend receives the text of the documents, so there is no default
     and no fallback: an unset, unknown, or disallowed backend raises.
-    With *brief*, its instructions ask for the short answer alone.
+    With *brief*, its instructions ask for the short answer alone. With
+    *tree* and ``answer_tools``, a backend that can read files reads the
+    files of that tree before it answers. A brief answer reads none.
     """
-    return _language_model(settings, settings.answer_model, brief=brief)
+    reads = tree if settings.answer_tools and not brief else None
+    return _language_model(settings, settings.answer_model, brief=brief, tree=reads)
 
 
 def build_reranker(settings: Settings) -> LanguageModel | None:
@@ -296,7 +301,7 @@ def build_reranker(settings: Settings) -> LanguageModel | None:
 
 
 def _language_model(
-    settings: Settings, model: str, *, brief: bool = False
+    settings: Settings, model: str, *, brief: bool = False, tree: Path | None = None
 ) -> LanguageModel:
     name = settings.language_model
     if not name:
@@ -317,7 +322,7 @@ def _language_model(
             f"Unknown language model {name!r}. Valid backends: {valid}"
         ) from None
     prompts = build_prompts(settings)
-    return backend(model, prompts=prompts.briefly() if brief else prompts)
+    return backend(model, prompts=prompts.briefly() if brief else prompts, tree=tree)
 
 
 def build_prompts(settings: Settings) -> Prompts:

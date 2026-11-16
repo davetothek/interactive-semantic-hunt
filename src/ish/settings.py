@@ -456,6 +456,16 @@ class Settings:
             metavar="N",
         ),
     )
+    answer_tools: bool = field(
+        default=True,
+        metadata=_opt(
+            ANSWERS,
+            "Let the claude-cli model read the files of the tree with Read, "
+            "Grep, and Glob before it answers, and of no other place. An "
+            "answer from a server reads no file.",
+            action="boolean_optional",
+        ),
+    )
     check_claims: bool = field(
         default=True,
         metadata=_opt(

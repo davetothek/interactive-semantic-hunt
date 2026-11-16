@@ -129,7 +129,7 @@ class TestInjection:
         (tmp_path / "answer.md").write_text("Own answer.")
         given: list[Prompts] = []
 
-        def stub(model: str, *, prompts: Prompts):
+        def stub(model: str, *, prompts: Prompts, **_):
             given.append(prompts)
             return object()
 
@@ -193,7 +193,7 @@ def test_bootstrap_builds_a_brief_backend_with_brief_instructions(monkeypatch) -
 
     given: list[Prompts] = []
 
-    def stub(model: str, *, prompts: Prompts):
+    def stub(model: str, *, prompts: Prompts, **_):
         given.append(prompts)
         return object()
 

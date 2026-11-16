@@ -8,7 +8,11 @@ import pytest
 
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded, claude_cli
 from ish.adapters.language_model._prompts import load as load_prompts
-from ish.adapters.language_model.claude_cli import ClaudeCliLanguageModel, command
+from ish.adapters.language_model.claude_cli import (
+    MAX_TOOL_COST_USD,
+    ClaudeCliLanguageModel,
+    command,
+)
 from ish.application.ports.language_model import (
     Claim,
     LanguageModelError,
@@ -112,6 +116,64 @@ class TestCommand:
         assert reply.covered
         assert reply.passages[0].source_ids == ("1",)
         assert (reply.input_tokens, reply.output_tokens) == (352, 40)
+
+
+class TestReadingTheTree:
+    """An answer may read the files of its tree, and of no other place.
+
+    A model that saw only the chunks a search found wrote what those
+    chunks implied. Reading the section around a source and following its
+    references found what the chunks left out.
+    """
+
+    def test_the_tools_are_reads_scoped_to_the_working_directory(self) -> None:
+        args = command("/usr/bin/claude", "sonnet", "S", {}, tools=True)
+        at = args.index("--tools")
+        assert args[at + 1] == "Read,Grep,Glob"
+        allowed = args[
+            args.index("--allowedTools") + 1 : args.index("--max-budget-usd")
+        ]
+        assert allowed == ["Read(./**)", "Grep(./**)", "Glob(./**)"]
+        assert args[args.index("--max-budget-usd") + 1] == str(MAX_TOOL_COST_USD)
+
+    def test_an_answer_runs_in_the_tree_with_the_tools_prompt(
+        self, runner, tmp_path: Path
+    ) -> None:
+        model = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
+        model.answer("How?", SOURCES)
+        call = runner.calls[0]
+        assert call["cwd"] == str(tmp_path)
+        system = call["args"][call["args"].index("--system-prompt") + 1]
+        assert system == f"{PROMPTS.answer}\n\n{PROMPTS.tools}"
+        assert "Read,Grep,Glob" in call["args"]
+
+    def test_a_step_reads_the_tree_too(self, runner, tmp_path: Path) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"covered": False, "passages": [], "search": []},
+            }
+        )
+        ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path).step(
+            "q", SOURCES, [], 1
+        )
+        assert runner.calls[0]["cwd"] == str(tmp_path)
+
+    def test_a_check_reads_nothing_but_its_message(
+        self, runner, tmp_path: Path
+    ) -> None:
+        """The judge reads a claim beside its quotes alone."""
+        runner.stdout = json.dumps(
+            {"is_error": False, "structured_output": {"verdicts": []}}
+        )
+        ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path).check([])
+        call = runner.calls[0]
+        assert call["cwd"] != str(tmp_path)
+        assert call["args"][call["args"].index("--tools") + 1] == ""
+
+    def test_the_tools_prompt_names_the_form_of_a_citation(self) -> None:
+        assert '"path:first-last"' in PROMPTS.tools
+        assert "Read, Grep, and Glob" in PROMPTS.tools
 
 
 class TestFailures:
@@ -433,6 +495,12 @@ class TestStreaming:
             "q", SOURCES, [], 0, on_block=blocks.append
         )
         assert [b.kind for b in blocks] == ["summary", "prose"]
+
+    def test_a_streamed_answer_reads_the_tree(self, process, tmp_path: Path) -> None:
+        ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path).answer(
+            "q", SOURCES, on_block=lambda block: None
+        )
+        assert "Read,Grep,Glob" in process.args
 
     def test_the_stream_arguments(self) -> None:
         args = command("/c", "m", "s", {}, stream=True)

@@ -32,6 +32,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   A table, a chunk with 70 % or more of its lines in table cells, gets no
   windows. `--format text` and `search_code` with `format: "text"` show
   the window that matched the query.
+- With the `claude-cli` backend, an answer reads the files of the tree
+  before it replies, with Read, Grep, and Glob and no other tool, inside the
+  tree only. A model that saw only the chunks of a search wrote what they
+  implied. It cites a file it read as `path:first-last`, and the check finds
+  each quote in those lines. `answer_tools` turns it off.
 - With `ask_turns` of 2 or more, the model searches against its first draft
   before it answers, and puts each disagreement in the gaps. `challenge`
   turns it off.

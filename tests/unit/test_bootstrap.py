@@ -1377,7 +1377,7 @@ class TestBuildLanguageModel:
     def registry(self, monkeypatch) -> list[str]:
         built: list[str] = []
 
-        def stub(model: str, *, prompts) -> _StubModel:
+        def stub(model: str, *, prompts, **_) -> _StubModel:
             built.append(model)
             return _StubModel(model)
 
@@ -1791,3 +1791,35 @@ class TestWindowed:
         assert is_windowed(self._chunk("asciidoc"))
         assert not is_windowed(self._chunk("python"))
         assert not is_windowed(self._chunk("yaml"))
+
+
+class TestAnAnswerReadsTheTree:
+    """The model of an answer gets the tree, unless it is brief or the option is off."""
+
+    def _built(self, monkeypatch, **settings) -> list:
+        from ish.settings import Settings
+
+        seen: list = []
+
+        def stub(model: str, *, prompts, tree=None):
+            seen.append(tree)
+            return _StubModel(model)
+
+        monkeypatch.setitem(bootstrap.LANGUAGE_MODELS, "stub", stub)
+        chosen = Settings(
+            language_model="stub",
+            allowed_language_models=("stub",),
+            answer_model="m",
+            **settings,
+        )
+        bootstrap.build_language_model(chosen, tree=Path("/t"))
+        bootstrap.build_language_model(chosen, brief=True, tree=Path("/t"))
+        return seen
+
+    def test_a_full_answer_reads_the_tree_and_a_brief_one_reads_none(
+        self, monkeypatch
+    ) -> None:
+        assert self._built(monkeypatch) == [Path("/t"), None]
+
+    def test_the_option_turns_reading_off(self, monkeypatch) -> None:
+        assert self._built(monkeypatch, answer_tools=False) == [None, None]

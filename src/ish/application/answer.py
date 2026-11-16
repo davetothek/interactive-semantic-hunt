@@ -267,6 +267,7 @@ class AnswerQuestion:
         judge: LanguageModel | None = None,
         repairs: int = 1,
         challenge: bool = False,
+        lookup: Callable[[str], tuple[Chunk, str] | None] | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -312,6 +313,12 @@ class AnswerQuestion:
         With *challenge* and *turns* above 0, ask the model for searches
         that could find evidence against its first draft before it
         answers. A draft then streams no block either.
+
+        A model that reads the files of the tree cites what it read as
+        ``path:first-last``. Turn such a citation into a source through
+        *lookup*, which returns those lines as a chunk with its text, or
+        None for lines that are not there. The check then finds each quote
+        in the lines that the model names, as in any other source.
         """
         self._search = search
         self._model = model
@@ -329,6 +336,9 @@ class AnswerQuestion:
         self._judge = judge
         self._repairs = repairs
         self._challenge = challenge
+        self._lookup = lookup
+        # The lines the model cited by path, by the reference it wrote.
+        self._refs: dict[str, tuple[Chunk, str]] = {}
         # What one answer has read, so no chunk is read twice. Each text
         # is keyed by its words alone, to find a copy in another file.
         self._texts: dict[Chunk, str | None] = {}
@@ -353,6 +363,7 @@ class AnswerQuestion:
         when the search finds nothing.
         """
         self._spent = {}
+        self._refs = {}
         self._texts, self._first, self._copies = {}, {}, {}
         self._rerank_cost = 0.0
         start = self._clock()
@@ -406,6 +417,7 @@ class AnswerQuestion:
                 **self._streaming(texts),
             )
             searched, turns = [], 1
+        self._resolve(reply)
         checked: Review | None = None
         if self._judge is not None:
             reply, texts, searched, turns, left, checked = self._checked(
@@ -413,6 +425,8 @@ class AnswerQuestion:
             )
         kept = [chunk for chunk, _ in texts]
         by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
+        by_id |= {ref: chunk for ref, (chunk, _text) in self._refs.items()}
+        kept += [chunk for chunk, _text in self._refs.values() if chunk not in kept]
         log.info(
             "%s read %d tokens and wrote %d in %d turns",
             self._model.model_name,
@@ -512,7 +526,9 @@ class AnswerQuestion:
         judge = self._judge
         if judge is None or not reply.covered:
             return Review(reply)
+        self._resolve(reply)
         by_id = {str(n): text for n, (_, text) in enumerate(texts, 1)}
+        by_id |= {ref: text for ref, (_chunk, text) in self._refs.items()}
         self._on_step(AnswerStep(CHECKING, model=judge.model_name))
         return self._timed(CHECKING, review, reply, by_id, judge)
 
@@ -547,6 +563,24 @@ class AnswerQuestion:
         by_id = {str(n): chunk for n, (chunk, _) in enumerate(texts, 1)}
         give = self._on_block
         return {"on_block": lambda block: give(_block(block, by_id))}
+
+    def _resolve(self, reply: Reply) -> None:
+        """Turn each ``path:first-last`` the reply cites into the lines it names."""
+        if self._lookup is None:
+            return
+        rows = [row for block in reply.blocks for row in block.rows]
+        cited = [
+            *(i for p in reply.passages for i in p.source_ids),
+            *(q.source_id for p in reply.passages for q in p.quotes),
+            *(i for row in rows for i in row.source_ids),
+            *(q.source_id for row in rows for q in row.quotes),
+        ]
+        for ref in dict.fromkeys(cited):
+            if ref.isdigit() or ref in self._refs:
+                continue
+            found = self._lookup(ref)
+            if found is not None:
+                self._refs[ref] = found
 
     def _streams(self) -> bool:
         """Say whether a block may show before the answer is final.

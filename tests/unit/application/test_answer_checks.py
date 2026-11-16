@@ -304,3 +304,60 @@ class TestTheChallenge:
             on_block=lambda block: None,
         ).answer("q")
         assert writer.streamed == [False, False]
+
+
+class TestCitedFiles:
+    """A model that read the tree cites lines of a file, and the check reads them."""
+
+    LINES = "A reset clears every register of the block.\n"
+
+    def _lookup(self, ref: str):
+        if ref != "docs/reset.adoc:3-3":
+            return None
+        chunk = make_chunk("reset-lines", text=self.LINES)
+        return chunk, self.LINES
+
+    def test_a_quote_of_the_lines_cited_holds(self) -> None:
+        ref = "docs/reset.adoc:3-3"
+        claim = Passage(
+            "A reset clears the registers.",
+            (ref,),
+            (Quote(ref, "A reset clears every register"),),
+        )
+        result = AnswerQuestion(
+            search=searching(BOOT),
+            model=Writer(answer_of(STARTS, claim)),
+            judge=Judge(),
+            lookup=self._lookup,
+        ).answer("q")
+        assert [p.text for p in result.parts] == [STARTS.text, claim.text]
+        assert result.parts[1].cites[0].symbol == "reset-lines"
+        assert result.sources[-1].symbol == "reset-lines"
+        assert result.unconfirmed == ()
+
+    def test_a_citation_of_lines_that_are_not_there_fails(self) -> None:
+        ref = "docs/other.adoc:1-2"
+        claim = Passage(
+            "A reset clears the registers.",
+            (ref,),
+            (Quote(ref, "A reset clears every register"),),
+        )
+        result = AnswerQuestion(
+            search=searching(BOOT),
+            model=Writer(answer_of(STARTS, claim)),
+            judge=Judge(),
+            repairs=0,
+            lookup=self._lookup,
+        ).answer("q")
+        assert [p.text for p in result.unconfirmed] == [claim.text]
+
+    def test_with_no_lookup_a_citation_of_lines_is_no_source(self) -> None:
+        ref = "docs/reset.adoc:3-3"
+        claim = Passage("A reset clears it.", (ref,), (Quote(ref, self.LINES),))
+        result = AnswerQuestion(
+            search=searching(BOOT),
+            model=Writer(answer_of(STARTS, claim)),
+            judge=Judge(),
+            repairs=0,
+        ).answer("q")
+        assert [p.text for p in result.unconfirmed] == [claim.text]

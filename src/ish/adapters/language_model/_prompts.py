@@ -5,7 +5,8 @@ module: ``answer.md`` for an answer in JSON, ``answer_cited.md`` for an
 answer with native citations, ``step.md`` for a turn that may ask for
 searches, ``select.md`` for a rerank, ``query.md`` for the search query
 of a question in a chat, ``check.md`` for the check of the claims of an
-answer, and ``brief.md``, which a brief
+answer, ``tools.md``, which an answer that may read the files of the
+tree adds to its instruction, and ``brief.md``, which a brief
 answer adds to the instruction that writes it. A directory that an operator
 names holds files of the same names, and each one it holds replaces the
 default. A file it does not hold keeps the default.
@@ -41,7 +42,16 @@ from ish.application.ports.language_model import (
 
 log = logging.getLogger(__name__)
 
-NAMES = ("answer", "answer_cited", "step", "select", "query", "check", "brief")
+NAMES = (
+    "answer",
+    "answer_cited",
+    "step",
+    "select",
+    "query",
+    "check",
+    "tools",
+    "brief",
+)
 
 # The reply word a backend with native citations gives when the
 # documents do not answer. It cannot reply in JSON beside its citations.
@@ -65,6 +75,7 @@ class Prompts:
     select: str
     query: str = ""
     check: str = ""
+    tools: str = ""
     brief: str = ""
 
     def briefly(self) -> "Prompts":

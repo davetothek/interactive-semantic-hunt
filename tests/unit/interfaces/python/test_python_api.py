@@ -589,7 +589,7 @@ class TestAskBrief:
             def answer(self, question, sources):
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
-        def build(settings, *, brief=False):
+        def build(settings, *, brief=False, **_):
             built.append(brief)
             return Model(brief)
 

@@ -27,6 +27,7 @@ when ``allowed_language_models`` names it, so a new entry here sends
 nothing anywhere until an operator allows it.
 """
 
+from pathlib import Path
 from typing import Protocol
 
 from ish.adapters.language_model._prompts import Prompts
@@ -37,9 +38,15 @@ from ish.application.ports.language_model import LanguageModel
 
 
 class LanguageModelFactory(Protocol):
-    """What a registry entry is: a model option and instructions in, a backend out."""
+    """What a registry entry is: a model option and instructions in, a backend out.
 
-    def __call__(self, model: str, *, prompts: Prompts) -> LanguageModel: ...
+    *tree* is the tree an answer may read the files of. A backend whose
+    model cannot read files reads none, and needs no tree.
+    """
+
+    def __call__(
+        self, model: str, *, prompts: Prompts, tree: Path | None = None
+    ) -> LanguageModel: ...
 
 
 LANGUAGE_MODELS: dict[str, LanguageModelFactory] = {

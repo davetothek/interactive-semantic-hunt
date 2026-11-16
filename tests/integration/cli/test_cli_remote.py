@@ -251,7 +251,7 @@ class TestAsk:
     ) -> None:
         kinds: list[bool] = []
 
-        def build(settings, *, brief=False):
+        def build(settings, *, brief=False, **_):
             kinds.append(brief)
             return FakeModel()
 

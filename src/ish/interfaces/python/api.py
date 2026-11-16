@@ -20,6 +20,7 @@ free of layer imports, and `tests/unit/test_package.py` enforces that.
 """
 
 import logging
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -55,6 +56,15 @@ log = logging.getLogger(__name__)
 # Chunks a question reads. More chunks find more, and every one is paid
 # for in tokens the model reads.
 ASK_LIMIT = 10
+
+# Lines one citation of a file may name. A model that reads the tree cites
+# the lines it read, and a citation of a whole file would let a quote of any
+# of its lines stand for a claim about one part of it.
+MAX_CITED_LINES = 400
+
+# A citation of lines of a file: the path from the top of the tree, then
+# the first line and the last.
+_CITED = re.compile(r"(?P<path>[^:]+):(?P<first>\d+)(?:-(?P<last>\d+))?")
 
 
 def checks(
@@ -117,6 +127,7 @@ class Ish:
         self._vocabulary: bootstrap.Vocabulary | None = None
         self._identity: bootstrap.Identity | None = None
         self._models: dict[bool, LanguageModel] = {}
+        self._suffixes: dict[str, str] | None = None
         self._built = False
         self._reranker: LanguageModel | None = None
         self._reader: Callable[[Chunk], str | None] | None = None
@@ -393,8 +404,49 @@ class Ish:
             on_block=on_block,
             **({"on_step": on_step} if on_step else {}),
             **checks(self.settings, self._models[brief], self._reranker, brief),
+            lookup=self.cited_lines,
         )
         return use_case.answer(question)
+
+    def cited_lines(self, ref: str) -> tuple[Chunk, str] | None:
+        """Return the lines that a citation such as ``docs/a.adoc:40-52`` names.
+
+        Read them from the file, inside this tree only. Return None for a
+        citation of another form, of a path outside the tree, of a file
+        that cannot be read, or of more than ``MAX_CITED_LINES`` lines.
+        """
+        match = _CITED.fullmatch(ref.strip())
+        if match is None:
+            return None
+        first = int(match["first"])
+        last = int(match["last"] or first)
+        if first < 1 or last < first or last - first >= MAX_CITED_LINES:
+            return None
+        root = self.path.resolve()
+        path = (root / match["path"]).resolve()
+        if root not in path.parents:
+            return None
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        except (OSError, UnicodeDecodeError):
+            return None
+        if first > len(lines):
+            return None
+        last = min(last, len(lines))
+        text = "".join(lines[first - 1 : last])
+        language = self._language_of(path)
+        chunk = Chunk(path, text, "lines", language, ref.strip(), first, last)
+        return chunk, text
+
+    def _language_of(self, path: Path) -> str:
+        """Return the language whose parser reads files of the suffix of *path*."""
+        if self._suffixes is None:
+            self._suffixes = {
+                suffix: parser.language
+                for parser in bootstrap.build_parsers(self.settings)
+                for suffix in parser.suffixes
+            }
+        return self._suffixes.get(path.suffix.lower(), "text")
 
     def query_for(self, question: str, history: str) -> str:
         """Return one search query for *question* of a chat, given its *history*.
@@ -423,7 +475,7 @@ class Ish:
         """
         if brief not in self._models:
             self._models[brief] = bootstrap.build_language_model(
-                self.settings, brief=brief
+                self.settings, brief=brief, tree=self.path
             )
         if self._reranker is None and not self._built:
             self._reranker = bootstrap.build_reranker(self.settings)

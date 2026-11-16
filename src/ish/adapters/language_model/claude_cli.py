@@ -19,6 +19,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+from pathlib import Path
 
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import Prompts
@@ -43,6 +44,15 @@ TIMEOUT_SECONDS = 600
 # directory each call runs in is what keeps that memory out. A managed
 # policy of an organization is loaded whatever is set, and only --bare
 # skips it, which also skips the login.
+# The tools an answer may use, all of them reads. Each is allowed only
+# under the working directory, which is the tree: claude refuses a read
+# of any other path in print mode, as it refuses every other tool.
+READ_TOOLS = ("Read", "Grep", "Glob")
+
+# What one call that reads the tree may cost, in US dollars, at the prices
+# of the API. A model that reads in circles stops there.
+MAX_TOOL_COST_USD = 1.0
+
 NO_MEMORY = {
     "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
@@ -91,12 +101,27 @@ def command(
     schema: dict[str, object],
     *,
     stream: bool = False,
+    tools: bool = False,
 ) -> list[str]:
     """Return the argument list that asks one question with nothing else loaded.
 
     With *stream*, claude writes one JSON event a line as the reply grows,
-    and the reply itself as the last event.
+    and the reply itself as the last event. With *tools*, claude may read
+    the files of its working directory with Read, Grep, and Glob, and no
+    others, and a call stops at ``MAX_TOOL_COST_USD``.
     """
+    allowed = (
+        [
+            "--tools",
+            ",".join(READ_TOOLS),
+            "--allowedTools",
+            *(f"{tool}(./**)" for tool in READ_TOOLS),
+            "--max-budget-usd",
+            str(MAX_TOOL_COST_USD),
+        ]
+        if tools
+        else ["--tools", ""]
+    )
     output = (
         ["stream-json", "--verbose", "--include-partial-messages"]
         if stream
@@ -107,8 +132,7 @@ def command(
         "--print",
         "--setting-sources",
         "",
-        "--tools",
-        "",
+        *allowed,
         "--strict-mcp-config",
         "--no-session-persistence",
         "--model",
@@ -131,10 +155,13 @@ class ClaudeCliLanguageModel:
         *,
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
+        tree: Path | None = None,
     ) -> None:
         """Use *model*, a Claude model id or alias such as ``sonnet``.
 
-        Require the model and the ``claude`` command on the path.
+        Require the model and the ``claude`` command on the path. With
+        *tree*, an answer may read the files of that tree, and of no other
+        place, before it replies. Every other call reads only its message.
         """
         if not model:
             raise LanguageModelError(
@@ -148,6 +175,7 @@ class ClaudeCliLanguageModel:
         self.model_name = model
         self._prompts = prompts or load_prompts()
         self._executable = found
+        self._tree = tree
         self._timeout = timeout
 
     def answer(
@@ -166,6 +194,7 @@ class ClaudeCliLanguageModel:
             _grounded.SCHEMA,
             _grounded.prompt(question, sources),
             on_block,
+            reads=True,
         )
         reply = _grounded.parse(
             json.dumps(structured),
@@ -190,6 +219,7 @@ class ClaudeCliLanguageModel:
             _grounded.STEP_SCHEMA,
             _grounded.step_prompt(question, sources, searched, turns_left, notes),
             on_block,
+            reads=True,
         )
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
@@ -244,19 +274,27 @@ class ClaudeCliLanguageModel:
         schema: dict[str, object],
         prompt: str,
         on_block: OnBlock | None = None,
+        *,
+        reads: bool = False,
     ) -> tuple[object, int, int, float]:
         """Run one call, and return its structured output, tokens, and cost.
 
         The cost is what claude says the call would cost at the prices of
         the API, also when a subscription pays for it. With *on_block*,
-        stream the reply and give on each block as it completes.
+        stream the reply and give on each block as it completes. With
+        *reads* and a tree, run in the tree, and let claude read it.
+        Otherwise run in an empty directory, with no tool.
         """
+        tools = reads and self._tree is not None
+        if tools:
+            system = f"{system}\n\n{self._prompts.tools}"
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
+            cwd = str(self._tree) if tools else empty
             if on_block is None:
-                body = self._whole(system, schema, prompt, empty)
+                body = self._whole(system, schema, prompt, cwd, tools)
             else:
                 stream = _grounded.BlockStream(on_block)
-                body = self._streamed(system, schema, prompt, empty, stream.feed)
+                body = self._streamed(system, schema, prompt, cwd, stream.feed, tools)
         if body.get("is_error") or "structured_output" not in body:
             raise LanguageModelError(f"claude did not answer: {body.get('result')}")
         usage = body.get("usage") or {}
@@ -273,12 +311,17 @@ class ClaudeCliLanguageModel:
         return body["structured_output"], read, wrote, cost
 
     def _whole(
-        self, system: str, schema: dict[str, object], prompt: str, cwd: str
+        self,
+        system: str,
+        schema: dict[str, object],
+        prompt: str,
+        cwd: str,
+        tools: bool = False,
     ) -> dict:
         """Run one call in *cwd*, and return the reply claude writes at its end."""
         try:
             done = subprocess.run(
-                command(self._executable, self.model_name, system, schema),
+                command(self._executable, self.model_name, system, schema, tools=tools),
                 input=prompt,
                 capture_output=True,
                 text=True,
@@ -306,6 +349,7 @@ class ClaudeCliLanguageModel:
         prompt: str,
         cwd: str,
         on_json: Callable[[str], None],
+        tools: bool = False,
     ) -> dict:
         """Run one call in *cwd* and stream it, and return the reply at its end.
 
@@ -316,7 +360,14 @@ class ClaudeCliLanguageModel:
         late = threading.Event()
         with tempfile.TemporaryFile("w+") as errors:
             process = subprocess.Popen(
-                command(self._executable, self.model_name, system, schema, stream=True),
+                command(
+                    self._executable,
+                    self.model_name,
+                    system,
+                    schema,
+                    stream=True,
+                    tools=tools,
+                ),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=errors,

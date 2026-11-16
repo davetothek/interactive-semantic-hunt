@@ -229,6 +229,15 @@ source reached the answer for 21 of 21 questions with the rerank, against
 with Haiku 5.5 for both calls an answer costs about a third of a cent at
 API prices.
 
+With the `claude-cli` backend, the model reads the files of the tree before
+it answers. The sources of the search show it where to start: it reads the
+section around a source, follows a reference to another file, and greps for
+a name, with the Read, Grep, and Glob tools of `claude` and no other. It can
+read no file outside the tree, and one call stops at a cost of one US dollar.
+It cites a file it read as `path:first-last`, and ish reads those lines, so
+the check of the claims finds each quote in them. `--no-answer-tools` turns
+the reading off. An answer from a server, and a brief answer, read no file.
+
 `ask_turns` lets the model ask for follow-up searches before it answers,
 up to that many turns. It reads the first sources, and when they fall short
 or name a term worth finding, it sends up to three new queries. ish runs
