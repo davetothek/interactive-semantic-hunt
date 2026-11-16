@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 
 from ish.application.ports.language_model import (
     IMPLIED,
+    MIN_NAMED_QUOTE_WORDS,
     MIN_QUOTE_WORDS,
     STATED,
     Block,
@@ -26,6 +27,7 @@ from ish.application.ports.language_model import (
     Reply,
     Row,
 )
+from ish.application.ranking import identifiers_in
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +47,9 @@ CLAIM_KINDS = ("summary", "prose", "steps", "table")
 # Why a claim failed, as a reader and the model in a repair turn read it.
 NO_QUOTE = "it quotes no words of a source"
 SHORT_QUOTE = f"a quote has fewer than {MIN_QUOTE_WORDS} words"
+
+# Characters of a source on each side of a quote that the check reads.
+CONTEXT_CHARS = 400
 QUOTE_NOT_FOUND = "a quote is not in the source it names"
 OTHER_SOURCE = "a quote comes from a source the claim does not cite"
 NOT_STATED = "the quoted words do not state it"
@@ -62,16 +67,38 @@ def words(text: str) -> str:
 def quote_problem(quote: Quote, texts: Mapping[str, str]) -> str:
     """Return why *quote* proves nothing, or an empty text when it holds.
 
-    The quote holds when it has ``MIN_QUOTE_WORDS`` words or more, and
-    they appear, in order, in the text of the source it names.
+    The quote holds when it has ``MIN_QUOTE_WORDS`` words or more, or
+    ``MIN_NAMED_QUOTE_WORDS`` when it holds a name or a number, and they
+    appear, in order, in the text of the source it names.
     """
     said = words(quote.text)
-    if len(said.split()) < MIN_QUOTE_WORDS:
+    named = bool(identifiers_in(quote.text)) or any(c.isdigit() for c in quote.text)
+    least = MIN_NAMED_QUOTE_WORDS if named else MIN_QUOTE_WORDS
+    if len(said.split()) < least:
         return SHORT_QUOTE
     source = texts.get(quote.source_id)
     if source is None or f" {said} " not in f" {words(source)} ":
         return QUOTE_NOT_FOUND
     return ""
+
+
+def context_of(quote: Quote, texts: Mapping[str, str]) -> str:
+    """Return the text of the source of *quote* around it, or the quote alone.
+
+    Find the words of the quote in order, whatever stands between them,
+    and give ``CONTEXT_CHARS`` characters on each side, so a check reads
+    what the quoted sentence refers to.
+    """
+    source = texts.get(quote.source_id, "")
+    pieces = re.findall(r"\w+", quote.text)
+    if not source or not pieces:
+        return quote.text
+    pattern = r"\W+".join(re.escape(piece) for piece in pieces)
+    found = re.search(pattern, source, re.IGNORECASE)
+    if found is None:
+        return quote.text
+    start = max(0, found.start() - CONTEXT_CHARS)
+    return source[start : found.end() + CONTEXT_CHARS]
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +185,12 @@ def review(reply: Reply, texts: Mapping[str, str], judge: LanguageModel) -> Revi
     verdicts = None
     if asked:
         claims = [
-            Claim(str(n), item.text, tuple(q.text for q in item.quotes))
+            Claim(
+                str(n),
+                item.text,
+                tuple(q.text for q in item.quotes),
+                tuple(context_of(q, texts) for q in item.quotes),
+            )
             for n, item in enumerate(asked, 1)
         ]
         verdicts = judge.check(claims)

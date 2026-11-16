@@ -81,8 +81,15 @@ class TestQuoteProblem:
         quote = Quote("1", "the  DMA block sets the\ntransfer window")
         assert quote_problem(quote, TEXTS) == ""
 
-    def test_a_short_quote_proves_nothing(self) -> None:
-        assert quote_problem(Quote("2", "WDT_EN u1.0"), TEXTS) == SHORT_QUOTE
+    def test_a_short_quote_of_plain_words_proves_nothing(self) -> None:
+        assert quote_problem(Quote("1", "the transfer window"), TEXTS) == SHORT_QUOTE
+
+    def test_a_short_quote_with_a_name_or_a_value_holds(self) -> None:
+        """A row states a value in a few words, such as "0 : DMA burst"."""
+        assert quote_problem(Quote("2", "WDT_EN u1.0"), TEXTS) == ""
+
+    def test_one_word_proves_nothing_even_a_name(self) -> None:
+        assert quote_problem(Quote("2", "WDT_EN"), TEXTS) == SHORT_QUOTE
 
     def test_words_the_source_does_not_write_fail(self) -> None:
         quote = Quote("1", "The firmware reads the global queue.")
@@ -235,6 +242,44 @@ class TestAQuoteOfAnotherSource:
         checked = review(reply, TEXTS, judge)
         assert checked.failures == (Failure("It is on.", ("1",), OTHER_SOURCE),)
         assert judge.calls == []
+
+
+class TestTheCheckReadsTheContext:
+    """A quote alone loses what its sentence refers to.
+
+    A check that read only the quotes refused 11 of 43 claims that their
+    sources state, among them the two that answered the question.
+    """
+
+    def test_each_quote_goes_to_the_check_with_its_source_around_it(self) -> None:
+        judge = Judge()
+        reply = laid_out(
+            Block("prose", passages=(Passage("It writes a burst.", ("1",), (SHIFT,)),))
+        )
+        review(reply, TEXTS, judge)
+        (claim,) = judge.calls[0]
+        assert claim.context == (TEXTS["1"],)
+
+    def test_a_long_source_gives_a_window_around_the_quote(self) -> None:
+        from ish.application.grounding import CONTEXT_CHARS, context_of
+
+        text = "x" * 2000 + " The DMA block sets the transfer window. " + "y" * 2000
+        context = context_of(WINDOW, {"1": text})
+        assert "The DMA block sets the transfer window." in context
+        assert len(context) <= 2 * CONTEXT_CHARS + len(WINDOW.text) + 2
+
+    def test_a_quote_found_across_markup_still_gets_its_context(self) -> None:
+        from ish.application.grounding import context_of
+
+        quote = Quote("1", "the DMA block sets the transfer window")
+        assert "It writes the burst" in context_of(quote, TEXTS)
+
+    def test_a_quote_with_no_source_is_its_own_context(self) -> None:
+        from ish.application.grounding import context_of
+
+        assert context_of(Quote("9", "no such source"), TEXTS) == "no such source"
+        assert context_of(Quote("1", "!!"), TEXTS) == "!!"
+        assert context_of(Quote("1", "absent words here"), TEXTS) == "absent words here"
 
 
 class TestNativeCitations:

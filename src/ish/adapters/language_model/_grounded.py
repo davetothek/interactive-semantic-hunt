@@ -442,11 +442,16 @@ CHECK_SCHEMA: dict[str, object] = {
 
 
 def check_prompt(claims: Sequence[Claim]) -> str:
-    """Return the user message of a check: each claim under its id, with its quotes."""
+    """Return the user message of a check: each claim, its quotes, and their context."""
     blocks = []
     for claim in claims:
         quoted = "\n".join(f'- "{q}"' for q in claim.quotes) or "- (none)"
-        blocks.append(f"[{claim.id}] {claim.text}\nQuoted sentences:\n{quoted}")
+        block = f"[{claim.id}] {claim.text}\nQuoted sentences:\n{quoted}"
+        around = [c for c in claim.context if c.strip()]
+        if around:
+            shown = "\n---\n".join(around)
+            block += f"\nThe sources around the quotes:\n<<<\n{shown}\n>>>"
+        blocks.append(block)
     return "\n\n".join(blocks)
 
 

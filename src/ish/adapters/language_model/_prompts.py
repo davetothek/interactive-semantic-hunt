@@ -35,6 +35,7 @@ from pathlib import Path
 
 from ish.adapters.language_model._grounded import MAX_GAPS
 from ish.application.ports.language_model import (
+    MIN_NAMED_QUOTE_WORDS,
     MIN_QUOTE_WORDS,
     SEARCHES_A_TURN,
     LanguageModelError,
@@ -115,6 +116,7 @@ def load(
         "not_covered": NOT_COVERED,
         "searches_a_turn": SEARCHES_A_TURN,
         "min_quote_words": MIN_QUOTE_WORDS,
+        "min_named_quote_words": MIN_NAMED_QUOTE_WORDS,
         **values,
     }
     words = {k: _word(v) for k, v in filled.items()}

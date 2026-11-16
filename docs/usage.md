@@ -154,10 +154,11 @@ checks each claim in two steps:
 
 1. ish looks for the quoted words in the source the claim cites. Markup,
    punctuation, and line breaks do not count, but each word and its order
-   do. A quote has at least four words.
-2. A model reads each claim beside its quoted words alone, and says
-   whether the words state the claim, only imply it, or do not support
-   it.
+   do. A quote has at least four words, or two when it holds a name or a
+   value, such as a register or a number.
+2. A model reads each claim beside its quoted words and the text of the
+   source around them, and says whether the words state the claim, only
+   imply it, or do not support it.
 
 A claim that a source implies and does not state starts with
 "Inference:". A claim that fails either step leaves the answer. The model

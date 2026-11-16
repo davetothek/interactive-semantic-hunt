@@ -21,6 +21,11 @@ SEARCHES_A_TURN = 3
 # number and the check refuses a shorter quote.
 MIN_QUOTE_WORDS = 4
 
+# Words a quote holds at least when it holds a name or a value, such as a
+# register or a number. A row of a table states a value in a few words:
+# "0 : DMA burst" names a setting and its value in three words.
+MIN_NAMED_QUOTE_WORDS = 2
+
 # What a check found about one claim. A source writes a stated claim. An
 # implied claim follows from the sources only through a step they do not
 # write. No source supports an unsupported claim, so it is no fact.
@@ -204,11 +209,15 @@ class Claim:
         id: Key the check names the claim by. Unique within one call.
         text: The claim, as the answer writes it.
         quotes: The words of the sources that the claim rests on.
+        context: For each quote, the text of its source around it. A quote
+            alone loses what its sentence refers to, and a check that read
+            only quotes refused claims that their sources state.
     """
 
     id: str
     text: str
     quotes: tuple[str, ...]
+    context: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

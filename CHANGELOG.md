@@ -22,9 +22,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   the claim, only imply it, or do not support it. An implied claim starts
   with "Inference:". A claim that fails gets one turn of the model to fix
   it, and what still fails shows apart as unconfirmed, with the reason.
-  The JSON of `ask` lists the quotes of each citation and the
-  unconfirmed claims. `check_claims`, `check_model`, and `repair_turns`
-  set the check, and `check.md` is its instruction.
+  The check reads each quote in the text of its source around it, and a
+  quote of two words counts when it holds a name or a value. The JSON of
+  `ask` lists the quotes of each citation and the unconfirmed claims.
+  `check_claims`, `check_model`, and `repair_turns` set the check, and
+  `check.md` is its instruction.
 - `doc_windows` embeds each window of a few lines of a long document
   section as one more vector of it, so a search finds one sentence of a
   long section. A section scores the best of its own vector and its

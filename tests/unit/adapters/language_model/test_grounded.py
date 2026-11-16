@@ -31,6 +31,7 @@ def test_the_shipped_answer_instruction_keeps_its_rules() -> None:
     for part in (
         "only the sources",
         "covered to false",
+        "only when the sources answer no part of the question",
         "short paragraphs",
         "two newline characters",
         "summary",
@@ -254,6 +255,8 @@ class TestQuotes:
     def test_the_instruction_asks_for_quotes_of_four_words(self) -> None:
         assert "copy into quotes" in PROMPTS.answer
         assert "at least four words" in PROMPTS.answer
+        assert "or two when it holds a name or a value" in PROMPTS.answer
+        assert "one fact in each passage" in PROMPTS.answer
         assert _grounded.PASSAGE["required"] == ["text", "source_ids", "quotes"]
 
     def test_a_passage_and_a_row_keep_their_quotes(self) -> None:
@@ -306,10 +309,17 @@ class TestCheck:
             "\n\n[2] It reads a queue.\nQuoted sentences:\n- (none)"
         )
 
+    def test_the_context_of_the_quotes_follows_them(self) -> None:
+        claims = [Claim("1", "It is on.", ("It is on",), ("Before. It is on. After.",))]
+        assert _grounded.check_prompt(claims).endswith(
+            "The sources around the quotes:\n<<<\nBefore. It is on. After.\n>>>"
+        )
+
     def test_the_instruction_names_the_three_verdicts(self) -> None:
         for verdict in ("stated", "implied", "unsupported"):
             assert verdict in PROMPTS.check
-        assert "quoted sentences alone" in PROMPTS.check
+        assert "read in that text" in PROMPTS.check
+        assert "joins what several quotes state" in PROMPTS.check
 
     def test_each_claim_gets_its_verdict_in_order(self) -> None:
         text = json.dumps(
