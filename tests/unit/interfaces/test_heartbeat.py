@@ -207,6 +207,36 @@ class TestFind:
         assert heartbeat.find(tmp_path) is None
 
 
+class TestTheIndexOfTheServer:
+    """A client defers only to a server that writes its own index directory.
+
+    A server of the default directory kept a tree current, and an index
+    asked for in another directory read the server's status and built
+    nothing: "The index holds 0 chunks".
+    """
+
+    def test_a_server_of_another_directory_is_read_past(self, tmp_path: Path) -> None:
+        status = _status(tmp_path, index=tmp_path / "default")
+        heartbeat.write(status_for(tmp_path), status)
+        assert heartbeat.find(tmp_path, index=tmp_path / "other") is None
+        assert heartbeat.find(tmp_path, index=tmp_path / "default") is not None
+
+    def test_a_server_that_names_none_writes_the_default(self, tmp_path: Path) -> None:
+        heartbeat.write(status_for(tmp_path), _status(tmp_path))
+        default = tmp_path / "default"
+        assert heartbeat.find(tmp_path, index=default, default_index=default)
+        assert (
+            heartbeat.find(tmp_path, index=tmp_path / "other", default_index=default)
+            is None
+        )
+        assert heartbeat.find(tmp_path, index=tmp_path / "other") is None
+
+    def test_the_directory_survives_a_write_and_a_read(self, tmp_path: Path) -> None:
+        heartbeat.write(status_for(tmp_path), _status(tmp_path, index=tmp_path / "i"))
+        found = heartbeat.find(tmp_path)
+        assert found is not None and found.index == tmp_path / "i"
+
+
 class TestStatuses:
     def test_without_the_directory_there_is_nothing(self, tmp_path: Path) -> None:
         env = {"XDG_RUNTIME_DIR": str(tmp_path / "none")}

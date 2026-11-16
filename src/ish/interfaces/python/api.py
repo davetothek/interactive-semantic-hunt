@@ -193,7 +193,12 @@ class Ish:
         when the index is still catching up.
         """
         repository, _checkout = self.identity
-        return heartbeat.find(self.path, repository)
+        return heartbeat.find(
+            self.path,
+            repository,
+            index=bootstrap.index_dir(self.settings),
+            default_index=bootstrap.index_dir(replace(self.settings, cache_dir="")),
+        )
 
     def index(self, on_progress: ProgressCallback | None = None) -> int:
         """Bring this tree's index up to date. Return the chunks it holds.

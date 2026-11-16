@@ -207,6 +207,9 @@ class TestAWorktreeBesideTheCheckout:
                 updated=time.time(),
                 repository=repository,
                 checkout=main.resolve(),
+                # The server of the main tree writes the index directory
+                # the worktree reads.
+                index=Path(settings.cache_dir).resolve(),
             ),
         )
         with Ish(worktree, settings=settings) as ish:

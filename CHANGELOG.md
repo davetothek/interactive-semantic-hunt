@@ -45,6 +45,10 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A search with `--cache-dir` builds its own index when an `ish-serve` of
+  another index directory keeps the tree current. It read the status of
+  that server and built nothing. `ish-serve` now writes the directory of
+  its indexes in its status.
 - An AsciiDoc include that selects lines, such as `include::regs.adoc[lines=2..7]`
   or `lines="1,3..5"`, brings those lines alone, as Asciidoctor does. It
   brought the whole file, so a section that names 40 registers by their

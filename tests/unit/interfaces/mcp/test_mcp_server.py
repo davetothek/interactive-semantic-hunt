@@ -836,13 +836,16 @@ class TestBesideAServer:
     """
 
     @pytest.fixture()
-    def kept(self, project: Path) -> heartbeat.Status:
+    def kept(self, project: Path, tools: IshTools) -> heartbeat.Status:
+        # A server says which index directory it writes, and a client
+        # defers only to a server of its own.
         status = heartbeat.Status(
             tree=project.resolve(),
             pid=4242,
             updated=time.time(),
             refreshing="Embedded 8 of 16 chunks",
             last_finished=100.0,
+            index=Path(tools._settings.cache_dir).resolve(),
         )
         heartbeat.write(heartbeat.status_for(project), status)
         return status
