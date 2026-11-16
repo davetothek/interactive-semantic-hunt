@@ -31,7 +31,6 @@ def test_the_shipped_answer_instruction_keeps_its_rules() -> None:
     for part in (
         "only the sources",
         "covered to false",
-        "only when the sources answer no part of the question",
         "short paragraphs",
         "two newline characters",
         "summary",

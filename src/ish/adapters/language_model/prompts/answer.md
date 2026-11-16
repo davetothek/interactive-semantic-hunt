@@ -19,10 +19,9 @@ paragraphs of two to three sentences, and end the text of the last passage
 of a paragraph with two newline characters. Put in gaps the few points,
 at most $max_gaps, that the question asks and the sources leave open,
 unfinished, or unconfirmed, one point a passage. Do not use knowledge
-from outside the sources, and do not guess. When the sources answer a part
-of the question, answer that part, and put each part they leave open in
-gaps. Set covered to false, and leave summary, sections, and gaps empty,
-only when the sources answer no part of the question.
+from outside the sources, and do not guess. If the sources do not answer
+the question, set covered to false and leave summary, sections, and gaps
+empty.
 
 For each source that a passage or a table row cites, copy into quotes the
 sentence of that source that the claim rests on, word for word, with the
