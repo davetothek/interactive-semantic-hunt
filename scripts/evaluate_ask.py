@@ -35,14 +35,38 @@ searches, and the model of this machine answers. The server names each
 file from the root of its own tree, which can be above the tree of the
 question set. A citation then hits when its path ends with an expected
 path, at a directory boundary.
+
+``--repeat N`` asks the whole set N times, one round after the other,
+and reports the mean and the spread of each measure over the rounds. A
+model gives a different answer from run to run, so a delta between two
+runs is real only when it is larger than that spread.
+
+A model usage limit stops the run. The run is then incomplete, and the
+question that met the limit, and each question after it, count as no
+miss and no hit.
+
+Each run appends one line to ``$XDG_DATA_HOME/ish/eval/history.jsonl``:
+the time, the ish revision, the options, the hash of the question set,
+and the scores. ``--label NAME`` names the line. ``--compare A B``
+prints the deltas from line A to line B, accuracy first, then tokens and
+cost, then time. A line is a label, a 1-based line number, or a negative
+number that counts from the end:
+
+    uv run python scripts/evaluate_ask.py --compare baseline -1
 """
 
 import argparse
+import hashlib
 import json
+import os
+import re
 import statistics
+import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -51,6 +75,13 @@ from ish.application.answer import Answer
 from ish.interfaces.python.api import Ish
 from ish.interfaces.python.remote import RemoteIsh
 from ish.settings import Settings, load_settings
+
+# The words of an error that says the model usage of the account is spent.
+# claude-cli writes "You've hit your 5-hour limit" or "weekly limit".
+# A question asked after it fails the same way until the limit resets.
+USAGE_LIMIT = re.compile(r"\bhit your [^.]{0,40}?limit\b|\busage limit\b", re.I)
+
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
@@ -76,6 +107,13 @@ class Scored:
     searches: list[str] = field(default_factory=list)
     error: str = ""
     cost_usd: float = 0.0
+    check_input_tokens: int = 0
+    check_output_tokens: int = 0
+    claims_checked: int = 0
+    unconfirmed: int = 0
+    reads: int = 0
+    round: int = 1
+    limited: bool = False
 
 
 def load(path: Path) -> list[dict]:
@@ -140,6 +178,7 @@ def score(item: dict, ish: Ish | RemoteIsh, tree: Path | None) -> Scored:
         answer = ish.ask(str(item["question"]))
     except Exception as exc:
         result.error = str(exc)
+        result.limited = USAGE_LIMIT.search(result.error) is not None
         result.seconds = time.perf_counter() - started
         return result
     result.seconds = time.perf_counter() - started
@@ -151,6 +190,11 @@ def score(item: dict, ish: Ish | RemoteIsh, tree: Path | None) -> Scored:
     result.turns = answer.turns
     result.cost_usd = answer.cost_usd
     result.searches = list(answer.searches)
+    result.check_input_tokens = answer.check_input_tokens
+    result.check_output_tokens = answer.check_output_tokens
+    result.claims_checked = answer.claims_checked
+    result.unconfirmed = len(answer.unconfirmed)
+    result.reads = answer.reads
     result.cited = sorted(
         {
             f"{c.path.name}:{c.start_line}-{c.end_line}"
@@ -219,14 +263,19 @@ def summary(rows: list[Scored], price_in: float, price_out: float) -> dict[str, 
 
 
 def table(rows: list[Scored], numbers: dict[str, object]) -> str:
-    """Render the per-question rows and the summary as Markdown."""
+    """Render the per-question rows and the summary as Markdown.
+
+    Mark each id with its round when the rows hold more than one round.
+    """
+    rounds = len({r.round for r in rows}) > 1
     lines = [
         "| id | expected | covered | hit | s | tokens in/out | cited | error |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         lines.append(
-            f"| {r.id} | {'answer' if r.covered_expected else 'not covered'} "
+            f"| {f'{r.id} #{r.round}' if rounds else r.id} "
+            f"| {'answer' if r.covered_expected else 'not covered'} "
             f"| {r.covered} | {r.hit if r.covered_expected else '-'} "
             f"| {r.seconds:.1f} | {r.input_tokens}/{r.output_tokens} "
             f"| {', '.join(r.cited)} | {r.error[:60]} |"
@@ -249,23 +298,336 @@ def chosen(settings: Settings, args: argparse.Namespace) -> Settings:
     )
 
 
-def run(items: list[dict], ish: Ish | RemoteIsh, tree: Path | None) -> list[Scored]:
-    """Ask each question in turn, and name its score on stderr."""
+def run(
+    items: list[dict], ish: Ish | RemoteIsh, tree: Path | None, repeat: int = 1
+) -> tuple[list[Scored], str]:
+    """Ask each question *repeat* times, a round at a time, and name each score.
+
+    Stop at the first error that names a model usage limit, and return
+    that error with the rows before it. Return an empty error when the
+    run asked every question.
+    """
     rows = []
-    for item in items:
-        row = score(item, ish, tree)
-        print(
-            f"{row.id}: covered={row.covered} hit={row.hit} "
-            f"{row.seconds:.1f}s {row.error[:80]}",
-            file=sys.stderr,
+    for number in range(1, repeat + 1):
+        for item in items:
+            row = score(item, ish, tree)
+            row.round = number
+            mark = f" #{number}" if repeat > 1 else ""
+            print(
+                f"{row.id}{mark}: covered={row.covered} hit={row.hit} "
+                f"{row.seconds:.1f}s {row.error[:80]}",
+                file=sys.stderr,
+            )
+            if row.limited:
+                return rows, f"{row.id}{mark}: {row.error}"
+            rows.append(row)
+    return rows, ""
+
+
+@dataclass(frozen=True)
+class Measure:
+    """Name one number of a run, and the direction in which it is better."""
+
+    key: str
+    label: str
+    higher_is_better: bool
+    percent: bool = False
+
+
+# The measures of a history line, in the order a comparison reads them:
+# accuracy first, then tokens and cost, then time.
+MEASURES = (
+    Measure("hit_rate", "citation hit rate", True, percent=True),
+    Measure("answered_rate", "answered when covered", True, percent=True),
+    Measure("refused_rate", "refused when not covered", True, percent=True),
+    Measure("unconfirmed", "unconfirmed claims per answer, mean", False),
+    Measure("errors", "errors", False),
+    Measure("input_tokens", "median input tokens", False),
+    Measure("output_tokens", "median output tokens", False),
+    Measure("rerank_input_tokens", "median rerank input tokens", False),
+    Measure("check_input_tokens", "median check input tokens", False),
+    Measure("all_input_tokens", "median input tokens, all models", False),
+    Measure("turns", "median turns", False),
+    Measure("reads", "median rounds of reading", False),
+    Measure("cost_usd", "reported cost per answer (USD), mean", False),
+    Measure("seconds", "median seconds", False),
+)
+
+
+def measures(rows: list[Scored]) -> dict[str, float]:
+    """Reduce the rows of one round to the numbers of a history line.
+
+    Leave out a rate that has no question to count, and every number of
+    an answer when no question was answered.
+    """
+    covered = [r for r in rows if r.covered_expected]
+    uncovered = [r for r in rows if not r.covered_expected]
+    answered = [r for r in rows if not r.error]
+    found: dict[str, float] = {"errors": len(rows) - len(answered)}
+    if covered:
+        found["hit_rate"] = sum(r.hit for r in covered) / len(covered)
+        found["answered_rate"] = sum(r.covered and not r.error for r in covered) / len(
+            covered
         )
-        rows.append(row)
-    return rows
+    if uncovered:
+        found["refused_rate"] = sum(
+            not r.covered and not r.error for r in uncovered
+        ) / len(uncovered)
+    if rows:
+        found["seconds"] = statistics.median(r.seconds for r in rows)
+    if not answered:
+        return found
+    with_claims = [r for r in answered if r.covered]
+    if with_claims:
+        found["unconfirmed"] = statistics.mean(r.unconfirmed for r in with_claims)
+    found["input_tokens"] = statistics.median(r.input_tokens for r in answered)
+    found["output_tokens"] = statistics.median(r.output_tokens for r in answered)
+    found["rerank_input_tokens"] = statistics.median(
+        r.rerank_input_tokens for r in answered
+    )
+    found["check_input_tokens"] = statistics.median(
+        r.check_input_tokens for r in answered
+    )
+    found["all_input_tokens"] = statistics.median(
+        r.input_tokens + r.rerank_input_tokens + r.check_input_tokens for r in answered
+    )
+    found["turns"] = statistics.median(r.turns for r in answered)
+    found["reads"] = statistics.median(r.reads for r in answered)
+    found["cost_usd"] = statistics.mean(r.cost_usd for r in answered)
+    return found
+
+
+def rounds_of(rows: list[Scored], complete: bool) -> list[list[Scored]]:
+    """Group *rows* by round, and keep only the rounds that asked every question.
+
+    A stopped run leaves its last round short. Keep that round only when
+    it is the one round there is, or when the run is *complete*.
+    """
+    grouped: dict[int, list[Scored]] = {}
+    for row in rows:
+        grouped.setdefault(row.round, []).append(row)
+    every = list(grouped.values())
+    if complete or len(every) < 2:
+        return every
+    return every[:-1]
+
+
+def spread(rounds: list[list[Scored]]) -> tuple[dict[str, float], dict[str, list]]:
+    """Return the mean of each measure over *rounds*, and its lowest and highest."""
+    each = [measures(r) for r in rounds]
+    mean: dict[str, float] = {}
+    span: dict[str, list] = {}
+    for m in MEASURES:
+        values = [found[m.key] for found in each if m.key in found]
+        if values:
+            mean[m.key] = statistics.mean(values)
+            span[m.key] = [min(values), max(values)]
+    return mean, span
+
+
+def shown(measure: Measure, value: float | None) -> str:
+    """Render one value of *measure*, or a dash for one that is not there."""
+    if value is None:
+        return "-"
+    if measure.percent:
+        return f"{100 * value:.0f} %"
+    return f"{value:.4f}" if measure.key == "cost_usd" else f"{value:g}"
+
+
+def spread_table(mean: dict[str, float], span: dict[str, list], count: int) -> str:
+    """Render the mean and the range of each measure over *count* rounds."""
+    lines = [
+        f"Over {count} rounds:",
+        "",
+        "| measure | mean | lowest | highest |",
+        "|---|---|---|---|",
+    ]
+    for m in MEASURES:
+        if m.key in mean:
+            low, high = span[m.key]
+            lines.append(
+                f"| {m.label} | {shown(m, mean[m.key])} "
+                f"| {shown(m, low)} | {shown(m, high)} |"
+            )
+    return "\n".join(lines)
+
+
+def history_file() -> Path:
+    """Return the file that keeps one line for each run."""
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "ish" / "eval" / "history.jsonl"
+
+
+def revision(repository: Path = REPOSITORY) -> dict[str, object]:
+    """Return the commit of *repository*, and whether a tracked file differs from it."""
+
+    def git(*words: str) -> str:
+        done = subprocess.run(
+            ["git", "-C", str(repository), *words],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return done.stdout.strip() if done.returncode == 0 else ""
+
+    sha = git("rev-parse", "HEAD")
+    dirty = bool(git("status", "--porcelain", "--untracked-files=no")) if sha else False
+    return {"sha": sha, "dirty": dirty}
+
+
+def history_line(
+    args: argparse.Namespace,
+    items: list[dict],
+    rows: list[Scored],
+    stopped: str,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> dict[str, object]:
+    """Return the history line of one run."""
+    used = rounds_of(rows, complete=not stopped)
+    mean, span = spread(used)
+    options = {
+        key: (str(value) if isinstance(value, Path) else value)
+        for key, value in vars(args).items()
+        if key not in ("compare", "label", "out")
+    }
+    return {
+        "time": now().isoformat(timespec="seconds"),
+        "label": args.label,
+        "ish": revision(),
+        "options": options,
+        "questions": {
+            "sha256": hashlib.sha256(args.questions.read_bytes()).hexdigest(),
+            "ids": [str(i["id"]) for i in items],
+        },
+        "repeat": args.repeat,
+        "rounds": len(used),
+        "complete": not stopped,
+        "stopped": stopped,
+        "scores": mean,
+        "spread": span,
+    }
+
+
+def append(line: dict[str, object], path: Path) -> None:
+    """Append *line* to the history at *path*."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as history:
+        history.write(json.dumps(line) + "\n")
+
+
+def pick(lines: list[dict], name: str) -> tuple[int, dict]:
+    """Return the number and the history line that *name* selects.
+
+    *name* is a 1-based line number, a negative number that counts from
+    the end, or a label, which selects the last line that has it.
+    """
+    if re.fullmatch(r"-?\d+", name):
+        number = int(name)
+        index = number - 1 if number > 0 else len(lines) + number
+        if number != 0 and 0 <= index < len(lines):
+            return index + 1, lines[index]
+        raise ValueError(f"The history has no line {name}. It has {len(lines)}.")
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].get("label") == name:
+            return index + 1, lines[index]
+    raise ValueError(f"No line of the history has the label {name!r}.")
+
+
+def described(number: int, line: dict) -> str:
+    """Name a history line in one line of text."""
+    ish = line.get("ish") or {}
+    sha = str(ish.get("sha", ""))[:7] + ("+dirty" if ish.get("dirty") else "")
+    options = line.get("options") or {}
+    models = "/".join(
+        str(options.get(k) or "-")
+        for k in ("answer_model", "rerank_model", "ask_turns")
+    )
+    state = "complete" if line.get("complete") else f"stopped: {line.get('stopped')}"
+    label = f" {line['label']!r}" if line.get("label") else ""
+    return (
+        f"line {number}{label}, {line.get('time')}, ish {sha}, "
+        f"answer/rerank/turns {models}, {line.get('rounds')} round(s), {state}"
+    )
+
+
+def compare(a: tuple[int, dict], b: tuple[int, dict]) -> str:
+    """Render the deltas from history line *a* to line *b* as Markdown.
+
+    A delta is real when it is larger than the wider of the two ranges
+    over rounds. A run of one round has no range, and a delta against it
+    cannot be judged.
+    """
+    (na, la), (nb, lb) = a, b
+    lines = [f"A: {described(na, la)}", f"B: {described(nb, lb)}", ""]
+    qa, qb = la.get("questions") or {}, lb.get("questions") or {}
+    if (qa.get("sha256"), qa.get("ids")) != (qb.get("sha256"), qb.get("ids")):
+        lines += ["The two runs asked different questions.", ""]
+    for line, name in ((la, "A"), (lb, "B")):
+        if not line.get("complete"):
+            lines += [f"Run {name} is incomplete.", ""]
+    lines += [
+        "| measure | A | B | B - A | spread | verdict |",
+        "|---|---|---|---|---|---|",
+    ]
+    sa, sb = la.get("scores") or {}, lb.get("scores") or {}
+    pa, pb = la.get("spread") or {}, lb.get("spread") or {}
+    for m in MEASURES:
+        if m.key not in sa and m.key not in sb:
+            continue
+        va, vb = sa.get(m.key), sb.get(m.key)
+        widths = [
+            high - low
+            for line, ranges in ((la, pa), (lb, pb))
+            if (line.get("rounds") or 0) > 1 and m.key in ranges
+            for low, high in [ranges[m.key]]
+        ]
+        width = max(widths) if widths else None
+        if va is None or vb is None:
+            delta, verdict = None, "-"
+        else:
+            delta = vb - va
+            verdict = judged(m, delta, width)
+        lines.append(
+            f"| {m.label} | {shown(m, va)} | {shown(m, vb)} "
+            f"| {signed(m, delta)} | {shown(m, width)} | {verdict} |"
+        )
+    return "\n".join(lines)
+
+
+def signed(measure: Measure, delta: float | None) -> str:
+    """Render a delta with its sign."""
+    if delta is None:
+        return "-"
+    text = shown(measure, abs(delta))
+    return f"+{text}" if delta > 0 else f"-{text}" if delta < 0 else text
+
+
+def judged(measure: Measure, delta: float, width: float | None) -> str:
+    """Say whether *delta* is better or worse, and whether it is real."""
+    if delta == 0:
+        return "same"
+    better = (delta > 0) == measure.higher_is_better
+    word = "better" if better else "worse"
+    if width is None:
+        return f"{word}, no spread"
+    return word if abs(delta) > width else f"{word}, within spread"
+
+
+def compared(names: list[str], path: Path) -> str:
+    """Return the comparison of the two history lines that *names* selects."""
+    if not path.is_file():
+        raise ValueError(f"{path} holds no history yet.")
+    lines = [
+        json.loads(text)
+        for text in path.read_text(encoding="utf-8").splitlines()
+        if text.strip()
+    ]
+    return compare(pick(lines, names[0]), pick(lines, names[1]))
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("questions", type=Path)
+    parser.add_argument("questions", type=Path, nargs="?")
     parser.add_argument("tree", type=Path, nargs="?")
     parser.add_argument(
         "--remote",
@@ -273,8 +635,8 @@ def main(argv: list[str] | None = None) -> int:
         metavar="URL",
         help="Score `ish remote ask` against this server. Give no TREE.",
     )
-    parser.add_argument("--language-model", required=True)
-    parser.add_argument("--answer-model", required=True)
+    parser.add_argument("--language-model", default="")
+    parser.add_argument("--answer-model", default="")
     parser.add_argument(
         "--rerank-model", default="", help="Model of the same backend that reranks."
     )
@@ -290,29 +652,70 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--price-out", type=float, default=0.0, help="USD per 1M.")
     parser.add_argument("--only", nargs="+", default=(), help="Question ids to ask.")
     parser.add_argument("--out", type=Path, help="Write the rows as JSON here.")
+    parser.add_argument(
+        "--repeat", type=int, default=1, help="Ask the whole set this many times."
+    )
+    parser.add_argument("--label", default="", help="Name the history line.")
+    parser.add_argument(
+        "--compare",
+        nargs=2,
+        metavar=("A", "B"),
+        help="Print the deltas from history line A to line B, and ask nothing.",
+    )
     args = parser.parse_args(argv)
+    if args.compare:
+        try:
+            print(compared(args.compare, history_file()))
+        except ValueError as exc:
+            parser.error(str(exc))
+        return 0
+    if args.questions is None:
+        parser.error("Give QUESTIONS, or --compare A B.")
+    if not (args.language_model and args.answer_model):
+        parser.error("Give --language-model and --answer-model.")
+    if args.repeat < 1:
+        parser.error("--repeat takes a number of 1 or more.")
     if (args.tree is None) == (not args.remote):
         parser.error("Give TREE, or --remote URL, and not both.")
 
     items = [i for i in load(args.questions) if not args.only or i["id"] in args.only]
     if args.remote:
         settings = replace(load_settings(), remote=args.remote)
-        rows = run(items, RemoteIsh(chosen(settings, args)), None)
+        rows, stopped = run(items, RemoteIsh(chosen(settings, args)), None, args.repeat)
     else:
         tree = args.tree.resolve()
         settings = chosen(load_settings(start=tree), args)
         with Ish(tree, settings=settings) as ish:
-            rows = run(items, ish, tree)
+            rows, stopped = run(items, ish, tree, args.repeat)
     numbers = summary(rows, args.price_in, args.price_out)
-    print(table(rows, numbers))
+    report = table(rows, numbers)
+    line = history_line(args, items, rows, stopped)
+    if args.repeat > 1 and line["rounds"]:
+        mean, span = line["scores"], line["spread"]
+        assert isinstance(mean, dict) and isinstance(span, dict)
+        report += "\n\n" + spread_table(mean, span, int(str(line["rounds"])))
+    if stopped:
+        report = (
+            f"Incomplete: a model usage limit stopped the run at {stopped}\n"
+            f"{len(rows)} of {len(items) * args.repeat} answers are scored. "
+            "The answers after the limit count as no miss.\n\n" + report
+        )
+    print(report)
     if args.out:
         args.out.write_text(
             json.dumps(
-                {"summary": numbers, "rows": [r.__dict__ for r in rows]}, indent=1
+                {
+                    "summary": numbers,
+                    "complete": not stopped,
+                    "stopped": stopped,
+                    "rows": [r.__dict__ for r in rows],
+                },
+                indent=1,
             ),
             encoding="utf-8",
         )
-    return 0
+    append(line, history_file())
+    return 1 if stopped else 0
 
 
 if __name__ == "__main__":

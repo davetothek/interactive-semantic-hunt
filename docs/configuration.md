@@ -352,6 +352,19 @@ uv run python scripts/evaluate_ask.py questions.yaml \
   --language-model claude-cli --answer-model claude-haiku-5-5
 ```
 
+A model gives a different answer from run to run. `--repeat 3` asks the
+whole set three times and reports the mean and the range of each
+measure. A model usage limit stops the run, and the questions after it
+count as no miss. Each run appends one line to
+`$XDG_DATA_HOME/ish/eval/history.jsonl`, and `--label NAME` names it.
+To compare two runs, give two labels or line numbers:
+
+```sh
+uv run python scripts/evaluate_ask.py --compare baseline -1
+```
+
+A delta is real only when it is larger than the range of the two runs.
+
 `link_base` publishes the links of an answer under a base URL. With
 `link_base = "https://docs.example.com/tree"`, a chunk at lines 120 to 164
 of `spec/a.adoc` under the tree links to
