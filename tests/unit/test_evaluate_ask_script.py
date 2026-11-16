@@ -732,3 +732,17 @@ class TestCompareFixes:
         out = ev.compare((1, a), (2, b))
         assert "Run A kept no settings." in out
         assert "Settings that differ" not in out
+
+
+class TestOnlyNamesKnownQuestions:
+    """An id of --only that no question has ran an empty set, with no error."""
+
+    def test_an_unknown_id_is_refused(self, tmp_path, monkeypatch, capsys) -> None:
+        monkeypatch.setattr(
+            ev, "load_settings", lambda overrides=None, start=None: Settings()
+        )
+        questions = tmp_path / "q.yaml"
+        questions.write_text(TWO)
+        with pytest.raises(SystemExit):
+            ev.main([str(questions), str(tmp_path), *MODELS, "--only", "q1 q2"])
+        assert "--only names no question of the set: q1 q2." in capsys.readouterr().err

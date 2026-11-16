@@ -811,7 +811,11 @@ def main(argv: list[str] | None = None) -> int:
     if not (settings.language_model and settings.answer_model):
         parser.error("Give --language-model and --answer-model, or set them.")
 
-    items = [i for i in load(args.questions) if not args.only or i["id"] in args.only]
+    every = load(args.questions)
+    unknown = sorted(set(args.only) - {str(i["id"]) for i in every})
+    if unknown:
+        parser.error(f"--only names no question of the set: {', '.join(unknown)}.")
+    items = [i for i in every if not args.only or i["id"] in args.only]
     if args.remote:
         settings = replace(settings, remote=args.remote)
         rows, stopped = run(items, RemoteIsh(settings), None, args.repeat, args.trace)
