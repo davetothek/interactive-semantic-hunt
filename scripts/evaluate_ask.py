@@ -127,6 +127,7 @@ class Scored:
     reads: int = 0
     cache_write_tokens: int = 0
     cache_read_tokens: int = 0
+    gaps: int = 0
     round: int = 1
     limited: bool = False
 
@@ -212,6 +213,7 @@ def score(item: dict, ish: Ish | RemoteIsh, tree: Path | None) -> Scored:
     result.reads = answer.reads
     result.cache_write_tokens = answer.cache_write_tokens
     result.cache_read_tokens = answer.cache_read_tokens
+    result.gaps = sum(len(b.parts) for b in answer.blocks if b.kind == "gaps")
     result.cited = sorted(
         {
             f"{c.path.name}:{c.start_line}-{c.end_line}"
@@ -425,6 +427,7 @@ MEASURES = (
     Measure("answered_rate", "answered when covered", True, percent=True),
     Measure("refused_rate", "refused when not covered", True, percent=True),
     Measure("unconfirmed", "unconfirmed claims per answer, mean", False),
+    Measure("gaps", "points left open per answer, mean", None),
     Measure("errors", "errors", False),
     Measure("input_tokens", "median input tokens", False),
     Measure("cache_write_tokens", "median input tokens written to the cache", False),
@@ -466,6 +469,7 @@ def measures(rows: list[Scored]) -> dict[str, float]:
     with_claims = [r for r in answered if r.covered]
     if with_claims:
         found["unconfirmed"] = statistics.mean(r.unconfirmed for r in with_claims)
+        found["gaps"] = statistics.mean(r.gaps for r in with_claims)
     found["input_tokens"] = statistics.median(r.input_tokens for r in answered)
     found["cache_write_tokens"] = statistics.median(
         r.cache_write_tokens for r in answered

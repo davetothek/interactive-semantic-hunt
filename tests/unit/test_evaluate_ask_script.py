@@ -746,3 +746,31 @@ class TestOnlyNamesKnownQuestions:
         with pytest.raises(SystemExit):
             ev.main([str(questions), str(tmp_path), *MODELS, "--only", "q1 q2"])
         assert "--only names no question of the set: q1 q2." in capsys.readouterr().err
+
+
+class TestGaps:
+    """An answer that finds two sources in conflict says so in its gaps.
+
+    The citation hit rate cannot tell such an answer from one that names
+    no conflict. On four hard questions, the answers without the
+    challenge hit as often, and named half as many open points.
+    """
+
+    def test_the_points_left_open_are_counted(self) -> None:
+        from ish.application.answer import AnswerBlock
+
+        answer = Answer(
+            parts=(AnswerPart("x", (_chunk("spec/a.adoc", 2, 4),)),),
+            covered=True,
+            sources=(),
+            blocks=(
+                AnswerBlock("summary", parts=(AnswerPart("x"),)),
+                AnswerBlock("gaps", parts=(AnswerPart("a"), AnswerPart("b"))),
+            ),
+        )
+        row = ev.score(TestScore.covered, FakeIsh(answer), TREE)
+        assert row.gaps == 2
+        assert ev.measures([row])["gaps"] == 2
+        a = _line("a", 1, gaps=4.0)
+        b = _line("b", 1, gaps=1.5)
+        assert "| 4 | 1.5 | -2.5 | - | changed |" in ev.compare((1, a), (2, b))
