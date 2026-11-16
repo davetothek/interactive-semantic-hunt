@@ -184,3 +184,22 @@ class TestReading:
 
         FederatedReader([Closing(), Closing()]).close()
         assert Closing.closed == 2
+
+
+class TestVectorsByHash:
+    def test_each_hash_comes_from_the_first_index_that_holds_it(self) -> None:
+        first, second = PurePythonVectorStore(), PurePythonVectorStore()
+        first.add_vectors({"a": [1.0, 0.0]})
+        second.add_vectors({"a": [0.0, 1.0], "b": [1.0, 1.0]})
+        reader = FederatedReader([first, second])
+        assert reader.vectors(["a", "b", "c"]) == {"a": [1.0, 0.0], "b": [1.0, 1.0]}
+
+    def test_no_index_is_asked_once_every_hash_is_found(self) -> None:
+        first = PurePythonVectorStore()
+        first.add_vectors({"a": [1.0, 0.0]})
+
+        class Refuses(PurePythonVectorStore):
+            def vectors(self, hashes):
+                raise AssertionError("asked after every hash was found")
+
+        assert FederatedReader([first, Refuses()]).vectors(["a"]) == {"a": [1.0, 0.0]}

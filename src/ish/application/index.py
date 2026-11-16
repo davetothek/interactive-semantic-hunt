@@ -7,7 +7,7 @@ files that no longer exist.
 
 import hashlib
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +22,7 @@ from ish.application.progress import (
     ProgressCallback,
 )
 from ish.application.scan import Scan
+from ish.application.windows import windows
 from ish.domain.chunk import Chunk
 
 log = logging.getLogger(__name__)
@@ -57,7 +58,34 @@ def embed_text(chunk: Chunk) -> str:
     Prefix the language, kind, and symbol so the vector carries the
     naming context, not only the body.
     """
-    return f"{chunk.language} {chunk.kind} {chunk.symbol}:\n{chunk.text}"
+    return f"{_heading(chunk)}{chunk.text}"
+
+
+def window_texts(chunk: Chunk) -> list[str]:
+    """Render the windows of a chunk as texts to embed, each under the chunk's heading.
+
+    A window without the heading path of its section would lose what
+    the section is about, so each carries the prefix the chunk carries.
+    """
+    return [f"{_heading(chunk)}{window}" for window in windows(chunk.text)]
+
+
+def window_digests(chunk: Chunk) -> list[tuple[str, str]]:
+    """Return each window of a chunk with the hash its vector is stored under."""
+    heading = _heading(chunk)
+    return [
+        (window, content_hash(f"{heading}{window}")) for window in windows(chunk.text)
+    ]
+
+
+def _heading(chunk: Chunk) -> str:
+    """Return the line that names a chunk before its text is embedded."""
+    return f"{chunk.language} {chunk.kind} {chunk.symbol}:\n"
+
+
+def _no_windows(chunk: Chunk) -> bool:
+    """Embed no chunk in windows, for a caller that names no kind to window."""
+    return False
 
 
 def content_hash(text: str) -> str:
@@ -92,6 +120,7 @@ class Index:
         vector_store: VectorStore,
         rebuild: bool = False,
         chunking: str = "",
+        windowed: Callable[[Chunk], bool] = _no_windows,
     ) -> None:
         self._scanner = scan
         self._embedder = embedder
@@ -104,6 +133,12 @@ class Index:
         # stamp is read again in full, the same way. Empty means the
         # caller does not track it.
         self._chunking = chunking
+        # Which chunks also get a vector for each window of a few lines.
+        # A long section of a document stands for its topic, and a window
+        # stands for one of its sentences.
+        self._windowed = windowed
+        # The window hashes of each chunk hash, for the files a run writes.
+        self._windows: dict[str, tuple[str, ...]] = {}
         self._report: ProgressCallback = lambda _step: None
 
     def refresh(
@@ -234,6 +269,7 @@ class Index:
         """
         parsed: dict[Path, list[tuple[Chunk, str]]] = {}
         texts: dict[str, str] = {}
+        self._windows = {}
 
         for number, path in enumerate(stale, 1):
             if number % 25 == 0 or number == len(stale):
@@ -247,6 +283,14 @@ class Index:
                 digest = content_hash(text)
                 texts[digest] = text
                 entries.append((chunk, digest))
+                if self._windowed(chunk):
+                    window_digests = []
+                    for window in window_texts(chunk):
+                        window_digest = content_hash(window)
+                        texts[window_digest] = window
+                        window_digests.append(window_digest)
+                    if window_digests:
+                        self._windows[digest] = tuple(window_digests)
             parsed[path] = entries
 
         embedded = self._embed_and_write(parsed, texts, found)
@@ -289,17 +333,33 @@ class Index:
                 log.info("  embedded %d of %d", done, total)
             self._report(Progress(EMBED, done=done, total=total, reused=reused))
 
+        def needed(path: Path) -> list[str]:
+            """Return each hash the rows of *path* need: chunks and windows."""
+            digests = []
+            for _chunk, digest in parsed[path]:
+                digests.append(digest)
+                digests.extend(self._windows.get(digest, ()))
+            return digests
+
         def write_ready() -> None:
             still: list[Path] = []
             for path in unwritten:
-                if any(digest in waiting for _chunk, digest in parsed[path]):
+                if any(digest in waiting for digest in needed(path)):
                     still.append(path)
+                    continue
+                held = {
+                    digest: self._windows[digest]
+                    for _chunk, digest in parsed[path]
+                    if digest in self._windows
+                }
+                if held:
+                    self._store.set_file(path, found[path], parsed[path], held)
                 else:
                     self._store.set_file(path, found[path], parsed[path])
             unwritten[:] = still
 
-        for path, entries in parsed.items():
-            for _chunk, digest in entries:
+        for path in parsed:
+            for digest in needed(path):
                 if digest in waiting and digest not in queued:
                     queued.add(digest)
                     batch.append(digest)

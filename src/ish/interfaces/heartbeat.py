@@ -45,7 +45,9 @@ class Status:
     *updated* is the wall clock of the write. *refreshing* names the
     step a refresh is at, or None between refreshes. *repository* and
     *checkout* are what git says of the tree, so a client can tell
-    whether the refresh of the server reaches its own path.
+    whether the refresh of the server reaches its own path. *index* is
+    the directory of the indexes the server writes, or None for a server
+    that does not say, which writes the default one.
     """
 
     tree: Path
@@ -56,6 +58,7 @@ class Status:
     refresh_seconds: float = 0.0
     refreshing: str | None = None
     last_finished: float | None = None
+    index: Path | None = None
 
     def fresh(self, now: float | None = None) -> bool:
         """Return True while the server that wrote this counts as alive."""
@@ -130,6 +133,7 @@ def read(path: Path) -> Status | None:
             refresh_seconds=float(raw.get("refresh_seconds", 0.0)),
             refreshing=None if refreshing is None else str(refreshing),
             last_finished=None if finished is None else float(finished),
+            index=_path_or_none(raw.get("index")),
         )
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
@@ -161,6 +165,9 @@ def find(
     repository: Path | None = None,
     environ: Mapping[str, str] | None = None,
     now: float | None = None,
+    *,
+    index: Path | None = None,
+    default_index: Path | None = None,
 ) -> Status | None:
     """Return the status of the live server whose refresh reaches *path*.
 
@@ -168,11 +175,20 @@ def find(
     checkout, and a server of a tree above *path* reaches it too. When
     several do, take the one of the nearest tree. *repository* is what
     git says of *path*.
+
+    With *index*, keep only a server that writes the indexes there. A
+    server of another index directory keeps another index current, and
+    a client that read it built nothing of its own. A server that names
+    no directory writes *default_index*.
     """
     resolved = path.resolve()
+    wanted = index.resolve() if index is not None else None
     best: Status | None = None
     for status in statuses(environ):
         if not status.fresh(now) or not status.covers(resolved, repository):
+            continue
+        served = status.index or default_index
+        if wanted is not None and (served is None or served.resolve() != wanted):
             continue
         if best is None or len(status.tree.parts) > len(best.tree.parts):
             best = status

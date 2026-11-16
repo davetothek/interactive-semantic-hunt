@@ -10,7 +10,12 @@ import pytest
 from ish.adapters.language_model import LANGUAGE_MODELS, _grounded
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.adapters.language_model.ollama import OllamaLanguageModel
-from ish.application.ports.language_model import LanguageModelError, Source
+from ish.application.ports.language_model import (
+    Claim,
+    LanguageModelError,
+    Source,
+    Verdicts,
+)
 
 PROMPTS = load_prompts()
 
@@ -199,6 +204,36 @@ class TestStep:
             "q", SOURCES, ["done"], 1
         )
         assert reply.searches == ("x",)
+
+    def test_step_sends_the_notes_of_ish(self, recorder) -> None:
+        recorder.reply = {
+            "message": {
+                "content": '{"covered": false, "passages": [], "search": ["x"]}'
+            }
+        }
+        _model().step("q", SOURCES, [], 1, notes=("Fix the claim.",))
+        body = json.loads(recorder.requests[0][0].data)
+        assert body["messages"][1]["content"].endswith(
+            "Notes from ish:\n\nFix the claim."
+        )
+
+
+class TestCheck:
+    def test_check_sends_the_check_schema_and_reads_each_verdict(
+        self, recorder
+    ) -> None:
+        recorder.reply = {
+            "message": {"content": '{"verdicts": [{"id": "1", "verdict": "implied"}]}'},
+            "prompt_eval_count": 40,
+            "eval_count": 5,
+        }
+        claims = [Claim("1", "It starts early.", ("It starts at boot.",))]
+        verdicts = _model().check(claims)
+        body = json.loads(recorder.requests[0][0].data)
+        assert body["format"] == _grounded.CHECK_SCHEMA
+        assert body["messages"][0]["content"] == PROMPTS.check
+        assert body["messages"][1]["content"] == _grounded.check_prompt(claims)
+        assert verdicts == Verdicts(("implied",), 40, 5)
 
 
 class TestQuery:

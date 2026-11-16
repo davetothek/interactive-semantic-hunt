@@ -176,6 +176,14 @@ model, which [Answer questions](configuration.md#answer-questions) sets up. The 
 rather than a process start, and a filter word completes from the registries
 the server already holds rather than through a fresh `ish-complete`.
 
+The server gives the agent rules in the `instructions` of its handshake,
+and `ish remote mcp` gives the same rules. A search result is a pointer:
+the agent reads the text of a chunk before it states what the chunk says.
+A heading or a name is not evidence of what code does. A source that is
+not in the top results can still be in the tree. `search_code` with
+`format` set to `text` returns the start of each chunk under its line, so
+the agent reads without a second call.
+
 The server re-checks a tree every `refresh_seconds`, 30 by default. An
 editor knows the moment a file is saved, so the Neovim and VS Code clients
 call `refresh_index` then, and an edit is searchable moments later. A client

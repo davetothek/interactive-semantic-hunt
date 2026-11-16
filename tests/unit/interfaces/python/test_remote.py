@@ -15,9 +15,22 @@ from ish.application.ports.language_model import (
 )
 from ish.application.sources import ChunkText, Sources
 from ish.domain.chunk import Chunk
+from ish.interfaces.python import remote as remote_api
 from ish.interfaces.python.api import ASK_LIMIT
 from ish.interfaces.python.remote import RemoteIsh
 from ish.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer with no check of the claims and no challenge.
+
+    The tests of this module pin how an answer searches, reads, and
+    reports. The check and the challenge add turns of their own, and
+    ``tests/unit/interfaces/python/test_checks.py`` covers them.
+    """
+    monkeypatch.setattr(remote_api, "checks", lambda *args, **named: {})
+
 
 URL = "https://docs.example.invalid/mcp"
 QUESTION = "what runs before the gain"

@@ -149,6 +149,41 @@ a wider window is worth its re-index only when the table moves. The
 `llama.cpp` backend takes the window the same way. The `st` backend reads
 it from the model card, so there only the cap follows.
 
+## Find one sentence of a long section
+
+One vector stands for one chunk, and an embedding model averages what the
+chunk says. A long section of a specification says many things, so its
+vector stands for the topic of the section, not for one of its sentences.
+`doc_windows` embeds each window of a few lines of a long document section,
+about 400 characters with the heading path in front, as one more vector of
+that section. A search gives a section the best score of its own vector and
+its windows, and a result and an answer still read the whole section:
+
+```toml
+doc_windows = true
+```
+
+Measured on 10 questions over three files of a private specification tree:
+top-1 for questions in plain words went from 3 of 7 to 5 of 7, and MRR from
+0.464 to 0.833. A question that quotes one sentence of a 4,000-character
+section found that section first, where it ranked 57th before.
+
+A table gets no windows: a chunk with 70 % or more of its lines in table
+cells names values rather than says things, and a window of its rows names a
+few values. A tree of generated register tables is better left out of the
+index altogether, with `exclude`, when the sections that use them include
+their rows. On one specification tree, 290 such files held more than half
+of the vectors, and took 156 of 240 places of 24 top 10s with windows.
+
+A search with `--format text` shows the window that matched, so a reader
+sees the sentence that answers, not the first lines of the section.
+
+Code keeps one vector a chunk, because a definition says one thing. Windows
+stay off by default: on this repository, which is mostly code, they gave
+the documents more chances than the code and cost 8 points of top-1. A
+section shorter than 800 characters gets no windows. Turning the option on
+or off reads every file again, and embeds only the windows.
+
 ## Answer questions
 
 `ish ask` and the `ask` MCP tool send the text of the chunks a search
@@ -193,6 +228,17 @@ source reached the answer for 21 of 21 questions with the rerank, against
 16 of 21 without. It costs one more call of about 14,000 input tokens, and
 with Haiku 5.5 for both calls an answer costs about a third of a cent at
 API prices.
+
+With the `claude-cli` backend, the model reads the files of the tree before
+it answers. The sources of the search show it where to start: it reads the
+section around a source, follows a reference to another file, and greps for
+a name, with the Read, Grep, and Glob tools of `claude` and no other. It can
+read no file outside the tree, and one call stops at a cost of one US dollar.
+It cites a file it read as `path:first-last`, and ish reads those lines, so
+the check of the claims finds each quote in them. `--no-answer-tools` turns
+the reading off. The `ask` tool of a local `ish-mcp` on stdio reads the
+tree the same way. An answer over HTTP, an answer from `ish remote`, and a
+brief answer read no file.
 
 `ask_turns` lets the model ask for follow-up searches before it answers,
 up to that many turns. It reads the first sources, and when they fall short
@@ -249,8 +295,9 @@ whole tree of a few thousand files fits in tens of megabytes.
 The instructions a language model receives are text files that ship with
 ish: `answer.md` for an answer, `answer_cited.md` for the `anthropic`
 answer with native citations, `step.md` for a turn that may ask for
-searches, `select.md` for the rerank, and `brief.md`, which `--brief` adds
-to the instruction that writes the answer. Copy the ones to change into a
+searches, `select.md` for the rerank, `check.md` for the check of the
+claims, and `brief.md`, which `--brief` adds to the instruction that
+writes the answer. Copy the ones to change into a
 directory, edit them, and point `prompt_dir` at it:
 
 ```toml

@@ -258,3 +258,43 @@ class TestResultFilter:
             [1.0, 0.0], "alpha_thing", limit=5, keep=lambda c: c.language == "markdown"
         )
         assert all(c.language == "markdown" for c, _ in results)
+
+
+class TestWindows:
+    """A chunk with windows scores as the best of its vector and theirs."""
+
+    def _store(self) -> PurePythonVectorStore:
+        store = PurePythonVectorStore()
+        store.add_vectors(
+            {"whole": [1.0, 0.0], "near": [0.0, 1.0], "other": [0.6, 0.8]}
+        )
+        store.set_file(
+            Path("a.md"),
+            STAMP,
+            [(make_chunk("section", "a.md"), "whole")],
+            {"whole": ["near", "gone"]},
+        )
+        store.set_file(Path("b.md"), STAMP, [(make_chunk("other", "b.md"), "other")])
+        return store
+
+    def test_a_window_lifts_its_chunk(self) -> None:
+        found = self._store().search([0.0, 1.0], limit=2)
+        assert [(m.chunk.symbol, round(m.score, 3)) for m in found] == [
+            ("section", 1.0),
+            ("other", 0.8),
+        ]
+
+    def test_the_windows_go_with_their_file(self) -> None:
+        store = self._store()
+        store.remove_files([Path("a.md")])
+        store.set_file(Path("a.md"), STAMP, [(make_chunk("section", "a.md"), "whole")])
+        assert store.search([0.0, 1.0], limit=1)[0].chunk.symbol == "other"
+        store.clear()
+        assert store.search([0.0, 1.0]) == []
+
+
+class TestVectorsByHash:
+    def test_each_stored_hash_gives_its_vector(self) -> None:
+        store = PurePythonVectorStore()
+        store.add_vectors({"a": [1.0, 0.0]})
+        assert store.vectors(["a", "missing"]) == {"a": [1.0, 0.0]}

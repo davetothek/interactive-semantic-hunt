@@ -51,6 +51,7 @@ from ish.adapters.vector_store.sqlite._schema import (
     SCHEMA_VERSION,
     SHARED_META_SCHEMA,
     VECTORS_SCHEMA,
+    WINDOWS_SCHEMA,
 )
 from ish.application.ports.vector_store import FileStamp, StoreBusy
 from ish.application.ranking import ResultFilter, rank, split_identifier
@@ -121,11 +122,40 @@ def _referenced_by(index_path: Path) -> set[str] | None:
         return None
     try:
         rows = db.execute("SELECT DISTINCT content_hash FROM chunks").fetchall()
+        rows += _window_hashes(db)
     except sqlite3.Error:
         return None
     finally:
         db.close()
     return {str(row[0]) for row in rows}
+
+
+def _window_hashes(db: sqlite3.Connection) -> list[tuple[str]]:
+    """Return the hashes of every window of an index, and none for an older index."""
+    made = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='windows'"
+    ).fetchone()
+    if made is None:
+        return []
+    return db.execute("SELECT DISTINCT content_hash FROM windows").fetchall()
+
+
+def _best_of_each(identifiers: Sequence[int], scores: Any) -> tuple[Any, Any]:
+    """Return each chunk id once, with the best score of its rows.
+
+    A chunk with windows has a row for itself and one for each window,
+    and the best of them is how near the chunk comes to the query.
+    Return the input as it is when no id repeats.
+    """
+    import numpy
+
+    ids = numpy.asarray(identifiers, dtype=numpy.int64)
+    unique, inverse = numpy.unique(ids, return_inverse=True)
+    if len(unique) == len(ids):
+        return identifiers, scores
+    best = numpy.full(len(unique), -numpy.inf, dtype=numpy.float32)
+    numpy.maximum.at(best, inverse, scores)
+    return unique.tolist(), best
 
 
 def _busy(path: Path, exc: sqlite3.OperationalError) -> Exception:
@@ -233,17 +263,26 @@ class SqliteVectorStore:
 
         version = meta.get("schema_version")
         if found and version == SCHEMA_VERSION:
+            self._ensure_windows()
             self._record_identity()
             return
         if found and version == MIGRATES_FROM:
             self._migrate_vectors()
+            self._ensure_windows()
             self._record_identity()
             return
         if found:
             log.info("Index schema changed. Rebuilding %s", self._path)
             for trigger in ("chunks_fts_insert", "chunks_fts_delete"):
                 self._db.execute(f"DROP TRIGGER IF EXISTS main.{trigger}")
-            for table in ("chunks_fts", "vectors", "chunks", "files", "meta"):
+            for table in (
+                "chunks_fts",
+                "vectors",
+                "windows",
+                "chunks",
+                "files",
+                "meta",
+            ):
                 self._db.execute(f"DROP TABLE IF EXISTS main.{table}")
             self._db.commit()
             # Dropping a table frees its pages but leaves what they held.
@@ -260,7 +299,20 @@ class SqliteVectorStore:
         )
         self._record_shared()
         self._db.commit()
+        self._ensure_windows()
         self._record_identity()
+
+    def _ensure_windows(self) -> None:
+        """Add the table of windows to an index made before it existed.
+
+        Write nothing when it is there, so opening an index stays free.
+        """
+        made = self._db.execute(
+            "SELECT name FROM main.sqlite_master WHERE type='table' AND name='windows'"
+        ).fetchone()
+        if made is None:
+            self._db.executescript(WINDOWS_SCHEMA)
+            self._db.commit()
 
     def _attach(self) -> None:
         """Reach the shared store, when this index has one, and make sure it exists."""
@@ -473,6 +525,22 @@ class SqliteVectorStore:
             present.update(row[0] for row in rows)
         return wanted - present
 
+    def vectors(self, hashes: Collection[str]) -> Mapping[str, Sequence[float]]:
+        """Return the vector of each of *hashes* this model has stored."""
+        found: dict[str, Sequence[float]] = {}
+        ordered = list(dict.fromkeys(hashes))
+        for start in range(0, len(ordered), 500):
+            batch = ordered[start : start + 500]
+            marks = ",".join("?" * len(batch))
+            with self._lock:
+                rows = self._db.execute(
+                    f"SELECT content_hash, data FROM {self._vectors} "  # noqa: S608
+                    f"WHERE model_id = ? AND content_hash IN ({marks})",
+                    [self._model_id, *batch],
+                ).fetchall()
+            found.update({str(digest): _unpack(data) for digest, data in rows})
+        return found
+
     def add_vectors(self, vectors: Mapping[str, Sequence[float]]) -> None:
         """Store vectors by content hash, at unit length."""
         if not vectors:
@@ -490,9 +558,13 @@ class SqliteVectorStore:
             )
 
     def set_file(
-        self, path: Path, stamp: FileStamp, chunks: Sequence[tuple[Chunk, str]]
+        self,
+        path: Path,
+        stamp: FileStamp,
+        chunks: Sequence[tuple[Chunk, str]],
+        windows: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
-        """Replace everything held for *path*."""
+        """Replace everything held for *path*, the windows of its chunks with it."""
         text = str(path)
         with self._lock, self._db:
             self._mark_written()
@@ -520,6 +592,18 @@ class SqliteVectorStore:
                     for chunk, digest in chunks
                 ],
             )
+            if windows:
+                held = self._db.execute(
+                    "SELECT id, content_hash FROM chunks WHERE path = ?", (text,)
+                ).fetchall()
+                self._db.executemany(
+                    "INSERT INTO windows (chunk_id, content_hash) VALUES (?, ?)",
+                    [
+                        (chunk_id, window)
+                        for chunk_id, digest in held
+                        for window in windows.get(digest, ())
+                    ],
+                )
 
     def remove_files(self, paths: Collection[Path]) -> None:
         """Drop everything held for *paths*.
@@ -559,6 +643,9 @@ class SqliteVectorStore:
             self._db.execute("DELETE FROM kept")
             self._db.execute(
                 "INSERT OR IGNORE INTO kept SELECT content_hash FROM main.chunks"
+            )
+            self._db.execute(
+                "INSERT OR IGNORE INTO kept SELECT content_hash FROM main.windows"
             )
             self._db.executemany(
                 "INSERT OR IGNORE INTO kept (content_hash) VALUES (?)",
@@ -709,7 +796,7 @@ class SqliteVectorStore:
             return []
 
         query = numpy.asarray(query_vector, dtype=numpy.float32) / norm
-        scores = matrix @ query
+        identifiers, scores = _best_of_each(identifiers, matrix @ query)
 
         if keep is None:
             count = min(top, len(identifiers))
@@ -773,13 +860,22 @@ class SqliteVectorStore:
             return identifiers, matrix
 
     def _vector_rows(self) -> list[tuple[int, int, bytes]]:
-        """Read the id, the width, and the vector of every chunk."""
+        """Read the id, the width, and the vector of every chunk and every window.
+
+        A window row carries the id of its chunk, so a chunk with windows
+        has several rows, and a search takes the best of them.
+        """
         return self._db.execute(
             "SELECT c.id, v.dim, v.data "
             "FROM main.chunks c "
             f"JOIN {self._vectors} v ON v.content_hash = c.content_hash "  # noqa: S608
+            "WHERE v.model_id = ? "
+            "UNION ALL "
+            "SELECT w.chunk_id, v.dim, v.data "
+            "FROM main.windows w "
+            f"JOIN {self._vectors} v ON v.content_hash = w.content_hash "  # noqa: S608
             "WHERE v.model_id = ?",
-            (self._model_id,),
+            (self._model_id, self._model_id),
         ).fetchall()
 
     def _data_version(self) -> int:

@@ -9,6 +9,7 @@ this backend refuses any host that is not a loopback address.
 """
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from ish.adapters import _http
 from ish.adapters._ollama import is_loopback, resolve_host
@@ -16,12 +17,14 @@ from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
+    Claim,
     LanguageModelError,
     OnBlock,
     Query,
     Reply,
     Selection,
     Source,
+    Verdicts,
 )
 
 # The window the daemon gives the model. Ollama starts a model with a
@@ -46,11 +49,13 @@ class OllamaLanguageModel:
         host: str | None = None,
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
+        tree: Path | None = None,
     ) -> None:
         """Use *model*, such as ``qwen3:8b``, on the daemon at *host*.
 
         Read ``OLLAMA_HOST`` when no host is given. Require the model, and
         refuse a host that is not this machine.
+        The model reads no file, so *tree* changes nothing.
         """
         if not model:
             raise LanguageModelError(
@@ -91,15 +96,27 @@ class OllamaLanguageModel:
         searched: Sequence[str],
         turns_left: int,
         on_block: OnBlock | None = None,
+        notes: Sequence[str] = (),
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes."""
         text, read, wrote = self._chat(
             self._prompts.step,
             _grounded.STEP_SCHEMA,
-            _grounded.step_prompt(question, sources, searched, turns_left),
+            _grounded.step_prompt(question, sources, searched, turns_left, notes),
         )
         return _grounded.parse_step(
             text, f"Ollama model {self.model_name}", read, wrote
+        )
+
+    def check(self, claims: Sequence[Claim]) -> Verdicts:
+        """Judge each claim against its quotes, in the JSON the schema fixes."""
+        text, read, wrote = self._chat(
+            self._prompts.check,
+            _grounded.CHECK_SCHEMA,
+            _grounded.check_prompt(claims),
+        )
+        return _grounded.parse_verdicts(
+            text, f"Ollama model {self.model_name}", claims, read, wrote
         )
 
     def select(

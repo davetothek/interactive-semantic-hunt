@@ -1377,7 +1377,7 @@ class TestBuildLanguageModel:
     def registry(self, monkeypatch) -> list[str]:
         built: list[str] = []
 
-        def stub(model: str, *, prompts) -> _StubModel:
+        def stub(model: str, *, prompts, **_) -> _StubModel:
             built.append(model)
             return _StubModel(model)
 
@@ -1757,3 +1757,69 @@ class TestThePasswordOfTheServiceAccount:
         )
         # A direct bind needs no account, so a bad path stops nothing.
         assert bootstrap.build_access(settings).methods() == ["ldap"]
+
+
+class TestWindowed:
+    """Documents get windows, and code keeps one vector a chunk."""
+
+    def _chunk(self, language: str):
+        from ish.domain.chunk import Chunk
+
+        return Chunk(Path("x"), "t", "section", language, "s", 1, 2)
+
+    def test_no_chunk_is_windowed_by_default(self) -> None:
+        """Windows cost a code tree 8 points of conceptual top-1."""
+        from ish.bootstrap import windowed
+        from ish.settings import Settings
+
+        assert not windowed(Settings())(self._chunk("markdown"))
+
+    def test_turning_windows_on_reads_every_file_again(self) -> None:
+        from ish.bootstrap import chunking_stamp
+        from ish.settings import Settings
+
+        assert chunking_stamp(Settings(doc_windows=True)) == (
+            chunking_stamp(Settings()) + ":windows"
+        )
+
+    def test_a_document_is_windowed_and_code_is_not(self) -> None:
+        from ish.bootstrap import windowed
+        from ish.settings import Settings
+
+        is_windowed = windowed(Settings(doc_windows=True))
+        assert is_windowed(self._chunk("markdown"))
+        assert is_windowed(self._chunk("asciidoc"))
+        assert not is_windowed(self._chunk("python"))
+        assert not is_windowed(self._chunk("yaml"))
+
+
+class TestAnAnswerReadsTheTree:
+    """The model of an answer gets the tree, unless it is brief or the option is off."""
+
+    def _built(self, monkeypatch, **settings) -> list:
+        from ish.settings import Settings
+
+        seen: list = []
+
+        def stub(model: str, *, prompts, tree=None):
+            seen.append(tree)
+            return _StubModel(model)
+
+        monkeypatch.setitem(bootstrap.LANGUAGE_MODELS, "stub", stub)
+        chosen = Settings(
+            language_model="stub",
+            allowed_language_models=("stub",),
+            answer_model="m",
+            **settings,
+        )
+        bootstrap.build_language_model(chosen, tree=Path("/t"))
+        bootstrap.build_language_model(chosen, brief=True, tree=Path("/t"))
+        return seen
+
+    def test_a_full_answer_reads_the_tree_and_a_brief_one_reads_none(
+        self, monkeypatch
+    ) -> None:
+        assert self._built(monkeypatch) == [Path("/t"), None]
+
+    def test_the_option_turns_reading_off(self, monkeypatch) -> None:
+        assert self._built(monkeypatch, answer_tools=False) == [None, None]

@@ -150,10 +150,12 @@ class TestStreamedRemoteAnswer:
 
         model = StreamingModel()
         _model(monkeypatch, model)
-        assert main(["--ask", QUESTION, "--remote", flagged.url]) == 0
+        # A block streams only when no check of the claims runs.
+        args = ["--ask", QUESTION, "--remote", flagged.url, "--no-check-claims"]
+        assert main(args) == 0
         piped = capsys.readouterr().out
         monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
-        assert main(["--ask", QUESTION, "--remote", flagged.url]) == 0
+        assert main(args) == 0
         assert model.streamed is True
         assert capsys.readouterr().out == piped
         assert "It resets the board." in piped

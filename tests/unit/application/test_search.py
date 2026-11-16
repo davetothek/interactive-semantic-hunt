@@ -316,3 +316,55 @@ class TestWarmUp:
             build(Down()).warm()
         said = [r.getMessage() for r in caplog.records]
         assert any("Cannot warm the backend: no daemon" in line for line in said)
+
+
+class TestPassage:
+    """A result of a long document shows the window that matched the query."""
+
+    TEXT = "".join(f"line {n:02d} " + "z" * 80 + "\n" for n in range(20))
+
+    def _search(self, near: int | None = None):
+        """Store a vector for each window; the window at *near* points at the query."""
+        from ish.application.index import window_digests
+
+        store = PurePythonVectorStore()
+        chunk = Chunk(Path("d.md"), self.TEXT, "section", "markdown", "Doc", 1, 20)
+        pairs = window_digests(chunk)
+        store.add_vectors(
+            {
+                digest: [1.0, 0.0] if n == near else [0.0, 1.0]
+                for n, (_window, digest) in enumerate(pairs)
+            }
+        )
+
+        class Query:
+            model_name = "q"
+
+            def embed_documents(self, texts):
+                return [[1.0, 0.0] for _ in texts]
+
+            def embed_query(self, text):
+                return [1.0, 0.0]
+
+        return Search(embedder=Query(), reader=store), chunk, pairs
+
+    def test_the_window_nearest_the_query_is_shown(self) -> None:
+        search, chunk, pairs = self._search(near=2)
+        assert len(pairs) > 3
+        assert search.passage(chunk, "a question") == pairs[2][0]
+
+    def test_no_window_without_a_query_or_stored_vectors(self) -> None:
+        search, chunk, _pairs = self._search()
+        assert search.passage(chunk, "  ") is None
+        empty = Search(embedder=search._embedder, reader=PurePythonVectorStore())
+        assert empty.passage(chunk, "a question") is None
+
+    def test_a_short_chunk_has_no_window(self) -> None:
+        search, _chunk, _pairs = self._search()
+        short = Chunk(Path("d.md"), "A short text.", "section", "markdown", "Doc", 1, 1)
+        assert search.passage(short, "a question") is None
+
+    def test_a_zero_vector_scores_nothing(self) -> None:
+        from ish.application.search import _cosine
+
+        assert _cosine([0.0, 0.0], [1.0, 0.0]) == 0.0

@@ -6,6 +6,8 @@ import pytest
 
 from ish.domain.chunk import Chunk
 from ish.interfaces.format import (
+    EXCERPT_CHARS,
+    EXCERPT_LINES,
     display_path,
     format_chunk_line,
     format_grep_line,
@@ -67,6 +69,95 @@ class TestPlainShape:
 
     def test_symbol_of_names_the_unnamed(self) -> None:
         assert symbol_of(chunk(None)) == "<anonymous>"
+
+
+def text_chunk(text: str, path: Path = Path("/proj/src/a.py")) -> Chunk:
+    return Chunk(
+        path=path,
+        text=text,
+        kind="section",
+        language="markdown",
+        symbol="Watchdog",
+        start_line=3,
+        end_line=9,
+    )
+
+
+class TestTextShape:
+    """Verify the text shape shows what a chunk says, not only where it is.
+
+    An agent that reads only a heading writes a guess as a fact. The text
+    shape puts the start of each chunk under its line, and marks a cut,
+    so that a reader never takes a part for the whole.
+    """
+
+    def test_the_excerpt_follows_the_result_line(self) -> None:
+        out = render(text_chunk("The gain is 4.\nIt applies after HDR."), "text", 0.5)
+        lines = out.splitlines()
+        assert lines[0].startswith("[0.50] ")
+        assert lines[1:] == ["    The gain is 4.", "    It applies after HDR."]
+
+    def test_a_listing_takes_the_text_shape_too(self) -> None:
+        out = render(text_chunk("One line."), "text")
+        assert out.splitlines() == [
+            format_chunk_line(text_chunk("One line.")),
+            "    One line.",
+        ]
+
+    def test_a_long_chunk_is_cut_and_marked(self) -> None:
+        text = "\n".join(f"line {n}" for n in range(EXCERPT_LINES + 5))
+        lines = render(text_chunk(text), "text", 0.5).splitlines()
+        assert lines[EXCERPT_LINES] == f"    line {EXCERPT_LINES - 1}"
+        assert lines[-1] == "    (more text follows)"
+        assert len(lines) == EXCERPT_LINES + 2
+
+    def test_a_long_line_is_cut_and_marked(self) -> None:
+        lines = render(text_chunk("x" * (EXCERPT_CHARS + 50)), "text").splitlines()
+        assert lines[1] == "    " + "x" * EXCERPT_CHARS
+        assert lines[2] == "    (more text follows)"
+
+    def test_the_characters_stop_the_excerpt_between_lines(self) -> None:
+        text = "\n".join(["a" * EXCERPT_CHARS, "b", "c"])
+        lines = render(text_chunk(text), "text").splitlines()
+        assert lines[1:] == ["    " + "a" * EXCERPT_CHARS, "    (more text follows)"]
+
+    def test_a_short_chunk_is_not_marked(self) -> None:
+        assert "more text" not in render(text_chunk("Short."), "text", 0.5)
+
+    def test_an_unreadable_chunk_says_so(self, tmp_path: Path) -> None:
+        out = render(text_chunk("", tmp_path / "gone.md"), "text", 0.5)
+        assert out.splitlines()[1] == "    (The text of this chunk cannot be read.)"
+
+    def test_a_chunk_with_no_text_says_so(self, tmp_path: Path) -> None:
+        empty = tmp_path / "blank.md"
+        empty.write_text("\n" * 12)
+        out = render(text_chunk("", empty), "text", 0.5)
+        assert out.splitlines()[1] == "    (This chunk holds no text.)"
+
+    def test_the_text_is_read_from_the_file_when_the_index_holds_none(
+        self, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "spec.md"
+        source.write_text("".join(f"row {n}\n" for n in range(1, 12)))
+        out = render(text_chunk("", source), "text", 0.5)
+        assert out.splitlines()[1:] == [f"    row {n}" for n in range(3, 10)]
+
+
+class TestTheTextGiven:
+    """The text shape shows the text the index parsed, and the part that matched."""
+
+    def test_the_given_text_replaces_the_file(self) -> None:
+        out = render(
+            text_chunk("include::regs.adoc[]"), "text", 0.5, text="|REG_A |0x1"
+        )
+        assert out.splitlines()[1:] == ["    |REG_A |0x1"]
+
+    def test_a_matched_part_says_so(self) -> None:
+        out = render(text_chunk("x"), "text", 0.5, text="The part.", matched=True)
+        assert out.splitlines()[1:] == [
+            "    (the part of this chunk that matched best; the chunk holds more)",
+            "    The part.",
+        ]
 
 
 class TestTheBase:
@@ -762,3 +853,123 @@ class TestFormatChat:
         assert "- **AE**: Auto Exposure [1]" in text
         place = f"{a.path.name}{a.location.render()}"
         assert f"## Sources\n\n1. [{place}](file:///x)\n   " in text
+
+
+class TestCheckedClaims:
+    """A reader tells a fact from an inference, and sees what failed the check."""
+
+    @staticmethod
+    def _chunk() -> Chunk:
+        return Chunk(Path("/d/a.adoc"), "t", "section", "asciidoc", "a", 3, 9)
+
+    def _answer(self, *, covered: bool = True):
+        from ish.application.answer import (
+            UNCONFIRMED,
+            Answer,
+            AnswerBlock,
+            AnswerPart,
+            AnswerRow,
+        )
+
+        a = self._chunk()
+        stated = AnswerPart("DMA sets the window.", (a,), "stated", "", ((a, "sets"),))
+        implied = AnswerPart("The host can invert it.", (a,), "implied")
+        failed = AnswerPart(
+            "DMA reads a queue.", (a,), UNCONFIRMED, "the quoted words do not state it"
+        )
+        return Answer(
+            parts=(stated, implied) if covered else (),
+            covered=covered,
+            sources=(a,),
+            blocks=(
+                AnswerBlock("prose", parts=(stated, implied)),
+                AnswerBlock("steps", parts=(implied,)),
+                AnswerBlock(
+                    "table",
+                    columns=("R",),
+                    rows=(AnswerRow(("WDT_EN",), (a,), "implied", ((a, "sets"),)),),
+                ),
+            )
+            if covered
+            else (),
+            unconfirmed=(failed,),
+        )
+
+    def test_an_inference_is_marked_where_it_stands(self) -> None:
+        from ish.interfaces.format import format_answer
+
+        text = format_answer(self._answer(), "q", lambda c: "x")
+        assert (
+            "DMA sets the window. [^1] Inference: The host can invert it. [^1]" in text
+        )
+        assert "1. Inference: The host can invert it. [^1]" in text
+        assert "| WDT_EN | [^1] (inference) |" in text
+
+    def test_the_unconfirmed_claims_stand_apart_with_their_reasons(self) -> None:
+        from ish.interfaces.format import UNCONFIRMED_HEADING, format_answer
+
+        text = format_answer(self._answer(), "q", lambda c: "x")
+        assert f"> **{UNCONFIRMED_HEADING}**" in text
+        assert (
+            "> - DMA reads a queue. (the quoted words do not state it.) "
+            "Cites a.adoc:3-9." in text
+        )
+        assert text.index("Unconfirmed") < text.index("## Sources")
+
+    def test_an_answer_with_no_claim_left_still_shows_what_failed(self) -> None:
+        from ish.interfaces.format import format_answer, format_chat
+
+        text = format_answer(self._answer(covered=False), "q", lambda c: "x")
+        assert "DMA reads a queue." in text
+        assert "## Closest sources" in text
+        chat, cited = format_chat(
+            self._answer(covered=False), "q", lambda c: "x", brief=True
+        )
+        assert chat.startswith("The documents do not answer this.\n\n> **Unconfirmed")
+        assert cited == []
+
+    def test_a_chat_with_nothing_unconfirmed_says_one_line(self) -> None:
+        from dataclasses import replace
+
+        from ish.interfaces.format import format_chat
+
+        answer = replace(self._answer(covered=False), unconfirmed=())
+        chat, _ = format_chat(answer, "q", lambda c: "x", brief=True)
+        assert chat == "The documents do not answer this."
+
+    def test_the_data_marks_an_inferred_row_and_step(self) -> None:
+        from ish.interfaces.format import layout_data
+
+        data, _ = layout_data(self._answer())
+        assert data[1]["items"] == ["Inference: The host can invert it.[1]"]
+        assert data[2]["rows"][0]["basis"] == "implied"
+        assert data[2]["rows"][0]["cites"] == "[1] (inference)"
+
+    def test_each_cited_chunk_lists_the_words_it_gave(self) -> None:
+        from ish.interfaces.format import quotes_by_chunk
+
+        assert quotes_by_chunk(self._answer()) == {self._chunk(): ["sets"]}
+
+    def test_the_usage_names_the_check(self) -> None:
+        from dataclasses import replace
+
+        from ish.interfaces.format import answer_usage, format_usage
+
+        answer = replace(
+            self._answer(),
+            check_model="judge",
+            check_input_tokens=1200,
+            check_output_tokens=40,
+            claims_checked=6,
+            timings=(("checking", 1.5),),
+        )
+        table = format_usage(answer_usage(answer))
+        assert "check  1.5 s  judge, 6 claims, 1 unconfirmed  1,200   40" in table
+
+    def test_the_usage_names_the_rounds_of_reading(self) -> None:
+        from dataclasses import replace
+
+        from ish.interfaces.format import answer_usage, format_usage
+
+        answer = replace(self._answer(), model="m", turns=2, reads=7)
+        assert "m, 2 turns, 7 rounds of reading" in format_usage(answer_usage(answer))

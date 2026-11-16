@@ -124,6 +124,7 @@ class Keeper:
                 refresh_seconds=float(self._settings.refresh_seconds),
                 refreshing=self._doing,
                 last_finished=self._last_finished,
+                index=bootstrap.index_dir(self._settings).resolve(),
             )
             try:
                 heartbeat.write(self.status_path, status)

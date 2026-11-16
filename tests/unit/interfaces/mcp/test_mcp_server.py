@@ -10,8 +10,20 @@ import pytest
 from ish import bootstrap
 from ish.application.progress import DISCOVER, READ, REFRESH, Progress
 from ish.interfaces import heartbeat
-from ish.interfaces.mcp.server import IshTools, main
+from ish.interfaces.mcp.server import AGENT_INSTRUCTIONS, IshTools, main
+from ish.interfaces.python import api
 from ish.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer with no check of the claims and no challenge.
+
+    The tests of this module pin how an answer searches, reads, and
+    reports. The check and the challenge add turns of their own, and
+    ``tests/unit/interfaces/python/test_checks.py`` covers them.
+    """
+    monkeypatch.setattr(api, "checks", lambda *args, **named: {})
 
 
 @pytest.fixture()
@@ -213,6 +225,11 @@ class TestToolDefinitions:
         search = tools.tools()[0]
         assert search.schema["required"] == ["query"]
 
+    def test_the_search_says_a_result_is_a_pointer(self, tools: IshTools) -> None:
+        search = next(t for t in tools.tools() if t.name == "search_code")
+        assert "pointer, not evidence" in search.description
+        assert "text" in search.schema["properties"]["format"]["enum"]
+
     def test_every_tool_describes_itself(self, tools: IshTools) -> None:
         for tool in tools.tools():
             assert len(tool.description) > 40, tool.name
@@ -287,6 +304,24 @@ class TestEntryPoint:
         monkeypatch.setattr(sys, "stdin", io.StringIO(""))
         monkeypatch.setattr(sys, "stdout", io.StringIO())
         assert main([]) == 0
+
+    def test_the_handshake_gives_the_agent_instructions(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """An agent learns to read a chunk before it states what it says."""
+        import io
+        import json
+        import sys
+
+        monkeypatch.chdir(tmp_path)
+        out = io.StringIO()
+        hello = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(hello) + "\n"))
+        monkeypatch.setattr(sys, "stdout", out)
+        main([])
+
+        reply = json.loads(out.getvalue().splitlines()[0])
+        assert reply["result"]["instructions"] == AGENT_INSTRUCTIONS
 
     def test_protocol_goes_to_stdout_only(self, monkeypatch, tmp_path: Path) -> None:
         """Log output on stdout would corrupt the transport."""
@@ -485,6 +520,12 @@ class TestOutputShape:
             parts = line.split(":")
             assert parts[1].isdigit(), line
             assert parts[2] == "1", line
+
+    def test_text_shape_shows_what_each_chunk_says(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        out = tools.search({"query": "config", "path": str(project), "format": "text"})
+        assert "    def load_config():" in out.splitlines()
 
     def test_plain_shape_by_default(
         self, tools: IshTools, stub_backend, project: Path
@@ -795,13 +836,16 @@ class TestBesideAServer:
     """
 
     @pytest.fixture()
-    def kept(self, project: Path) -> heartbeat.Status:
+    def kept(self, project: Path, tools: IshTools) -> heartbeat.Status:
+        # A server says which index directory it writes, and a client
+        # defers only to a server of its own.
         status = heartbeat.Status(
             tree=project.resolve(),
             pid=4242,
             updated=time.time(),
             refreshing="Embedded 8 of 16 chunks",
             last_finished=100.0,
+            index=Path(tools._settings.cache_dir).resolve(),
         )
         heartbeat.write(heartbeat.status_for(project), status)
         return status
@@ -1016,7 +1060,7 @@ class TestAsk:
         made = self.Model()
         asked: list[bool] = []
 
-        def build(settings, *, brief=False):
+        def build(settings, *, brief=False, **_):
             asked.append(brief)
             return made
 

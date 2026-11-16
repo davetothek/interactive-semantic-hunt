@@ -50,8 +50,13 @@ def _run_query(args: CliArgs) -> int:
         kept = ish.kept_by()
         if kept is not None and kept.refreshing:
             line.note(f"ish-serve: {kept.refreshing}")
+        shape = args.settings.format
         for chunk, score in ish.search(args.query):
-            sys.stdout.write(f"{render(chunk, args.settings.format, score)}\n")
+            text, matched = (
+                ish.excerpt(chunk, args.query) if shape == "text" else (None, False)
+            )
+            line = render(chunk, shape, score, text=text, matched=matched)
+            sys.stdout.write(f"{line}\n")
     return 0
 
 

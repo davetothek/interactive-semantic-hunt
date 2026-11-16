@@ -6,7 +6,13 @@ import pytest
 
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import load as load_prompts
-from ish.application.ports.language_model import LanguageModelError, Source
+from ish.application.ports.language_model import (
+    Claim,
+    LanguageModelError,
+    Quote,
+    Source,
+    Verdicts,
+)
 
 PROMPTS = load_prompts()
 
@@ -240,6 +246,101 @@ class TestStep:
     def test_a_step_with_no_search_field(self) -> None:
         reply = _grounded.parse_step('{"covered": false}', "m")
         assert reply.searches == ()
+
+
+class TestQuotes:
+    """Each claim carries the words of a source it rests on."""
+
+    def test_the_instruction_asks_for_quotes_of_four_words(self) -> None:
+        assert "copy into quotes" in PROMPTS.answer
+        assert "at least four words" in PROMPTS.answer
+        assert "or two when it holds a name or a value" in PROMPTS.answer
+        assert "one fact in each passage" in PROMPTS.answer
+        assert _grounded.PASSAGE["required"] == ["text", "source_ids", "quotes"]
+
+    def test_a_passage_and_a_row_keep_their_quotes(self) -> None:
+        quote = {"source_id": "1", "text": "It starts at boot."}
+        empty = {"source_id": "1", "text": "  "}
+        reply = _grounded.parse(
+            _reply(
+                summary={"text": "At boot.", "source_ids": ["1"], "quotes": [quote]},
+                sections=[
+                    _section(
+                        "table",
+                        columns=["When"],
+                        rows=[
+                            {"cells": ["boot"], "source_ids": ["1"], "quotes": [empty]}
+                        ],
+                    )
+                ],
+            ),
+            "m",
+        )
+        summary, table = reply.blocks
+        assert summary.passages[0].quotes == (Quote("1", "It starts at boot."),)
+        assert table.rows[0].quotes == ()
+        assert reply.passages[1].text == "boot"
+
+
+class TestNotes:
+    def test_the_notes_of_ish_come_last(self) -> None:
+        sources = [Source("1", "/d/a.adoc:1-9 A", "Alpha.")]
+        text = _grounded.step_prompt("Why?", sources, [], 1, ("One.", "Two."))
+        assert text.endswith(
+            "Turns left for searches: 1\n\nNotes from ish:\n\nOne.\n\nTwo."
+        )
+
+    def test_the_step_tells_the_model_to_search_for_the_subject(self) -> None:
+        assert "not about the answer you" in PROMPTS.step
+        assert "notes from ish" in PROMPTS.step
+        assert "no expected answer" in PROMPTS.query
+
+
+class TestCheck:
+    CLAIMS = (
+        Claim("1", "It starts at boot.", ("It starts at boot.",)),
+        Claim("2", "It reads a queue.", ()),
+    )
+
+    def test_the_prompt_lists_each_claim_with_its_quotes(self) -> None:
+        assert _grounded.check_prompt(self.CLAIMS) == (
+            '[1] It starts at boot.\nQuoted sentences:\n- "It starts at boot."'
+            "\n\n[2] It reads a queue.\nQuoted sentences:\n- (none)"
+        )
+
+    def test_the_context_of_the_quotes_follows_them(self) -> None:
+        claims = [Claim("1", "It is on.", ("It is on",), ("Before. It is on. After.",))]
+        assert _grounded.check_prompt(claims).endswith(
+            "The sources around the quotes:\n<<<\nBefore. It is on. After.\n>>>"
+        )
+
+    def test_the_instruction_names_the_three_verdicts(self) -> None:
+        for verdict in ("stated", "implied", "unsupported"):
+            assert verdict in PROMPTS.check
+        assert "read in that text" in PROMPTS.check
+        assert "joins what several quotes state" in PROMPTS.check
+
+    def test_each_claim_gets_its_verdict_in_order(self) -> None:
+        text = json.dumps(
+            {
+                "verdicts": [
+                    {"id": "2", "verdict": "unsupported"},
+                    {"id": "1", "verdict": "stated"},
+                ]
+            }
+        )
+        verdicts = _grounded.parse_verdicts(text, "m", self.CLAIMS, 9, 2)
+        assert verdicts == Verdicts(("stated", "unsupported"), 9, 2)
+
+    def test_a_missing_or_unknown_verdict_is_unsupported(self) -> None:
+        """A check that says nothing about a claim confirms nothing."""
+        text = json.dumps({"verdicts": [{"id": "1", "verdict": "probably"}]})
+        verdicts = _grounded.parse_verdicts(text, "m", self.CLAIMS)
+        assert verdicts.verdicts == ("unsupported", "unsupported")
+
+    def test_a_reply_that_is_not_the_json_is_an_error(self) -> None:
+        with pytest.raises(LanguageModelError, match="verdicts of a check"):
+            _grounded.parse_verdicts("{}", "m", self.CLAIMS)
 
 
 def test_no_more_gaps_than_the_instruction_allows() -> None:

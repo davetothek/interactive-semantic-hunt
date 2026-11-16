@@ -335,3 +335,45 @@ class TestSweeping:
             assert store.prune_vectors() == 1
         finally:
             store.close()
+
+
+class TestSweepingKeepsWindows:
+    """A sibling that holds a window keeps the vector of that window."""
+
+    def test_the_window_of_a_sibling_survives(
+        self, tmp_path: Path, shared: Path
+    ) -> None:
+        other = index_at(tmp_path, "two", shared)
+        other.add_vectors({"h2": [0.0, 1.0], "w2": [1.0, 1.0]})
+        other.set_file(
+            Path("b.md"), STAMP, [(make_chunk("g", "b.md"), "h2")], {"h2": ["w2"]}
+        )
+        other.close()
+        store = index_at(
+            tmp_path, "one", shared, siblings=[tmp_path / "idx" / "two.db"]
+        )
+        try:
+            assert store.prune_vectors() == 0
+        finally:
+            store.close()
+        assert hashes_in(shared) == {"h2", "w2"}
+
+    def test_a_sibling_from_before_windows_still_counts(
+        self, tmp_path: Path, shared: Path
+    ) -> None:
+        other = index_at(tmp_path, "two", shared)
+        other.add_vectors({"h2": [0.0, 1.0]})
+        other.set_file(Path("b.py"), STAMP, [(make_chunk("g", "b.py"), "h2")])
+        other.close()
+        db = sqlite3.connect(tmp_path / "idx" / "two.db")
+        db.execute("DROP TABLE windows")
+        db.commit()
+        db.close()
+        store = index_at(
+            tmp_path, "one", shared, siblings=[tmp_path / "idx" / "two.db"]
+        )
+        try:
+            assert store.prune_vectors() == 0
+        finally:
+            store.close()
+        assert hashes_in(shared) == {"h2"}

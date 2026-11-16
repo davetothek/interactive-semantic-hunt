@@ -129,7 +129,7 @@ class TestInjection:
         (tmp_path / "answer.md").write_text("Own answer.")
         given: list[Prompts] = []
 
-        def stub(model: str, *, prompts: Prompts):
+        def stub(model: str, *, prompts: Prompts, **_):
             given.append(prompts)
             return object()
 
@@ -165,7 +165,7 @@ class TestInjection:
 def test_the_shipped_answer_keeps_tables_narrow() -> None:
     answer = load().answer
     assert "narrow enough to read in a terminal" in answer
-    assert answer.count("\n\n") == 2
+    assert answer.count("\n\n") == 3
     assert load().step.startswith(answer + " ")
 
 
@@ -193,7 +193,7 @@ def test_bootstrap_builds_a_brief_backend_with_brief_instructions(monkeypatch) -
 
     given: list[Prompts] = []
 
-    def stub(model: str, *, prompts: Prompts):
+    def stub(model: str, *, prompts: Prompts, **_):
         given.append(prompts)
         return object()
 

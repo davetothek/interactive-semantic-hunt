@@ -11,7 +11,7 @@ and the composition root hands that index to the refresh directly.
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
 from ish.application.ports.vector_store import VectorReader
@@ -105,6 +105,16 @@ class FederatedReader:
 
         ranked = sorted(best.values(), key=lambda pair: pair[1], reverse=True)
         return [Match(chunk, score) for chunk, score in ranked[:limit]]
+
+    def vectors(self, hashes: Collection[str]) -> Mapping[str, Sequence[float]]:
+        """Return the vector of each of *hashes* that any index holds."""
+        found: dict[str, Sequence[float]] = {}
+        for reader in self._readers:
+            wanted = [d for d in hashes if d not in found]
+            if not wanted:
+                break
+            found.update(reader.vectors(wanted))
+        return found
 
     def close(self) -> None:
         """Release every index."""

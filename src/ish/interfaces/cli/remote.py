@@ -68,6 +68,10 @@ OPTIONS = (
     "rerank_model",
     "rerank_candidates",
     "ask_turns",
+    "check_claims",
+    "check_model",
+    "repair_turns",
+    "challenge",
     "prompt_dir",
     "answer_notes",
     "rerank_notes",
@@ -301,14 +305,18 @@ def mcp(settings: Settings) -> int:
     """
     from ish.interfaces.mcp.protocol import Server
     from ish.interfaces.mcp.remote import RemoteTools
-    from ish.interfaces.mcp.server import SERVER_NAME, installed_version
+    from ish.interfaces.mcp.server import (
+        AGENT_INSTRUCTIONS,
+        SERVER_NAME,
+        installed_version,
+    )
 
     try:
         tools = RemoteTools(settings)
     except Exception as exc:
         return _failed(exc)
     log.info("Serving the tree of %s", tools.host)
-    server = Server(SERVER_NAME, installed_version(), tools.tools())
+    server = Server(SERVER_NAME, installed_version(), tools.tools(), AGENT_INSTRUCTIONS)
     try:
         server.serve(sys.stdin, sys.stdout)
     except KeyboardInterrupt:

@@ -4,7 +4,33 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerTerm
+from ish.application.ports.language_model import IMPLIED
+from ish.application.preview import read_lines
 from ish.domain.chunk import Chunk
+
+# Lines and characters of a chunk that the text shape shows under its
+# result line. Enough for a heading and its first statements, so that a
+# reader sees what the chunk says and not only what it is called.
+EXCERPT_LINES = 12
+EXCERPT_CHARS = 1_000
+
+# The indent of an excerpt line, so a reader tells it from a result line.
+EXCERPT_INDENT = "    "
+
+# The line above an excerpt that is the part of a chunk that matched, so
+# a reader knows the section holds more than the excerpt shows.
+MATCHED = "(the part of this chunk that matched best; the chunk holds more)"
+
+# What a part of an answer starts with when its sources imply it and do
+# not state it, so a reader tells a conclusion from a fact.
+INFERENCE = "Inference: "
+# The same mark on a row of a table, after the citations of the row.
+INFERENCE_ROW = " (inference)"
+
+# The heading of the claims that failed the check.
+UNCONFIRMED_HEADING = (
+    "Unconfirmed: no quoted source states these, so they are no part of the answer"
+)
 
 
 def display_path(path: Path, base: Path | None = None) -> Path:
@@ -61,19 +87,62 @@ def render(
     score: float | None = None,
     *,
     base: Path | None = None,
+    text: str | None = None,
+    matched: bool = False,
 ) -> str:
     """Render one chunk in the shape the caller asked for.
 
     Accept a score for a ranked result and none for a plain listing, so
     every interface formats a line through this one function. Write the
     path from *base* when one is given, and from the working directory
-    otherwise.
+    otherwise. The text shape shows *text* when it is given, the text of
+    the file otherwise. With *matched*, *text* is the part of the chunk
+    that matched the query, and the excerpt says so.
     """
     if shape == "grep":
         return format_grep_line(chunk, score, base)
-    if score is None:
-        return format_chunk_line(chunk, base)
-    return format_result_line(chunk, score, base)
+    line = (
+        format_chunk_line(chunk, base)
+        if score is None
+        else format_result_line(chunk, score, base)
+    )
+    if shape == "text":
+        return f"{line}\n{format_excerpt(chunk, text, matched)}"
+    return line
+
+
+def format_excerpt(chunk: Chunk, text: str | None = None, matched: bool = False) -> str:
+    """Return the start of the text of *chunk*, indented under its result line.
+
+    A heading or a name tells where a chunk is, not what it says. The
+    excerpt gives a reader the words to check before a claim. Show
+    *text* when it is given, and the lines of the file otherwise. Name a
+    part that matched as such. Mark a cut excerpt, and say when the text
+    cannot be read, so that a reader never takes a part for the whole.
+    """
+    if text is None:
+        text = read_lines(chunk)
+    if text is None:
+        return f"{EXCERPT_INDENT}(The text of this chunk cannot be read.)"
+    lines = text.strip("\n").splitlines()
+    if not lines:
+        return f"{EXCERPT_INDENT}(This chunk holds no text.)"
+    shown: list[str] = []
+    room = EXCERPT_CHARS
+    cut = len(lines) > EXCERPT_LINES
+    for line in lines[:EXCERPT_LINES]:
+        if room <= 0:
+            cut = True
+            break
+        shown.append(line[:room])
+        cut = cut or len(line) > room
+        room -= len(line)
+    excerpt = "\n".join(f"{EXCERPT_INDENT}{line}".rstrip() for line in shown)
+    if matched:
+        excerpt = f"{EXCERPT_INDENT}{MATCHED}\n{excerpt}"
+    if cut:
+        excerpt = f"{excerpt}\n{EXCERPT_INDENT}(more text follows)"
+    return excerpt
 
 
 def format_selection(chunk: Chunk) -> str:
@@ -132,7 +201,10 @@ def number_citations(
         # Keep the markers on the claim they cite: a part that ends a
         # paragraph ends in newlines, and the markers go before them.
         body = part.text.rstrip()
-        piece = f"{body}{marks}{part.text[len(body) :]}"
+        ending = part.text[len(body) :]
+        if part.basis == IMPLIED:
+            body = f"{INFERENCE}{body.lstrip()}"
+        piece = f"{body}{marks}{ending}"
         # A model may split sentences into parts with no space between
         # them. Add one, but never before punctuation that ends a clause.
         if (
@@ -201,8 +273,26 @@ def answer_text(
         for paragraph in text.split("\n\n"):
             if paragraph.strip():
                 lines += [_fill(paragraph), ""]
+    lines += unconfirmed_lines(answer)
     tail, cited = answer_tail(answer, numbers, link, base, kind_of, footnotes=footnotes)
     return "\n".join(lines + tail), cited
+
+
+def unconfirmed_lines(answer: Answer) -> list[str]:
+    """Return the claims that failed the check, each with its reason and sources.
+
+    Name each source by its place rather than by a number, because a claim
+    here is no part of the answer and its sources need not be.
+    """
+    if not answer.unconfirmed:
+        return []
+    lines = [f"> **{UNCONFIRMED_HEADING}**", ">"]
+    for part in answer.unconfirmed:
+        places = ", ".join(f"{c.path.name}{c.location.render()}" for c in part.cites)
+        cited = f" Cites {places}." if places else ""
+        text = f"{part.text.strip()} ({part.note}.){cited}"
+        lines += _fill(text, "> - ").replace("\n> - ", "\n>   ").split("\n")
+    return [*lines, ""]
 
 
 def answer_head(question: str) -> list[str]:
@@ -305,7 +395,8 @@ def format_chat(
     not cover says so in one line.
     """
     if not answer.covered:
-        return NOT_COVERED_TEXT.split(".")[0] + ".", []
+        lines = [NOT_COVERED_TEXT.split(".")[0] + ".", "", *unconfirmed_lines(answer)]
+        return "\n".join(lines).rstrip(), []
     if not brief:
         return answer_text(answer, question, link, kind_of=kind_of, footnotes=False)
     summary = next((b for b in answer.blocks if b.kind == "summary"), None)
@@ -329,6 +420,7 @@ _STAGES = (
     ("choosing", "rerank"),
     ("writing", "answer"),
     ("following", "follow-up"),
+    ("checking", "check"),
 )
 
 
@@ -347,6 +439,12 @@ def answer_usage(answer: Answer) -> dict[str, object]:
         "rerank_output_tokens": answer.rerank_output_tokens,
         "turns": answer.turns,
         "searches": list(answer.searches),
+        "check_model": answer.check_model,
+        "check_input_tokens": answer.check_input_tokens,
+        "check_output_tokens": answer.check_output_tokens,
+        "claims_checked": answer.claims_checked,
+        "reads": answer.reads,
+        "unconfirmed": len(answer.unconfirmed),
         "timings": {stage: round(seconds, 3) for stage, seconds in answer.timings},
         "seconds": round(answer.seconds, 3),
         "cost_usd": round(answer.cost_usd, 6),
@@ -409,10 +507,22 @@ def _row(stage: str, usage: Mapping[str, object]) -> tuple[str, str, str]:
     if stage == "writing" and usage.get("model"):
         turns = _count(usage.get("turns"))
         many = f", {turns} turns" if turns > 1 else ""
+        reads = _count(usage.get("reads"))
+        many += f", {reads} rounds of reading" if reads else ""
         return (
             f"{usage['model']}{many}",
             f"{_count(usage.get('input_tokens')):,}",
             f"{_count(usage.get('output_tokens')):,}",
+        )
+    if stage == "checking" and usage.get("check_model"):
+        failed = _count(usage.get("unconfirmed"))
+        claims = _count(usage.get("claims_checked"))
+        read = f", {claims} claims" if claims else ""
+        out = f", {failed} unconfirmed" if failed else ""
+        return (
+            f"{usage['check_model']}{read}{out}",
+            f"{_count(usage.get('check_input_tokens')):,}",
+            f"{_count(usage.get('check_output_tokens')):,}",
         )
     if stage == "following":
         searches = usage.get("searches")
@@ -450,14 +560,19 @@ def layout_data(answer: Answer) -> tuple[list[dict[str, object]], list[Chunk]]:
         entry: dict[str, object] = {"kind": block.kind, "heading": block.heading}
         if block.kind in ("steps", "gaps"):
             entry["items"] = [
-                f"{p.text.strip()}{_marks(p.cites, numbers)}" for p in block.parts
+                f"{_claimed(p)}{_marks(p.cites, numbers)}" for p in block.parts
             ]
         else:
             entry["text"] = _joined(block.parts, numbers)
         if block.kind == "table":
             entry["columns"] = list(block.columns)
             entry["rows"] = [
-                {"cells": list(r.cells), "cites": _marks(r.cites, numbers)}
+                {
+                    "cells": list(r.cells),
+                    "cites": _marks(r.cites, numbers)
+                    + (INFERENCE_ROW if r.basis == IMPLIED else ""),
+                }
+                | ({"basis": r.basis} if r.basis else {})
                 for r in block.rows
             ]
         data.append(entry)
@@ -535,7 +650,7 @@ def _render(
     if block.kind == "steps":
         for n, part in enumerate(block.parts, 1):
             marker = f"{n}. "
-            text = f"{marker}{part.text.strip()}{_marks(part.cites, numbers, mark)}"
+            text = f"{marker}{_claimed(part)}{_marks(part.cites, numbers, mark)}"
             lines.append(_fill(text, "", " " * len(marker)))
         return lines
     if block.kind == "table":
@@ -555,7 +670,12 @@ def _table(
     width = max([len(block.columns)] + [len(r.cells) for r in block.rows])
     head = [*block.columns, *[""] * (width - len(block.columns)), "Sources"]
     body = [
-        [*r.cells, *[""] * (width - len(r.cells)), _marks(r.cites, numbers, mark)]
+        [
+            *r.cells,
+            *[""] * (width - len(r.cells)),
+            _marks(r.cites, numbers, mark)
+            + (INFERENCE_ROW if r.basis == IMPLIED else ""),
+        ]
         for r in block.rows
     ]
     cells = [[_cell(c) for c in row] for row in [head, *body]]
@@ -570,6 +690,26 @@ def _table(
         if n == 0:
             lines.append("|" + "|".join("-" * (s + 2) for s in sizes) + "|")
     return lines
+
+
+def _claimed(part: AnswerPart) -> str:
+    """Return the text of *part*, marked as an inference when its sources imply it."""
+    text = part.text.strip()
+    return f"{INFERENCE}{text}" if part.basis == IMPLIED else text
+
+
+def quotes_by_chunk(answer: Answer) -> dict[Chunk, list[str]]:
+    """Return the words each cited chunk gave the answer, without repeats."""
+    found: dict[Chunk, list[str]] = {}
+    parts = [p for b in answer.blocks for p in b.parts] or list(answer.parts)
+    rows = [r for b in answer.blocks for r in b.rows]
+    for chunk, text in [q for p in parts for q in p.quotes] + [
+        q for r in rows for q in r.quotes
+    ]:
+        kept = found.setdefault(chunk, [])
+        if text not in kept:
+            kept.append(text)
+    return found
 
 
 def _cell(text: str) -> str:

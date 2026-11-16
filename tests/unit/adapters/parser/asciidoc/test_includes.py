@@ -152,6 +152,91 @@ class TestExpand:
         assert _expand(doc) == ["include::{nowhere}/x.adoc[]\n"]
 
 
+class TestLinesSelectTheRows:
+    """An include selects lines of a file by number, as Asciidoctor does.
+
+    A register specification names each register row by its lines, as
+    ``include::{_REG_A}[{REG_A}]`` with ``:REG_A: lines=2..3``. The
+    selection was read as no selection, so each include brought the whole
+    file of registers. One section of 40 such includes became 21 chunks of
+    the same file, and its own chunk kept 43 raw directives.
+    """
+
+    @staticmethod
+    def _regs(tmp_path: Path) -> None:
+        (tmp_path / "regs.adoc").write_text(
+            "// tag::REG_A[]\n|REG_A\n|0x1\n// end::REG_A[]\n"
+            "// tag::REG_B[]\n|REG_B\n|0x2\n// end::REG_B[]\n"
+        )
+
+    def _include(self, tmp_path: Path, options: str) -> list[str]:
+        self._regs(tmp_path)
+        doc = tmp_path / "d.adoc"
+        doc.write_text(f"include::regs.adoc[{options}]\n")
+        return _expand(doc)
+
+    def test_a_range_selects_its_lines(self, tmp_path: Path) -> None:
+        assert self._include(tmp_path, "lines=2..3") == ["|REG_A\n|0x1\n"]
+
+    def test_an_attribute_names_the_lines(self, tmp_path: Path) -> None:
+        self._regs(tmp_path)
+        doc = tmp_path / "d.adoc"
+        doc.write_text(
+            ":_REG_B: regs.adoc\n:REG_B: lines=6..7\ninclude::{_REG_B}[{REG_B}]\n"
+        )
+        assert _expand(doc)[2] == "|REG_B\n|0x2\n"
+
+    @pytest.mark.parametrize(
+        "options", ["lines=2;6..7", 'lines="2,6..7"', "lines=2; 6..7"]
+    )
+    def test_several_ranges(self, tmp_path: Path, options: str) -> None:
+        assert self._include(tmp_path, options) == ["|REG_A\n|REG_B\n|0x2\n"]
+
+    @pytest.mark.parametrize("options", ["lines=6..-1", "lines=6.."])
+    def test_an_open_range_runs_to_the_end(self, tmp_path: Path, options: str) -> None:
+        assert self._include(tmp_path, options) == ["|REG_B\n|0x2\n"]
+
+    def test_a_tag_marker_inside_the_lines_is_dropped(self, tmp_path: Path) -> None:
+        assert self._include(tmp_path, "lines=1..4") == ["|REG_A\n|0x1\n"]
+
+    def test_lines_win_over_tags(self, tmp_path: Path) -> None:
+        assert self._include(tmp_path, "tag=REG_A,lines=6..7") == ["|REG_B\n|0x2\n"]
+
+    def test_a_range_past_the_end_selects_what_is_there(self, tmp_path: Path) -> None:
+        assert self._include(tmp_path, "lines=7..40") == ["|0x2\n"]
+
+    @pytest.mark.parametrize("options", ["lines=x..y", "lines=", "lines=0..0"])
+    def test_lines_that_select_nothing_valid_select_no_lines(
+        self, tmp_path: Path, options: str
+    ) -> None:
+        """A selection with no valid range is no selection, as for a tag."""
+        assert self._include(tmp_path, options) == ["|REG_A\n|0x1\n|REG_B\n|0x2\n"]
+
+    def test_a_section_of_selected_rows_keeps_them_inline(self, tmp_path: Path) -> None:
+        rows = "".join(
+            f"// tag::REG{n}[]\n|REG{n}\n|0x{n:04x}\n|a register of the table\n"
+            f"// end::REG{n}[]\n"
+            for n in range(40)
+        )
+        (tmp_path / "regs.adoc").write_text(rows)
+        picks = "".join(
+            f":_REG{n}: regs.adoc\n:REG{n}: lines={5 * n + 2}..{5 * n + 4}\n"
+            for n in range(40)
+        )
+        includes = "".join(f"include::{{_REG{n}}}[{{REG{n}}}]\n" for n in range(3))
+        doc = tmp_path / "d.adoc"
+        doc.write_text(
+            f"{picks}= Doc\n\n== Regs\n\nThe block has three registers.\n\n"
+            f"|===\n|Name |Reset |Text\n\n{includes}|===\n"
+        )
+        chunks = list(AsciiDocParser().parse(doc, doc.read_text()))
+        (section,) = [c for c in chunks if "Regs" in c.symbol]
+        assert section.kind == "section"
+        assert "include::" not in section.text
+        assert "|REG2\n|0x0002\n" in section.text
+        assert "|REG3\n" not in section.text
+
+
 class TestCache:
     """A file of definitions is read once, and its effect follows its inputs."""
 

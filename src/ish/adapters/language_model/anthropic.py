@@ -12,19 +12,23 @@ file, which may be shared or committed.
 
 import os
 from collections.abc import Sequence
+from pathlib import Path
 
 from ish.adapters import _http
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._prompts import NOT_COVERED, Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
+    Claim,
     LanguageModelError,
     OnBlock,
     Passage,
     Query,
+    Quote,
     Reply,
     Selection,
     Source,
+    Verdicts,
 )
 
 ENDPOINT = "https://api.anthropic.com/v1/messages"
@@ -46,11 +50,13 @@ class AnthropicLanguageModel:
         *,
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
+        tree: Path | None = None,
     ) -> None:
         """Use *model*, a Claude model id such as ``claude-sonnet-5-5``.
 
         Require the model. A default chosen here would decide the cost of
         every answer without the operator saying so.
+        The model reads no file, so *tree* changes nothing.
         """
         if not model:
             raise LanguageModelError(
@@ -97,6 +103,7 @@ class AnthropicLanguageModel:
         searched: Sequence[str],
         turns_left: int,
         on_block: OnBlock | None = None,
+        notes: Sequence[str] = (),
     ) -> Reply:
         """Answer, or ask for searches, with structured output.
 
@@ -106,9 +113,18 @@ class AnthropicLanguageModel:
         text, read, wrote = self._structured(
             self._prompts.step,
             _grounded.STEP_SCHEMA,
-            _grounded.step_prompt(question, sources, searched, turns_left),
+            _grounded.step_prompt(question, sources, searched, turns_left, notes),
         )
         return _grounded.parse_step(text, self.model_name, read, wrote)
+
+    def check(self, claims: Sequence[Claim]) -> Verdicts:
+        """Judge each claim against its quotes, with structured output."""
+        text, read, wrote = self._structured(
+            self._prompts.check,
+            _grounded.CHECK_SCHEMA,
+            _grounded.check_prompt(claims),
+        )
+        return _grounded.parse_verdicts(text, self.model_name, claims, read, wrote)
 
     def _structured(
         self, system: str, schema: dict[str, object], prompt: str
@@ -224,20 +240,29 @@ def _passages(content: list[dict], sources: Sequence[Source]) -> tuple[Passage, 
     """Turn the text blocks of a reply into passages that cite source ids.
 
     Skip blocks that are not text, such as thinking. Map each citation by
-    its document index, and skip an index outside the sources sent.
+    its document index, and skip an index outside the sources sent. Keep
+    the text each citation quotes, so a check can find it in the source.
     """
     passages = []
     for block in content:
         if block.get("type") != "text":
             continue
         ids: list[str] = []
+        quotes: list[Quote] = []
         for citation in block.get("citations") or []:
             index = citation.get("document_index")
             if isinstance(index, int) and 0 <= index < len(sources):
                 source_id = sources[index].id
                 if source_id not in ids:
                     ids.append(source_id)
+                cited = str(citation.get("cited_text") or "")
+                if cited.strip():
+                    quotes.append(Quote(source_id, cited))
         passages.append(
-            Passage(text=str(block.get("text") or ""), source_ids=tuple(ids))
+            Passage(
+                text=str(block.get("text") or ""),
+                source_ids=tuple(ids),
+                quotes=tuple(quotes),
+            )
         )
     return tuple(passages)

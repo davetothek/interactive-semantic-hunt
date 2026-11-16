@@ -20,6 +20,29 @@ ish "parse a python file" src/
 [0.71] src/ish/adapters/parser/python.py:14-31  method  PythonParser.parse
 ```
 
+A result line tells where a chunk is, not what it says. `--format text`
+prints the text of each chunk under its line, at most 12 lines, and marks a
+cut. The text is the one the index read: an AsciiDoc section shows the rows
+its includes bring, not the `include::` lines. With `doc_windows`, a long
+section shows the window that matched the query, under a line that says so:
+
+```
+[0.80] src/ish/application/scan.py:186-209  method  Scan.parse_file
+        def parse_file(self, path: Path) -> Sequence[Chunk] | None:
+            """Read and parse one discovered file.
+
+            Return no chunks when the file was read but holds nothing this
+            parser can use, and None when the file could not be read at
+            all. The two answers differ for the index: a file that yields
+            nothing is described by that answer and is stamped, while a
+            file nobody could read is unknown and is asked about again.
+            Report the reason for either, and continue.
+            """
+            log.debug("Parsing %s", path)
+            try:
+    (more text follows)
+```
+
 Run the interactive picker and open the selection in your editor. Type to
 search, `up`/`down` or `ctrl+p`/`ctrl+n` to move, `enter` to choose, `ctrl+t`
 to change the theme, `escape` to quit. The picker lists what the index held
@@ -124,13 +147,53 @@ source is a link that opens the file at its lines:
    tests/
 ```
 
-On a terminal, the answer shows as the model writes it: the question,
-then each part of the answer once it is whole, then the terms and the
-sources. Most of the wait is the writing, so the first part shows about
-when the rerank ends. What shows is the text the whole answer is, so a
-copy of it reads the same. A pipe gets the whole answer at its end, as
-does `--brief`. The `claude-cli` backend streams. The `anthropic` and
-`ollama` backends show the answer when it is whole.
+### Each claim is checked
+
+Each claim of an answer carries the words of a source it rests on. ish
+checks each claim in two steps:
+
+1. ish looks for the quoted words in the source the claim cites. Markup,
+   punctuation, and line breaks do not count, but each word and its order
+   do. A quote has at least four words, or two when it holds a name or a
+   value, such as a register or a number.
+2. A model reads each claim beside its quoted words and the text of the
+   source around them, and says whether the words state the claim, only
+   imply it, or do not support it.
+
+A claim that a source implies and does not state starts with
+"Inference:". A claim that fails either step leaves the answer. The model
+gets one turn to fix it: to quote the right words, to search again when
+`--ask-turns` allows it, or to leave the claim out. What still fails
+shows in a block of its own, with the reason and the source it cited, so
+you see what the model wrote and why it is no fact:
+
+```markdown
+> **Unconfirmed: no quoted source states these, so they are no part of the answer**
+>
+> - The DMA driver reads the global queue on each interrupt. (the quoted
+>   words do not state it.) Cites dma.h:36-45.
+```
+
+The check costs one more call to the model, and the timing table shows
+it as `check`. `--no-check-claims` turns it off, `--check-model rerank`
+gives it to the cheaper rerank model, and `--repair-turns N` sets the
+turns to fix a claim, 1 by default. A brief answer cites no source, so
+it is not checked.
+
+With `--ask-turns 2` or more, the model also searches against its own
+draft. It writes the draft, asks for up to three searches that could
+find a source that disagrees with it, then answers from all the sources
+and puts each disagreement under what the documents leave open. The
+challenge takes two turns: one to ask for the searches, and one to answer
+after they run. `--no-challenge` turns it off.
+
+On a terminal, an answer with no check shows as the model writes it: the
+question, then each part of the answer once it is whole, then the terms
+and the sources. A checked answer shows when the check ends, because a
+part on the screen before the check could hold a claim that fails it.
+A pipe gets the whole answer at its end, as does `--brief`. The
+`claude-cli` backend streams. The `anthropic` and `ollama` backends show
+the answer when it is whole.
 
 It reads well in a terminal, and an editor shows it as a document:
 
@@ -305,7 +368,8 @@ token expires, or the operator ends it, ish says to run `ish remote login`
 again. `ish remote logout` deletes the token of the server.
 
 `ish remote search` prints the result lines of the server. `--limit` and
-`--format` travel with the query.
+`--format` travel with the query. A server older than `--format text`
+prints plain lines for it.
 
 For `ish remote ask`, the server searches its own tree and returns the
 chunks with their text. The language model of this machine picks the chunks
@@ -382,6 +446,10 @@ builds a language model and sends no text anywhere.
 | `--rerank-model MODEL` | Model of the same backend that picks the chunks an answer reads |
 | `--rerank-candidates N` | Chunks the rerank model chooses from (default 50) |
 | `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
+| `--no-check-claims` | Do not check that a quote of a source states each claim |
+| `--check-model answer\|rerank` | Model that checks the claims (default `answer`) |
+| `--repair-turns N` | Turns the model gets to fix the claims that fail the check (default 1) |
+| `--no-challenge` | With `--ask-turns`, do not search against the first draft |
 | `--prompt-dir DIR` | Instruction files that replace the shipped ones, file by file |
 | `--link-base URL` | Base URL where the tree is published, for the links of an answer |
 | `--remote URL` | Server that `--ask` and `--brief` read on a line with no command, for one release. Use `ish remote` with `--url URL` |

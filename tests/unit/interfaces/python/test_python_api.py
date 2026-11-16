@@ -8,8 +8,20 @@ import pytest
 from ish import bootstrap
 from ish.application.progress import Progress
 from ish.interfaces import heartbeat
+from ish.interfaces.python import api
 from ish.interfaces.python.api import Ish
 from ish.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer with no check of the claims and no challenge.
+
+    The tests of this module pin how an answer searches, reads, and
+    reports. The check and the challenge add turns of their own, and
+    ``tests/unit/interfaces/python/test_checks.py`` covers them.
+    """
+    monkeypatch.setattr(api, "checks", lambda *args, **named: {})
 
 
 @pytest.fixture()
@@ -577,7 +589,7 @@ class TestAskBrief:
             def answer(self, question, sources):
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
-        def build(settings, *, brief=False):
+        def build(settings, *, brief=False, **_):
             built.append(brief)
             return Model(brief)
 

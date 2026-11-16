@@ -8,6 +8,66 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `--format text` prints the start of each chunk under its result line, at
+  most 12 lines, and marks a cut. `search_code` takes `format: "text"` the
+  same way. A heading tells where a chunk is, not what it says.
+- The MCP server gives the agent rules in the `instructions` of its
+  handshake, on stdio, over HTTP, and through `ish remote mcp`. The agent
+  reads a chunk before it states what the chunk says, and does not report a
+  gap from the top results alone.
+- Each claim of an answer quotes the words of a source it rests on. ish
+  finds the words in the source, then a model says whether they state
+  the claim, only imply it, or do not support it. An implied claim starts
+  with "Inference:". A claim that fails gets one turn of the model to fix
+  it, and what still fails shows apart as unconfirmed, with the reason.
+  The check reads each quote in the text of its source around it, and a
+  quote of two words counts when it holds a name or a value. The JSON of
+  `ask` lists the quotes of each citation and the unconfirmed claims.
+  `check_claims`, `check_model`, and `repair_turns` set the check, and
+  `check.md` is its instruction.
+- `doc_windows` embeds each window of a few lines of a long document
+  section as one more vector of it, so a search finds one sentence of a
+  long section. A section scores the best of its own vector and its
+  windows. Off by default. Turning it on reads every file again.
+  A table, a chunk with 70 % or more of its lines in table cells, gets no
+  windows. `--format text` and `search_code` with `format: "text"` show
+  the window that matched the query.
+- With the `claude-cli` backend, an answer reads the files of the tree
+  before it replies, with Read, Grep, and Glob and no other tool, inside the
+  tree only. A model that saw only the chunks of a search wrote what they
+  implied. It cites a file it read as `path:first-last`, and the check finds
+  each quote in those lines. The timing table counts its rounds of reading.
+  `answer_tools` turns it off.
+- With `ask_turns` of 2 or more, the model searches against its first draft
+  before it answers, and puts each disagreement in the gaps. `challenge`
+  turns it off.
+
+### Changed
+
+- A checked answer shows on a terminal when the check ends, not part by
+  part as the model writes it. Turn the check off with
+  `--no-check-claims` to stream.
+- The lexical half of a search matches the names in a query alone, such as
+  `DMA_EN`, `IshApp`, or `FIFO`, and no longer its plain words. A query
+  that named something and also said "control" lifted every section titled
+  "... Control" above the section the vector ranked first.
+
+### Fixed
+
+- `--format text` shows the text the index read, so an AsciiDoc section
+  shows the rows its includes bring and not the `include::` lines.
+- A search with `--cache-dir` builds its own index when an `ish-serve` of
+  another index directory keeps the tree current. It read the status of
+  that server and built nothing. `ish-serve` now writes the directory of
+  its indexes in its status.
+- An AsciiDoc include that selects lines, such as `include::regs.adoc[lines=2..7]`
+  or `lines="1,3..5"`, brings those lines alone, as Asciidoctor does. It
+  brought the whole file, so a section that names 40 registers by their
+  lines held 40 copies of the register file. A selection by lines wins over
+  one by tags. The next refresh reads every file again.
+
 ## 0.10.1 - 2026-11-14
 
 ### Added

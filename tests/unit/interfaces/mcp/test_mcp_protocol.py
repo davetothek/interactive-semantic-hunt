@@ -54,6 +54,15 @@ class TestInitialize:
         result = call(build(), "initialize", {})
         assert "tools" in result["result"]["capabilities"]
 
+    def test_gives_the_instructions_of_the_server(self) -> None:
+        """A host gives the instructions to its model before the first call."""
+        server = Server("ish", "1.2.3", [echo_tool()], "Read before you claim.")
+        result = call(server, "initialize", {})
+        assert result["result"]["instructions"] == "Read before you claim."
+
+    def test_gives_no_instructions_when_it_has_none(self) -> None:
+        assert "instructions" not in call(build(), "initialize", {})["result"]
+
 
 class TestToolListing:
     """Verify discovery."""

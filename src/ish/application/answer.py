@@ -10,13 +10,23 @@ import logging
 import re
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ish.application.glossary import Glossary, acronyms
+from ish.application.grounding import (
+    CHALLENGE_DONE,
+    Failure,
+    Review,
+    challenge_note,
+    repair_note,
+    review,
+)
 from ish.application.ports.language_model import (
     SEARCHES_A_TURN,
     Block,
     LanguageModel,
+    Passage,
+    Quote,
     Reply,
     Source,
     Term,
@@ -37,6 +47,10 @@ PREVIEW_CHARS = 300
 # Chunks each follow-up search adds.
 CHUNKS_A_SEARCH = 5
 
+# Turns a challenge needs left after the draft: one to ask for searches
+# against it, and one to answer after they run.
+CHALLENGE_TURNS = 2
+
 # Acronyms an answer names at most. A register table can hold dozens of
 # names, and a reader wants the terms, not a second table.
 MAX_TERMS = 20
@@ -46,12 +60,30 @@ MAX_TERMS = 20
 DEFAULT_BUDGET_CHARS = 60_000
 
 
+# The basis of a part that failed the check of its claim. It is no part
+# of the answer, and a reader sees it apart with the reason.
+UNCONFIRMED = "unconfirmed"
+
+
 @dataclass(frozen=True, slots=True)
 class AnswerPart:
-    """Hold one part of an answer and the chunks it cites."""
+    """Hold one part of an answer and the chunks it cites.
+
+    Attributes:
+        text: The words of the part.
+        cites: The chunks the part cites.
+        basis: What the check found: ``stated``, ``implied``, or
+            ``unconfirmed``. Empty for a part no check read.
+        note: Why an unconfirmed part failed the check.
+        quotes: The words of a cited chunk that the part rests on, each
+            with its chunk.
+    """
 
     text: str
     cites: tuple[Chunk, ...] = ()
+    basis: str = ""
+    note: str = ""
+    quotes: tuple[tuple[Chunk, str], ...] = ()
 
 
 SEARCHING = "searching"
@@ -64,6 +96,8 @@ WRITING = "writing"
 """The language model writing the answer, or asking for searches."""
 FOLLOWING = "following"
 """Running a search the language model asked for."""
+CHECKING = "checking"
+"""A language model checking that the quotes of each claim state it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +127,8 @@ class AnswerStep:
             return f"Reading {self.count} chunks"
         if self.stage == FOLLOWING:
             return f"Searching again: {self.query}"
+        if self.stage == CHECKING:
+            return f"{self.model} checking the claims against their sources"
         turn = f", turn {self.turn} of {self.turns}" if self.turns > 1 else ""
         return f"{self.model} writing the answer{turn}"
 
@@ -106,10 +142,15 @@ def _quiet(step: AnswerStep) -> None:
 
 @dataclass(frozen=True, slots=True)
 class AnswerRow:
-    """Hold one row of a table in an answer, and the chunks it cites."""
+    """Hold one row of a table in an answer, and the chunks it cites.
+
+    *basis* and *quotes* mean what they mean for an ``AnswerPart``.
+    """
 
     cells: tuple[str, ...]
     cites: tuple[Chunk, ...] = ()
+    basis: str = ""
+    quotes: tuple[tuple[Chunk, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,8 +210,18 @@ class Answer:
         terms: The acronyms the answer uses, each with what it stands for
             and the sources that write it, sorted by term. A meaning that
             no source writes is not kept, so none is invented.
-        cost_usd: What the backends say the rerank and every turn of the
-            answer cost, in US dollars, or 0 when they do not say.
+        cost_usd: What the backends say the rerank, every turn of the
+            answer, and the checks cost, in US dollars, or 0 when they do
+            not say.
+        unconfirmed: The claims the model wrote that failed the check,
+            each with the reason. They are no part of *parts* or *blocks*.
+        check_model: Name of the model that checked the claims, or empty
+            when none did.
+        check_input_tokens: Tokens the checking model read.
+        check_output_tokens: Tokens the checking model wrote.
+        claims_checked: Claims the checking model read, over every round.
+        reads: Rounds in which the model read files of the tree, over
+            every turn.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -190,6 +241,12 @@ class Answer:
     seconds: float = 0.0
     terms: tuple[AnswerTerm, ...] = ()
     cost_usd: float = 0.0
+    unconfirmed: tuple[AnswerPart, ...] = ()
+    check_model: str = ""
+    check_input_tokens: int = 0
+    check_output_tokens: int = 0
+    claims_checked: int = 0
+    reads: int = 0
 
 
 class AnswerQuestion:
@@ -210,6 +267,10 @@ class AnswerQuestion:
         glossary: Glossary | None = None,
         kind_of: Callable[[Chunk], str] | None = None,
         on_block: Callable[["AnswerBlock"], None] | None = None,
+        judge: LanguageModel | None = None,
+        repairs: int = 1,
+        challenge: bool = False,
+        lookup: Callable[[str], tuple[Chunk, str] | None] | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -245,6 +306,22 @@ class AnswerQuestion:
         with its citations as chunks, when the backend streams. The
         answer holds every block again, and a block of a turn that then
         asks for a search is no part of the answer.
+
+        With a *judge*, check each claim of the answer: find its quotes in
+        the sources, then let the judge say whether they state it. Give
+        the model up to *repairs* more turns to fix the claims that fail,
+        and set apart those that still fail. Stream no block then, because
+        a block that streams before the check can hold a claim that fails.
+
+        With *challenge* and *turns* above 0, ask the model for searches
+        that could find evidence against its first draft before it
+        answers. A draft then streams no block either.
+
+        A model that reads the files of the tree cites what it read as
+        ``path:first-last``. Turn such a citation into a source through
+        *lookup*, which returns those lines as a chunk with its text, or
+        None for lines that are not there. The check then finds each quote
+        in the lines that the model names, as in any other source.
         """
         self._search = search
         self._model = model
@@ -259,6 +336,12 @@ class AnswerQuestion:
         self._glossary = Glossary() if glossary is None else glossary
         self._kind_of = kind_of
         self._on_block = on_block
+        self._judge = judge
+        self._repairs = repairs
+        self._challenge = challenge
+        self._lookup = lookup
+        # The lines the model cited by path, by the reference it wrote.
+        self._refs: dict[str, tuple[Chunk, str]] = {}
         # What one answer has read, so no chunk is read twice. Each text
         # is keyed by its words alone, to find a copy in another file.
         self._texts: dict[Chunk, str | None] = {}
@@ -283,6 +366,7 @@ class AnswerQuestion:
         when the search finds nothing.
         """
         self._spent = {}
+        self._refs = {}
         self._texts, self._first, self._copies = {}, {}, {}
         self._rerank_cost = 0.0
         start = self._clock()
@@ -322,7 +406,9 @@ class AnswerQuestion:
             )
 
         if self._turns > 0:
-            reply, texts, searched, turns, left = self._converse(question, texts, left)
+            reply, texts, searched, turns, left = self._converse(
+                question, texts, left, self._turns, challenge=self._challenge
+            )
         else:
             sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
             self._on_step(AnswerStep(WRITING, model=self._model.model_name))
@@ -334,8 +420,16 @@ class AnswerQuestion:
                 **self._streaming(texts),
             )
             searched, turns = [], 1
+        self._resolve(reply)
+        checked: Review | None = None
+        if self._judge is not None:
+            reply, texts, searched, turns, left, checked = self._checked(
+                question, reply, texts, searched, turns, left
+            )
         kept = [chunk for chunk, _ in texts]
         by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
+        by_id |= {ref: chunk for ref, (chunk, _text) in self._refs.items()}
+        kept += [chunk for chunk, _text in self._refs.values() if chunk not in kept]
         log.info(
             "%s read %d tokens and wrote %d in %d turns",
             self._model.model_name,
@@ -343,13 +437,12 @@ class AnswerQuestion:
             reply.output_tokens,
             turns,
         )
-        parts = (
-            tuple(_part(p.text, p.source_ids, by_id) for p in reply.passages)
-            if reply.covered
-            else ()
-        )
+        parts = tuple(_part(p, by_id) for p in reply.passages) if reply.covered else ()
         blocks = tuple(_block(b, by_id) for b in reply.blocks) if reply.covered else ()
         terms = self._named(reply, texts, kept) if reply.covered else ()
+        unconfirmed = (
+            tuple(_unconfirmed(f, by_id) for f in checked.failures) if checked else ()
+        )
         return Answer(
             parts=parts,
             blocks=blocks,
@@ -365,8 +458,84 @@ class AnswerQuestion:
             rerank_model=rerank_model,
             searches=tuple(searched),
             turns=turns,
-            cost_usd=reply.cost_usd + self._rerank_cost,
+            cost_usd=reply.cost_usd
+            + self._rerank_cost
+            + (checked.cost_usd if checked else 0.0),
+            unconfirmed=unconfirmed,
+            check_model=self._judge.model_name if self._judge and checked else "",
+            check_input_tokens=checked.input_tokens if checked else 0,
+            check_output_tokens=checked.output_tokens if checked else 0,
+            claims_checked=checked.claims if checked else 0,
+            reads=reply.reads,
         )
+
+    def _checked(
+        self,
+        question: str,
+        reply: Reply,
+        texts: list[tuple[Chunk, str]],
+        searched: list[str],
+        turns: int,
+        left: int,
+    ) -> tuple[Reply, list[tuple[Chunk, str]], list[str], int, int, Review]:
+        """Check the claims of *reply*, and give the model turns to fix those that fail.
+
+        Each repair is one more call of the model, told which claims
+        failed and why. It may search once more when the answer may
+        search. Return the reply with only the claims that hold, the
+        chunks read, the searches, the turns, the budget left, and the
+        last review with the sum of what every check cost.
+        """
+        checked = self._review(reply, texts)
+        spent = [checked]
+        # The text of the last reply, with the tokens of every turn summed.
+        used = reply
+        for _ in range(self._repairs):
+            if not checked.failures:
+                break
+            fixed, texts, more, extra, left = self._converse(
+                question,
+                texts,
+                left,
+                1 if self._turns > 0 else 0,
+                notes=(repair_note(checked.failures),),
+                searched=searched,
+            )
+            searched, turns = [*searched, *more], turns + extra
+            used = _summed(used, fixed)
+            if not fixed.covered:
+                # A repair that answers nothing takes back no claim that
+                # held, so the earlier review stands.
+                log.info("The repair turn answered nothing; the checked answer stands")
+                break
+            checked = self._review(fixed, texts)
+            spent.append(checked)
+        total = Review(
+            reply=replace(
+                checked.reply,
+                input_tokens=used.input_tokens,
+                output_tokens=used.output_tokens,
+                cost_usd=used.cost_usd,
+                reads=used.reads,
+            ),
+            failures=checked.failures,
+            claims=sum(r.claims for r in spent),
+            input_tokens=sum(r.input_tokens for r in spent),
+            output_tokens=sum(r.output_tokens for r in spent),
+            cost_usd=sum(r.cost_usd for r in spent),
+        )
+        return total.reply, texts, searched, turns, left, total
+
+    def _review(self, reply: Reply, texts: list[tuple[Chunk, str]]) -> Review:
+        """Check *reply* against the texts the model read, and time it."""
+        judge = self._judge
+        if judge is None or not reply.covered:
+            return Review(reply)
+        self._resolve(reply)
+        by_id = {str(n): text for n, (_, text) in enumerate(texts, 1)}
+        by_id |= {ref: text for ref, (_chunk, text) in self._refs.items()}
+        self._on_step(AnswerStep(CHECKING, model=judge.model_name))
+        return self._timed(CHECKING, review, reply, by_id, judge)
 
     def _named(
         self, reply: Reply, texts: list[tuple[Chunk, str]], kept: list[Chunk]
@@ -394,11 +563,37 @@ class AnswerQuestion:
         them, so a block reads the same streamed and in the answer. Ask a
         model nothing more when no one takes the blocks.
         """
-        if self._on_block is None:
+        if self._on_block is None or not self._streams():
             return {}
         by_id = {str(n): chunk for n, (chunk, _) in enumerate(texts, 1)}
         give = self._on_block
         return {"on_block": lambda block: give(_block(block, by_id))}
+
+    def _resolve(self, reply: Reply) -> None:
+        """Turn each ``path:first-last`` the reply cites into the lines it names."""
+        if self._lookup is None:
+            return
+        rows = [row for block in reply.blocks for row in block.rows]
+        cited = [
+            *(i for p in reply.passages for i in p.source_ids),
+            *(q.source_id for p in reply.passages for q in p.quotes),
+            *(i for row in rows for i in row.source_ids),
+            *(q.source_id for row in rows for q in row.quotes),
+        ]
+        for ref in dict.fromkeys(cited):
+            if ref.isdigit() or ref in self._refs:
+                continue
+            found = self._lookup(ref)
+            if found is not None:
+                self._refs[ref] = found
+
+    def _streams(self) -> bool:
+        """Say whether a block may show before the answer is final.
+
+        A check can take out a claim, and a challenge can replace a whole
+        draft. A block shown before either would stay on the screen.
+        """
+        return self._judge is None and not (self._challenge and self._turns > 0)
 
     def _read_kept(self, chunk: Chunk) -> str | None:
         """Read *chunk* once, and add what its text defines to the glossary."""
@@ -443,26 +638,41 @@ class AnswerQuestion:
         return Source(id=source_id, title=title, text=text)
 
     def _converse(
-        self, question: str, texts: list[tuple[Chunk, str]], left: int
+        self,
+        question: str,
+        texts: list[tuple[Chunk, str]],
+        left: int,
+        allowed: int,
+        *,
+        notes: Sequence[str] = (),
+        searched: Sequence[str] = (),
+        challenge: bool = False,
     ) -> tuple[Reply, list[tuple[Chunk, str]], list[str], int, int]:
-        """Let the model ask for searches until it answers or the turns run out.
+        """Let the model ask for searches until it answers or *allowed* turns run out.
 
         Return the final reply with the token counts of every turn summed,
-        the chunks it read, the queries run, the turns taken, and the
+        the chunks it read, the queries run here, the turns taken, and the
         budget left. A turn that asks only for queries already run counts
         as a turn, so a model that repeats itself still stops.
+
+        Give the model *notes* on every turn. *searched* holds the queries
+        an earlier call ran. With *challenge*, take the first draft that
+        answers while turns are left as no answer: ask the model for
+        searches against it, then for the answer from all the sources.
         """
-        searched: list[str] = []
-        read_in = wrote = turns = 0
+        ran: list[str] = []
+        read_in = wrote = turns = reads = 0
         cost = 0.0
-        for turns_left in range(self._turns, -1, -1):
+        told = tuple(notes)
+        challenged = False
+        for turns_left in range(allowed, -1, -1):
             sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
             self._on_step(
                 AnswerStep(
                     WRITING,
                     model=self._model.model_name,
                     turn=turns + 1,
-                    turns=self._turns + 1,
+                    turns=allowed + 1,
                 )
             )
             reply = self._timed(
@@ -470,23 +680,42 @@ class AnswerQuestion:
                 self._model.step,
                 question,
                 sources,
-                searched,
+                [*searched, *ran],
                 turns_left,
                 **self._streaming(texts),
+                **({"notes": told} if told else {}),
             )
             turns += 1
             read_in += reply.input_tokens
             wrote += reply.output_tokens
             cost += reply.cost_usd
+            reads += reply.reads
+            # The challenge needs a turn to ask for searches and a turn
+            # after them, or its searches never run.
+            if (
+                challenge
+                and not challenged
+                and turns_left >= CHALLENGE_TURNS
+                and reply.covered
+                and not reply.searches
+            ):
+                challenged = True
+                told = (*notes, challenge_note(reply, SEARCHES_A_TURN))
+                log.info("Turn %d drafted an answer, and searches against it", turns)
+                continue
             if not reply.searches or turns_left == 0:
                 break
+            if challenged:
+                told = (*notes, CHALLENGE_DONE)
             seen = {chunk for chunk, _ in texts}
             fresh_queries = [
-                q for q in dict.fromkeys(reply.searches) if q not in searched
+                q
+                for q in dict.fromkeys(reply.searches)
+                if q not in searched and q not in ran
             ]
             for query in fresh_queries[:SEARCHES_A_TURN]:
                 self._on_step(AnswerStep(FOLLOWING, query=query))
-                searched.append(query)
+                ran.append(query)
                 fresh = self._distinct(
                     [
                         c
@@ -506,8 +735,9 @@ class AnswerQuestion:
             cost_usd=cost,
             blocks=reply.blocks,
             terms=reply.terms,
+            reads=reads,
         )
-        return final, texts, searched, turns, left
+        return final, texts, ran, turns, left
 
     def _rerank(
         self, question: str, found: list[Chunk]
@@ -637,15 +867,41 @@ def _block(block: Block, by_id: dict[str, Chunk]) -> AnswerBlock:
     return AnswerBlock(
         kind=block.kind,
         heading=block.heading,
-        parts=tuple(_part(p.text, p.source_ids, by_id) for p in block.passages),
+        parts=tuple(_part(p, by_id) for p in block.passages),
         columns=block.columns,
         rows=tuple(
-            AnswerRow(r.cells, _part("", r.source_ids, by_id).cites) for r in block.rows
+            AnswerRow(
+                r.cells,
+                _cites(r.source_ids, by_id),
+                r.basis,
+                _quoted(r.quotes, by_id),
+            )
+            for r in block.rows
         ),
     )
 
 
-def _part(text: str, ids: Sequence[str], by_id: dict[str, Chunk]) -> AnswerPart:
+def _part(passage: Passage, by_id: dict[str, Chunk]) -> AnswerPart:
+    """Return *passage* with its cited ids and quotes mapped to chunks."""
+    return AnswerPart(
+        text=passage.text,
+        cites=_cites(passage.source_ids, by_id),
+        basis=passage.basis,
+        quotes=_quoted(passage.quotes, by_id),
+    )
+
+
+def _unconfirmed(failure: Failure, by_id: dict[str, Chunk]) -> AnswerPart:
+    """Return a claim that failed the check, with its reason."""
+    return AnswerPart(
+        text=failure.text,
+        cites=_cites(failure.source_ids, by_id),
+        basis=UNCONFIRMED,
+        note=failure.problem,
+    )
+
+
+def _cites(ids: Sequence[str], by_id: dict[str, Chunk]) -> tuple[Chunk, ...]:
     """Map cited ids to chunks, and drop an id the model was not given."""
     cites = []
     for source_id in ids:
@@ -653,4 +909,22 @@ def _part(text: str, ids: Sequence[str], by_id: dict[str, Chunk]) -> AnswerPart:
             cites.append(by_id[source_id])
         else:
             log.warning("The model cited source %r, which it was not given", source_id)
-    return AnswerPart(text=text, cites=tuple(cites))
+    return tuple(cites)
+
+
+def _quoted(
+    quotes: Sequence[Quote], by_id: dict[str, Chunk]
+) -> tuple[tuple[Chunk, str], ...]:
+    """Map each quote to the chunk it comes from, and drop one of an unknown id."""
+    return tuple((by_id[q.source_id], q.text) for q in quotes if q.source_id in by_id)
+
+
+def _summed(first: Reply, last: Reply) -> Reply:
+    """Return *last* with the tokens and cost of *first* added to its own."""
+    return replace(
+        last,
+        input_tokens=first.input_tokens + last.input_tokens,
+        output_tokens=first.output_tokens + last.output_tokens,
+        cost_usd=first.cost_usd + last.cost_usd,
+        reads=first.reads + last.reads,
+    )

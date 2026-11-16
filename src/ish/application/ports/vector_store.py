@@ -80,7 +80,16 @@ class VectorReader(Protocol):
 
         Return matches in rank order. The score stays the cosine
         similarity, so it means the same thing whether or not the
-        lexical half ran.
+        lexical half ran. For a chunk with windows it is the best
+        similarity of the chunk and its windows.
+        """
+        ...
+
+    def vectors(self, hashes: Collection[str]) -> Mapping[str, Sequence[float]]:
+        """Return the stored vector of each of *hashes* that has one.
+
+        Let a caller score the windows of a chunk it has already found,
+        with no embedding.
         """
         ...
 
@@ -113,11 +122,18 @@ class VectorStore(VectorReader, Protocol):
         ...
 
     def set_file(
-        self, path: Path, stamp: FileStamp, chunks: Sequence[tuple[Chunk, str]]
+        self,
+        path: Path,
+        stamp: FileStamp,
+        chunks: Sequence[tuple[Chunk, str]],
+        windows: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
         """Replace everything held for *path*.
 
         Accept each chunk with the content hash of its embedded text.
+        *windows* maps a chunk's content hash to the hashes of its
+        windows, each one more vector of that chunk. A search gives a
+        chunk the best score of its own vector and its windows.
         """
         ...
 

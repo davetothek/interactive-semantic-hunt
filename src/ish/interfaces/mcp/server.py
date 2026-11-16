@@ -33,6 +33,7 @@ from ish.interfaces.format import (
     format_brief,
     layout_data,
     number_citations,
+    quotes_by_chunk,
     render,
     symbol_of,
     terms_data,
@@ -51,6 +52,28 @@ log = logging.getLogger("ish.mcp")
 WATCH_STOP_SECONDS = 5.0
 
 SERVER_NAME = "ish"
+
+# What a host gives its model before the first call. A search finds where
+# an idea is. It does not prove what the source says, and an agent that
+# writes a claim from a heading writes a guess as a fact.
+AGENT_INSTRUCTIONS = """\
+ish finds where an idea is in a tree. It does not check what the source \
+says. Follow these rules before you state a fact from a result.
+
+- A search result is a pointer: a path, a line range, and a heading. Read \
+the text of a chunk before you state what it says. Call search_code with \
+format "text", or open the file.
+- A heading, a symbol name, or a short comment is not evidence of what the \
+code does. A field that names a queue does not show that the code \
+reads the queue.
+- A source that is not in the top results can still be in the tree. Before \
+you report that the tree does not say a thing, search again in other \
+words or with a type filter.
+- Search for the subject, not for your conclusion. A query that states a \
+conclusion finds text that looks like the conclusion.
+- Mark each statement that you infer, and do not read in a source, as an \
+inference.
+"""
 
 # How a search that found nothing begins its answer. A client that
 # prints results as lines reads this as prose, not as a result.
@@ -99,7 +122,8 @@ _QUERY_PROPERTIES: dict[str, dict[str, Any]] = {
         "enum": list(choices_of("format")),
         "description": (
             "Shape of each line. Use grep for an editor, which opens a "
-            "result at path:line:column."
+            "result at path:line:column. Use text to get the start of the "
+            "text of each chunk under its line."
         ),
     },
 }
@@ -318,9 +342,15 @@ class IshTools:
         # another directory resolves it against that one, and the
         # working directory of a shared server means nothing to it.
         shape = str(arguments.get("format") or self._settings.format)
-        return "\n".join(
-            render(chunk, shape, score, base=root) for chunk, score in results
-        )
+        lines = []
+        for chunk, score in results:
+            text, matched = (
+                session.excerpt(chunk, query) if shape == "text" else (None, False)
+            )
+            lines.append(
+                render(chunk, shape, score, base=root, text=text, matched=matched)
+            )
+        return "\n".join(lines)
 
     def ask(self, arguments: Mapping[str, Any]) -> str:
         """Answer a question from the chunks a search finds, as JSON.
@@ -567,7 +597,10 @@ def search_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
             "sections) with their file, line range, and score. Use it "
             "for questions such as 'where is authentication handled' "
             "or 'what computes the ranking', where the wording of the "
-            "question will not appear in the code."
+            "question will not appear in the code. A result is a "
+            "pointer, not evidence: read the text of a chunk before you "
+            "state what it says. Pass format 'text' to get the start of "
+            "each chunk."
         ),
         schema={
             "type": "object",
@@ -600,7 +633,12 @@ def ask_tool(handler: Callable[[Mapping[str, Any]], str]) -> Tool:
             "models, their tokens, and the seconds of each stage in "
             "'timings'. When the "
             "documents do not answer the question, 'covered' is "
-            "false and 'sources' lists the closest chunks. Use it "
+            "false and 'sources' lists the closest chunks. Each claim "
+            "rests on quoted words of a source, and each citation lists "
+            "them in 'quotes'. A claim that starts with 'Inference:' "
+            "follows from its sources but no source states it. "
+            "'unconfirmed' lists the claims that failed the check: they "
+            "are no fact, so do not repeat them as one. Use it "
             "for questions such as 'how is the watchdog configured'."
         ),
         schema={
@@ -775,13 +813,27 @@ def answer_data(
         text, cited = number_citations(answer)
         layout, _ = layout_data(answer)
         terms, cited = terms_data(answer, cited)
+        quoted = quotes_by_chunk(answer)
         reply["answer"] = text
         reply["layout"] = layout
         reply["terms"] = terms
-        reply["citations"] = [described(c, n) for n, c in enumerate(cited, 1)]
+        reply["citations"] = [
+            described(c, n) | {"quotes": quoted.get(c, [])}
+            for n, c in enumerate(cited, 1)
+        ]
     else:
         reply["answer"] = NOT_COVERED_TEXT
         reply["sources"] = [described(c) for c in answer.sources]
+    # The claims the model wrote that failed the check. They are no part
+    # of the answer, and a client shows them apart, if at all.
+    reply["unconfirmed"] = [
+        {
+            "text": part.text.strip(),
+            "reason": part.note,
+            "sources": [described(c) for c in part.cites],
+        }
+        for part in answer.unconfirmed
+    ]
     # The text `ish --ask` prints, so a client in a terminal shows
     # the answer the way a local run does.
     reply["markdown"] = format_answer(
@@ -966,7 +1018,10 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
         logging.getLogger("ish.audit").setLevel(logging.INFO)
     tools = IshTools(settings, root)
     server = Server(
-        SERVER_NAME, installed_version(), tools.tools(over_http=bool(args.http))
+        SERVER_NAME,
+        installed_version(),
+        tools.tools(over_http=bool(args.http)),
+        AGENT_INSTRUCTIONS,
     )
     try:
         tools.warm_reader()

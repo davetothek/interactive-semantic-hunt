@@ -23,6 +23,18 @@ from outside the sources, and do not guess. If the sources do not answer
 the question, set covered to false and leave summary, sections, and gaps
 empty.
 
+For each source that a passage or a table row cites, copy into quotes the
+sentence of that source that the claim rests on, word for word, with the
+id of the source. A quote holds at least $min_quote_words words, or
+$min_named_quote_words when it holds a name or a value, such as a register
+or a number. Write one fact in each passage and each row. ish looks
+for each quote in its source, and a claim whose quote is not there leaves
+the answer. Write a claim only when a source states it. A claim that
+follows from the sources only through a step of your own, such as what
+code does from the name of a field, a heading, or a comment, is no claim:
+put it in gaps as a point the sources leave unconfirmed. A passage of gaps
+needs no quotes.
+
 List in terms each acronym and abbreviation the answer uses, with what it
 stands for as a source writes it, and the id of that source. Take a
 meaning from the sources alone. Leave out a term that no source spells
