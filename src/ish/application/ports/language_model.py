@@ -155,6 +155,12 @@ class Reply:
             when it does not say.
         reads: Rounds in which the model read files of the tree before it
             replied, or 0 for a model that reads none.
+        cache_write_tokens: Of *input_tokens*, the tokens the backend
+            wrote to its prompt cache. A write costs more than a token
+            the backend reads once.
+        cache_read_tokens: Of *input_tokens*, the tokens the backend read
+            from its prompt cache. A read costs a tenth of a token the
+            backend reads once.
     """
 
     passages: tuple[Passage, ...]
@@ -166,6 +172,8 @@ class Reply:
     terms: tuple[Term, ...] = ()
     cost_usd: float = 0.0
     reads: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
 
 
 @dataclass(frozen=True, slots=True)

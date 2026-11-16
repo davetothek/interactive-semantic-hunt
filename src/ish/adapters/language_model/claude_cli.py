@@ -12,6 +12,7 @@ memory reaches the model.
 """
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -34,6 +35,8 @@ from ish.application.ports.language_model import (
     Source,
     Verdicts,
 )
+
+log = logging.getLogger(__name__)
 
 EXECUTABLE = "claude"
 TIMEOUT_SECONDS = 600
@@ -179,6 +182,9 @@ class ClaudeCliLanguageModel:
         # The rounds of reading of the last call, which claude counts as
         # the turns before its reply.
         self._reads = 0
+        # The tokens of the last call that claude wrote to its prompt
+        # cache, and those it read from it.
+        self._cached = (0, 0)
         self._timeout = timeout
 
     def answer(
@@ -205,7 +211,7 @@ class ClaudeCliLanguageModel:
             input_tokens=read,
             output_tokens=wrote,
         )
-        return replace(reply, cost_usd=cost, reads=self._reads)
+        return self._with_usage(reply, cost)
 
     def step(
         self,
@@ -227,7 +233,18 @@ class ClaudeCliLanguageModel:
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
         )
-        return replace(reply, cost_usd=cost, reads=self._reads)
+        return self._with_usage(reply, cost)
+
+    def _with_usage(self, reply: Reply, cost: float) -> Reply:
+        """Return *reply* with the cost, reads, and cache use of the last call."""
+        written, read = self._cached
+        return replace(
+            reply,
+            cost_usd=cost,
+            reads=self._reads,
+            cache_write_tokens=written,
+            cache_read_tokens=read,
+        )
 
     def check(self, claims: Sequence[Claim]) -> Verdicts:
         """Judge each claim against its quotes, in the JSON the schema fixes."""
@@ -301,7 +318,7 @@ class ClaudeCliLanguageModel:
         if body.get("is_error") or "structured_output" not in body:
             raise LanguageModelError(f"claude did not answer: {body.get('result')}")
         usage = body.get("usage") or {}
-        read = sum(
+        fresh, written, cached = (
             int(usage.get(k) or 0)
             for k in (
                 "input_tokens",
@@ -309,9 +326,24 @@ class ClaudeCliLanguageModel:
                 "cache_read_input_tokens",
             )
         )
+        read = fresh + written + cached
         wrote = int(usage.get("output_tokens") or 0)
         cost = float(body.get("total_cost_usd") or 0.0)
-        self._reads = max(0, int(body.get("num_turns") or 1) - 1) if tools else 0
+        requests = int(body.get("num_turns") or 1)
+        self._reads = max(0, requests - 1) if tools else 0
+        self._cached = (written, cached)
+        log.info(
+            "claude %s read %d tokens in %d requests: %d uncached, %d written to "
+            "the cache, %d read from it. It wrote %d, for $%.4f",
+            self.model_name,
+            read,
+            requests,
+            fresh,
+            written,
+            cached,
+            wrote,
+            cost,
+        )
         return body["structured_output"], read, wrote, cost
 
     def _whole(

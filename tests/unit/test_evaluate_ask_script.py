@@ -471,9 +471,12 @@ class TestHistory(Harness):
             claims_checked=4,
             unconfirmed=(AnswerPart("y"), AnswerPart("z")),
             reads=3,
+            cache_write_tokens=60,
+            cache_read_tokens=25,
         )
         row = ev.score(TestScore.covered, FakeIsh(answer), TREE)
         found = ev.measures([row])
+        assert (found["cache_write_tokens"], found["cache_read_tokens"]) == (60, 25)
         assert (row.unconfirmed, row.claims_checked, row.reads) == (2, 4, 3)
         assert found["unconfirmed"] == 2
         assert found["all_input_tokens"] == 150

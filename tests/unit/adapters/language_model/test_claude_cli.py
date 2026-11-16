@@ -158,6 +158,34 @@ class TestReadingTheTree:
             == 0
         )
 
+    def test_the_cache_use_is_kept_apart(self, runner, tmp_path: Path, caplog) -> None:
+        """Of 352 tokens in, claude wrote 300 to its cache and read 50 from it."""
+        caplog.set_level("INFO", logger=claude_cli.__name__)
+        model = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
+        reply = model.answer("How?", SOURCES)
+        assert reply.input_tokens == 352
+        assert (reply.cache_write_tokens, reply.cache_read_tokens) == (300, 50)
+        assert (
+            "claude sonnet read 352 tokens in 1 requests: 2 uncached, 300 written "
+            "to the cache, 50 read from it. It wrote 40, for $0.0000"
+        ) in caplog.text
+
+    def test_a_step_keeps_its_cache_use(self, runner, tmp_path: Path) -> None:
+        runner.stdout = json.dumps(
+            {
+                "is_error": False,
+                "structured_output": {"covered": False, "passages": [], "search": []},
+                "usage": {
+                    "cache_creation_input_tokens": 7,
+                    "cache_read_input_tokens": 3,
+                },
+            }
+        )
+        reply = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path).step(
+            "q", SOURCES, [], 1
+        )
+        assert (reply.cache_write_tokens, reply.cache_read_tokens) == (7, 3)
+
     def test_a_step_reads_the_tree_too(self, runner, tmp_path: Path) -> None:
         runner.stdout = json.dumps(
             {

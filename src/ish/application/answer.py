@@ -222,6 +222,10 @@ class Answer:
         claims_checked: Claims the checking model read, over every round.
         reads: Rounds in which the model read files of the tree, over
             every turn.
+        cache_write_tokens: Of *input_tokens*, the tokens the backend
+            wrote to its prompt cache, over every turn.
+        cache_read_tokens: Of *input_tokens*, the tokens the backend read
+            from its prompt cache, over every turn.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -247,6 +251,8 @@ class Answer:
     check_output_tokens: int = 0
     claims_checked: int = 0
     reads: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
 
 
 class AnswerQuestion:
@@ -467,6 +473,8 @@ class AnswerQuestion:
             check_output_tokens=checked.output_tokens if checked else 0,
             claims_checked=checked.claims if checked else 0,
             reads=reply.reads,
+            cache_write_tokens=reply.cache_write_tokens,
+            cache_read_tokens=reply.cache_read_tokens,
         )
 
     def _checked(
@@ -517,6 +525,8 @@ class AnswerQuestion:
                 output_tokens=used.output_tokens,
                 cost_usd=used.cost_usd,
                 reads=used.reads,
+                cache_write_tokens=used.cache_write_tokens,
+                cache_read_tokens=used.cache_read_tokens,
             ),
             failures=checked.failures,
             claims=sum(r.claims for r in spent),
@@ -661,7 +671,7 @@ class AnswerQuestion:
         searches against it, then for the answer from all the sources.
         """
         ran: list[str] = []
-        read_in = wrote = turns = reads = 0
+        read_in = wrote = turns = reads = written = cached = 0
         cost = 0.0
         told = tuple(notes)
         challenged = False
@@ -690,6 +700,8 @@ class AnswerQuestion:
             wrote += reply.output_tokens
             cost += reply.cost_usd
             reads += reply.reads
+            written += reply.cache_write_tokens
+            cached += reply.cache_read_tokens
             # The challenge needs a turn to ask for searches and a turn
             # after them, or its searches never run.
             if (
@@ -736,6 +748,8 @@ class AnswerQuestion:
             blocks=reply.blocks,
             terms=reply.terms,
             reads=reads,
+            cache_write_tokens=written,
+            cache_read_tokens=cached,
         )
         return final, texts, ran, turns, left
 
@@ -927,4 +941,6 @@ def _summed(first: Reply, last: Reply) -> Reply:
         output_tokens=first.output_tokens + last.output_tokens,
         cost_usd=first.cost_usd + last.cost_usd,
         reads=first.reads + last.reads,
+        cache_write_tokens=first.cache_write_tokens + last.cache_write_tokens,
+        cache_read_tokens=first.cache_read_tokens + last.cache_read_tokens,
     )

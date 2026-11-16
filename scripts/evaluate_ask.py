@@ -112,6 +112,8 @@ class Scored:
     claims_checked: int = 0
     unconfirmed: int = 0
     reads: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
     round: int = 1
     limited: bool = False
 
@@ -195,6 +197,8 @@ def score(item: dict, ish: Ish | RemoteIsh, tree: Path | None) -> Scored:
     result.claims_checked = answer.claims_checked
     result.unconfirmed = len(answer.unconfirmed)
     result.reads = answer.reads
+    result.cache_write_tokens = answer.cache_write_tokens
+    result.cache_read_tokens = answer.cache_read_tokens
     result.cited = sorted(
         {
             f"{c.path.name}:{c.start_line}-{c.end_line}"
@@ -343,6 +347,8 @@ MEASURES = (
     Measure("unconfirmed", "unconfirmed claims per answer, mean", False),
     Measure("errors", "errors", False),
     Measure("input_tokens", "median input tokens", False),
+    Measure("cache_write_tokens", "median input tokens written to the cache", False),
+    Measure("cache_read_tokens", "median input tokens read from the cache", False),
     Measure("output_tokens", "median output tokens", False),
     Measure("rerank_input_tokens", "median rerank input tokens", False),
     Measure("check_input_tokens", "median check input tokens", False),
@@ -381,6 +387,12 @@ def measures(rows: list[Scored]) -> dict[str, float]:
     if with_claims:
         found["unconfirmed"] = statistics.mean(r.unconfirmed for r in with_claims)
     found["input_tokens"] = statistics.median(r.input_tokens for r in answered)
+    found["cache_write_tokens"] = statistics.median(
+        r.cache_write_tokens for r in answered
+    )
+    found["cache_read_tokens"] = statistics.median(
+        r.cache_read_tokens for r in answered
+    )
     found["output_tokens"] = statistics.median(r.output_tokens for r in answered)
     found["rerank_input_tokens"] = statistics.median(
         r.rerank_input_tokens for r in answered
