@@ -926,3 +926,32 @@ class TestStreamedBlocks:
 
         AnswerQuestion(search=searching(make_chunk("a")), model=Model()).answer("q")
         assert calls == [{}]
+
+
+class TestSizesOfAnAnswer:
+    """Each size of an answer is a parameter, so a setting can change it."""
+
+    def test_a_turn_runs_at_most_its_searches(self) -> None:
+        runs: list[str] = []
+
+        def search(query: str) -> list[Match]:
+            runs.append(query)
+            return [Match(make_chunk(query), 1.0)]
+
+        AnswerQuestion(
+            search=search,
+            model=FakeAgent(("a", "b", "c")),
+            turns=1,
+            searches_a_turn=2,
+        ).answer("q")
+        assert runs == ["q", "a", "b"]
+
+    def test_the_rerank_reads_the_start_it_is_given(self) -> None:
+        reranker = FakeReranker(("1",))
+        AnswerQuestion(
+            search=searching(make_chunk("a", "abcdefghij")),
+            model=FakeModel(),
+            reranker=reranker,
+            preview_chars=4,
+        ).answer("q")
+        assert reranker.calls[0][1][0].text == "abcd"

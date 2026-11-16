@@ -708,3 +708,82 @@ class TestTrace:
     def test_usage_that_is_not_a_table(self) -> None:
         used = usage_of({"usage": "none", "num_turns": 3})
         assert (used.read, used.requests) == (0, 3)
+
+
+class TestEffort:
+    """Each kind of call asks for the effort its setting names."""
+
+    def _args(self, runner, kind: str, options: CallOptions) -> list[str]:
+        model = ClaudeCliLanguageModel("sonnet", timeout=5, options=options)
+        if kind == "check":
+            runner.stdout = json.dumps(
+                {"is_error": False, "structured_output": {"verdicts": []}}
+            )
+            model.check([])
+        elif kind == "select":
+            runner.stdout = json.dumps(
+                {"is_error": False, "structured_output": {"ids": []}}
+            )
+            model.select("q", SOURCES, 1)
+        else:
+            model.answer("q", SOURCES)
+        return runner.calls[-1]["args"]
+
+    @pytest.mark.parametrize(
+        ("kind", "effort"), [("answer", "high"), ("check", "low"), ("select", "max")]
+    )
+    def test_the_effort_of_each_kind(self, runner, kind, effort) -> None:
+        options = CallOptions(
+            answer_effort="high", check_effort="low", rerank_effort="max"
+        )
+        args = self._args(runner, kind, options)
+        assert args[args.index("--effort") + 1] == effort
+
+    def test_no_effort_asks_for_none(self, runner) -> None:
+        assert "--effort" not in self._args(runner, "answer", CallOptions())
+
+    def test_a_fallback_model(self, runner) -> None:
+        args = self._args(runner, "answer", CallOptions(fallback_model="haiku"))
+        assert args[args.index("--fallback-model") + 1] == "haiku"
+        assert "--fallback-model" not in self._args(runner, "answer", CallOptions())
+
+    def test_an_unknown_effort_is_refused(self) -> None:
+        with pytest.raises(LanguageModelError, match="check_effort 'huge'"):
+            CallOptions(check_effort="huge")
+
+    def test_the_effort_and_the_fallback_are_traced(self, runner, tmp_path) -> None:
+        options = CallOptions(trace=tmp_path, answer_effort="low", fallback_model="h")
+        ClaudeCliLanguageModel("sonnet", timeout=5, options=options).answer(
+            "q", SOURCES
+        )
+        record = json.loads((tmp_path / "001-answer.json").read_text())
+        assert (record["effort"], record["fallback_model"]) == ("low", "h")
+
+
+class TestCommandAndTimeout:
+    def test_the_command_is_found_by_its_setting(self, runner, monkeypatch) -> None:
+        looked: list[str] = []
+
+        def which(name: str) -> str:
+            looked.append(name)
+            return f"/opt/{name}"
+
+        monkeypatch.setattr(claude_cli.shutil, "which", which)
+        options = CallOptions(claude="claude-beta")
+        ClaudeCliLanguageModel("sonnet", timeout=5, options=options).answer(
+            "q", SOURCES
+        )
+        assert looked == ["claude-beta"]
+        assert runner.calls[0]["args"][0] == "/opt/claude-beta"
+
+    def test_a_missing_command_is_named_by_its_setting(self, monkeypatch) -> None:
+        monkeypatch.setattr(claude_cli.shutil, "which", lambda name: None)
+        with pytest.raises(LanguageModelError, match="'claude-beta' command"):
+            ClaudeCliLanguageModel("sonnet", options=CallOptions(claude="claude-beta"))
+
+    def test_the_timeout_of_the_options_wins(self, runner) -> None:
+        options = CallOptions(timeout=42)
+        ClaudeCliLanguageModel("sonnet", timeout=5, options=options).answer(
+            "q", SOURCES
+        )
+        assert runner.calls[0]["timeout"] == 42

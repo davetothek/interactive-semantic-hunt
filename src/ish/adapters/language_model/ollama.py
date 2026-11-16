@@ -32,8 +32,15 @@ from ish.application.ports.language_model import (
 # window of a few thousand tokens and drops what does not fit without a
 # signal, so an answer would read only the first sources. An answer may
 # send 60,000 characters, about 15,000 tokens, plus the prompt and the
-# reply.
+# reply. A larger budget of characters gets a window that fits it.
 CONTEXT_TOKENS = 20_480
+
+# Tokens of a call beside its sources: the instructions, the question,
+# and the reply.
+PROMPT_TOKENS = 4_096
+
+# The characters that make one token of English text, on average.
+CHARS_PER_TOKEN = 4
 
 # A generation model on a CPU writes slowly. An answer of a few hundred
 # tokens can take minutes.
@@ -57,9 +64,10 @@ class OllamaLanguageModel:
 
         Read ``OLLAMA_HOST`` when no host is given. Require the model, and
         refuse a host that is not this machine.
-        The model reads no file, so *tree* changes nothing. The backend
-        keeps no prompt cache and writes no trace, so *options* change
-        nothing.
+        The model reads no file, so *tree* changes nothing. Of *options*,
+        the backend takes the timeout and the budget of characters, which
+        sets the window of the model. It keeps no prompt cache and writes
+        no trace.
         """
         if not model:
             raise LanguageModelError(
@@ -74,7 +82,11 @@ class OllamaLanguageModel:
         self.model_name = model
         self._prompts = prompts or load_prompts()
         self.host = chosen
-        self._timeout = timeout
+        options = options or CallOptions()
+        self._timeout = options.timeout or timeout
+        self._window = max(
+            CONTEXT_TOKENS, options.budget_chars // CHARS_PER_TOKEN + PROMPT_TOKENS
+        )
 
     def answer(
         self,
@@ -156,7 +168,7 @@ class OllamaLanguageModel:
                 "model": self.model_name,
                 "stream": False,
                 "format": schema,
-                "options": {"num_ctx": CONTEXT_TOKENS},
+                "options": {"num_ctx": self._window},
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},

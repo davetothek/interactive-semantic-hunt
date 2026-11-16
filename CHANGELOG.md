@@ -47,6 +47,17 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   answer reads: the chunks it reads in full, the characters of their
   text, and the chunks each follow-up search adds. `ask_read_usd` sets
   what one call of `claude-cli` that reads the tree may cost.
+- `ask_searches`, `rerank_preview_chars`, and `check_context_chars` set
+  the searches of one turn, the start of a chunk that the rerank reads,
+  and the source around a quote that the check reads.
+  `chat_history_tokens` and `chat_query_tokens` set the history that a
+  chat reads.
+- `claude-cli` takes `answer_effort`, `rerank_effort`, and `check_effort`
+  (`low` to `max`), `claude_fallback_model`, and `claude_command`.
+  `answer_timeout` sets the seconds of a call for every backend. An
+  Ollama answer gets a window that fits `ask_chars`.
+- `ish chat` and `ish remote chat` keep a prompt in the cache for 1 hour,
+  set by `chat_prompt_cache`.
 - `ask_trace` names a directory where `claude-cli` writes one JSON file
   for each call: the instructions, the message, the reply, the tokens,
   and the cost. `scripts/replay_call.py` runs one such call again.

@@ -384,7 +384,18 @@ code. Turn a stage off to see what it costs and what it finds:
 | Fix a claim that fails | `repair_turns` | `0` |
 
 With all six off, an answer is one call. `ask_chunks`, `ask_chars`, and
-`ask_search_chunks` set how much each call sends.
+`ask_search_chunks` set how much each call sends. `ask_searches` sets the
+searches of one turn, `rerank_preview_chars` how much of each chunk the
+rerank reads, and `check_context_chars` how much of the source around a
+quote the check reads.
+
+`claude-cli` takes more settings. `answer_effort`, `rerank_effort`, and
+`check_effort` set the effort of each kind of call, from `low` to `max`.
+Thinking counts as output tokens, so a lower effort costs less. Empty
+uses the default of the model. `claude_fallback_model` names a model to
+ask when the model of a call is overloaded. `claude_command` names the
+command, and a config file in a tree cannot set it. `answer_timeout`
+sets the seconds of one call, for every backend.
 
 Each call of `claude` is a new process with a new message. claude keeps
 the prompt in its cache, and a later call reads only the part that stays
@@ -392,7 +403,13 @@ the same, which is the instructions. `prompt_cache` sets how long the
 cache lasts. A write for `5m` costs 1.25 times an uncached token, a
 write for `1h` 2 times, and a read a tenth. `off` sends every token
 uncached, and a call that reads the tree then pays in full for each
-round of reading.
+round of reading. `ish chat` and `ish remote chat` use
+`chat_prompt_cache`, `1h` by default, since the next question can come
+more than 5 minutes later.
+
+A cache can outlast a run. A second run within the hour reads what the
+first one wrote, such as the rerank of the same question, and costs
+less than a cold run. Compare runs made the same way.
 
 Give the evaluation a setting with `--set`, or a file of settings with
 `--config`. `--trace DIR` keeps every call of every question:

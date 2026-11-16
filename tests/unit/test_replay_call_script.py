@@ -148,3 +148,18 @@ class TestReplay:
         with pytest.raises(SystemExit):
             rc.main([str(call), "--repeat", "0"])
         assert "--repeat takes a number of 1 or more." in capsys.readouterr().err
+
+
+class TestEffort:
+    def test_the_traced_effort_and_fallback_are_sent_again(self, call, sent) -> None:
+        record = json.loads(call.read_text())
+        call.write_text(json.dumps(record | {"effort": "low", "fallback_model": "h"}))
+        rc.main([str(call)])
+        args = sent[0]["args"]
+        assert args[args.index("--effort") + 1] == "low"
+        assert args[args.index("--fallback-model") + 1] == "h"
+
+    def test_another_effort(self, call, sent) -> None:
+        rc.main([str(call), "--effort", "max"])
+        args = sent[0]["args"]
+        assert args[args.index("--effort") + 1] == "max"

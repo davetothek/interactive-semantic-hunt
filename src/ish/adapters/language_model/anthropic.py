@@ -58,9 +58,9 @@ class AnthropicLanguageModel:
 
         Require the model. A default chosen here would decide the cost of
         every answer without the operator saying so.
-        The model reads no file, so *tree* changes nothing. The backend
-        keeps no prompt cache and writes no trace, so *options* change
-        nothing.
+        The model reads no file, so *tree* changes nothing. Of *options*,
+        the backend takes the timeout. It keeps no prompt cache and writes
+        no trace.
         """
         if not model:
             raise LanguageModelError(
@@ -68,7 +68,7 @@ class AnthropicLanguageModel:
             )
         self.model_name = model
         self._prompts = prompts or load_prompts()
-        self._timeout = timeout
+        self._timeout = (options.timeout if options else 0.0) or timeout
 
     def answer(
         self,

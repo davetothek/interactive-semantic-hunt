@@ -501,6 +501,23 @@ class TestAFileInATreeTellsTheModelNothing:
         )
 
 
+class TestAFileInATreeRunsNoProgram:
+    """A tree that names the command of claude-cli would choose a program to run."""
+
+    def test_a_project_file_names_no_command(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(
+            tmp_path / CONFIG_FILENAME, 'claude_command = "./evil"\nask_trace = "t"\n'
+        )
+        settings = load_settings(start=tmp_path, environ={})
+        assert (settings.claude_command, settings.ask_trace) == ("claude", "")
+
+    def test_the_user_file_names_it(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / "cfg" / "ish" / CONFIG_FILENAME, 'claude_command = "c2"\n')
+        assert load_settings(start=tmp_path / "p", environ={}).claude_command == "c2"
+
+
 class TestAFileInATreeTrustsNoProxy:
     """A tree that names a trusted proxy would let a password come from a network."""
 

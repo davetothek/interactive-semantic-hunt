@@ -338,6 +338,13 @@ def call_options(settings: Settings) -> CallOptions:
         prompt_cache=settings.prompt_cache,
         read_usd=settings.ask_read_usd,
         trace=trace,
+        answer_effort=settings.answer_effort,
+        rerank_effort=settings.rerank_effort,
+        check_effort=settings.check_effort,
+        fallback_model=settings.claude_fallback_model,
+        claude=settings.claude_command,
+        timeout=settings.answer_timeout,
+        budget_chars=settings.ask_chars,
     )
 
 
@@ -348,6 +355,7 @@ def build_prompts(settings: Settings) -> Prompts:
         directory,
         answer_notes=settings.answer_notes,
         rerank_notes=settings.rerank_notes,
+        searches_a_turn=settings.ask_searches,
     )
 
 

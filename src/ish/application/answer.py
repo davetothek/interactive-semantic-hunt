@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from ish.application.glossary import Glossary, acronyms
 from ish.application.grounding import (
     CHALLENGE_DONE,
+    CONTEXT_CHARS,
     Failure,
     Review,
     challenge_note,
@@ -278,6 +279,9 @@ class AnswerQuestion:
         challenge: bool = False,
         lookup: Callable[[str], tuple[Chunk, str] | None] | None = None,
         search_chunks: int = CHUNKS_A_SEARCH,
+        searches_a_turn: int = SEARCHES_A_TURN,
+        preview_chars: int = PREVIEW_CHARS,
+        check_context_chars: int = CONTEXT_CHARS,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -289,13 +293,15 @@ class AnswerQuestion:
         With a *reranker*, let it choose at most *pick* of the chunks the
         search returned, from the start of each, before any is read in
         full. A wide search then finds the source a narrow one ranks too
-        low, and the answer still reads only a few chunks.
+        low, and the answer still reads only a few chunks. The reranker
+        reads *preview_chars* characters of the start of each chunk.
 
         With *turns* above 0, let the model ask for follow-up searches up
         to that many times before it answers. Each search runs through
         *search*, so it reads the same indexes and filters, and adds at
         most *search_chunks* of the best chunks the model has not read,
-        within the same budget.
+        within the same budget. Run at most *searches_a_turn* searches of
+        one turn.
 
         Time each stage on *clock*, so a reader of the answer sees where
         its seconds went.
@@ -316,7 +322,9 @@ class AnswerQuestion:
         asks for a search is no part of the answer.
 
         With a *judge*, check each claim of the answer: find its quotes in
-        the sources, then let the judge say whether they state it. Give
+        the sources, then let the judge say whether they state it, each
+        quote with *check_context_chars* characters of its source on each
+        side. Give
         the model up to *repairs* more turns to fix the claims that fail,
         and set apart those that still fail. Stream no block then, because
         a block that streams before the check can hold a claim that fails.
@@ -338,6 +346,9 @@ class AnswerQuestion:
         self._reranker = reranker
         self._pick = pick
         self._search_chunks = search_chunks
+        self._searches_a_turn = searches_a_turn
+        self._preview_chars = preview_chars
+        self._check_context_chars = check_context_chars
         self._turns = turns
         self._on_step = on_step
         self._clock = clock
@@ -548,7 +559,9 @@ class AnswerQuestion:
         by_id = {str(n): text for n, (_, text) in enumerate(texts, 1)}
         by_id |= {ref: text for ref, (_chunk, text) in self._refs.items()}
         self._on_step(AnswerStep(CHECKING, model=judge.model_name))
-        return self._timed(CHECKING, review, reply, by_id, judge)
+        return self._timed(
+            CHECKING, review, reply, by_id, judge, self._check_context_chars
+        )
 
     def _named(
         self, reply: Reply, texts: list[tuple[Chunk, str]], kept: list[Chunk]
@@ -715,7 +728,7 @@ class AnswerQuestion:
                 and not reply.searches
             ):
                 challenged = True
-                told = (*notes, challenge_note(reply, SEARCHES_A_TURN))
+                told = (*notes, challenge_note(reply, self._searches_a_turn))
                 log.info("Turn %d drafted an answer, and searches against it", turns)
                 continue
             if not reply.searches or turns_left == 0:
@@ -728,7 +741,7 @@ class AnswerQuestion:
                 for q in dict.fromkeys(reply.searches)
                 if q not in searched and q not in ran
             ]
-            for query in fresh_queries[:SEARCHES_A_TURN]:
+            for query in fresh_queries[: self._searches_a_turn]:
                 self._on_step(AnswerStep(FOLLOWING, query=query))
                 ran.append(query)
                 fresh = self._distinct(
@@ -741,7 +754,9 @@ class AnswerQuestion:
                 added, _, left = self._fit(fresh[: self._search_chunks], left)
                 texts = texts + added
                 seen.update(chunk for chunk, _ in added)
-            log.info("Turn %d searched %s", turns, fresh_queries[:SEARCHES_A_TURN])
+            log.info(
+                "Turn %d searched %s", turns, fresh_queries[: self._searches_a_turn]
+            )
         final = Reply(
             passages=reply.passages,
             covered=reply.covered and not (reply.searches and not reply.passages),
@@ -771,7 +786,7 @@ class AnswerQuestion:
             text = self._read_kept(chunk)
             if not text or not text.strip():
                 continue
-            start = " ".join(text.split())[:PREVIEW_CHARS]
+            start = " ".join(text.split())[: self._preview_chars]
             previews.append(self._titled(str(n), chunk, start))
             by_id[str(n)] = chunk
         if not previews:

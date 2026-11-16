@@ -102,16 +102,19 @@ class Chat:
         brief: bool = True,
         budget_tokens: int = HISTORY_TOKENS,
         write_query: WriteQuery | None = None,
+        query_tokens: int = QUERY_HISTORY_TOKENS,
     ) -> None:
         """Answer through *ask*, briefly unless *brief* is False.
 
-        Search for a follow-up with the query *write_query* writes, when
-        it is given.
+        Give each answer at most *budget_tokens* of the history. Search
+        for a follow-up with the query *write_query* writes, when it is
+        given, from at most *query_tokens* of the history.
         """
         self._ask = ask
         self._write_query = write_query
         self.brief = brief
         self._budget = budget_tokens * CHARS_PER_TOKEN
+        self._query_budget = query_tokens * CHARS_PER_TOKEN
         self._turns: list[Turn] = []
 
     @property
@@ -172,9 +175,9 @@ class Chat:
         joined = (question, f"{previous.question} {question}")
         if self._write_query is None:
             return joined
-        budget = QUERY_HISTORY_TOKENS * CHARS_PER_TOKEN
         try:
-            return (self._write_query(question, history_text(self._turns, budget)),)
+            history = history_text(self._turns, self._query_budget)
+            return (self._write_query(question, history),)
         except LanguageModelError as exc:
             log.warning("%s Searching for the question and the one before it.", exc)
             return joined

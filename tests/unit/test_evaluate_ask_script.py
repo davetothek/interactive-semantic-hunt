@@ -716,3 +716,19 @@ class TestCompareSettings:
 
     def test_a_setting_one_run_lacks(self) -> None:
         assert ev.differences({"a": 1}, {}) == ["- a: 1 -> '-'"]
+
+
+class TestCompareFixes:
+    def test_reads_of_the_cache_are_neither_better_nor_worse(self) -> None:
+        """A read takes the place of a write, at a tenth of the price."""
+        a = _line("a", 1, cache_read_tokens=45_000)
+        b = _line("b", 1, cache_read_tokens=72_000)
+        out = ev.compare((1, a), (2, b))
+        assert "| 45000 | 72000 | +27000 | - | changed |" in out
+
+    def test_a_run_that_kept_no_settings_is_named_once(self) -> None:
+        a = _line("a", 1)
+        b = {**_line("b", 1), "settings": {"challenge": False}}
+        out = ev.compare((1, a), (2, b))
+        assert "Run A kept no settings." in out
+        assert "Settings that differ" not in out

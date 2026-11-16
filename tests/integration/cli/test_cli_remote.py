@@ -444,6 +444,24 @@ class TestChat:
         assert [name for name, _ in served.calls] == ["sources"]
         assert len(model.questions) == 2
 
+    def test_a_chat_keeps_the_cache_of_a_chat(
+        self, served: Served, monkeypatch
+    ) -> None:
+        from ish import bootstrap
+
+        built: list = []
+
+        def build(settings, **_):
+            built.append(settings.prompt_cache)
+            return FakeModel()
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        monkeypatch.setattr(
+            "builtins.input", lambda prompt: (_ for _ in ()).throw(EOFError())
+        )
+        assert run(["remote", "chat"]) == 0
+        assert built and set(built) == {"1h"}
+
     def test_a_server_that_cannot_be_named(self, tmp_path, monkeypatch, caplog) -> None:
         monkeypatch.chdir(tmp_path)
         assert run(["remote", "chat", "--url", "ftp://docs.example.invalid/mcp"]) == 1

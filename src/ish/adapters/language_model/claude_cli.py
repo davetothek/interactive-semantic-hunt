@@ -25,6 +25,7 @@ from pathlib import Path
 
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._calls import (
+    DEFAULT_CLAUDE,
     DEFAULT_PROMPT_CACHE,
     DEFAULT_READ_USD,
     CallOptions,
@@ -45,7 +46,7 @@ from ish.application.ports.language_model import (
 
 log = logging.getLogger(__name__)
 
-EXECUTABLE = "claude"
+EXECUTABLE = DEFAULT_CLAUDE
 TIMEOUT_SECONDS = 600
 
 # Ask the CLI to load no memory: no CLAUDE.md of any scope, and no auto
@@ -120,13 +121,17 @@ def command(
     stream: bool = False,
     tools: bool = False,
     read_usd: float = DEFAULT_READ_USD,
+    effort: str = "",
+    fallback_model: str = "",
 ) -> list[str]:
     """Return the argument list that asks one question with nothing else loaded.
 
     With *stream*, claude writes one JSON event a line as the reply grows,
     and the reply itself as the last event. With *tools*, claude may read
     the files of its working directory with Read, Grep, and Glob, and no
-    others, and a call stops when it has cost *read_usd*.
+    others, and a call stops when it has cost *read_usd*. Ask for
+    *effort*, and for *fallback_model* when the model is overloaded,
+    only when each is set.
     """
     allowed = (
         [
@@ -155,6 +160,8 @@ def command(
         "--no-session-persistence",
         "--model",
         model,
+        *(["--effort", effort] if effort else []),
+        *(["--fallback-model", fallback_model] if fallback_model else []),
         "--system-prompt",
         system,
         "--output-format",
@@ -265,10 +272,12 @@ class ClaudeCliLanguageModel:
             raise LanguageModelError(
                 "Set answer_model to a Claude model for the claude-cli backend."
             )
-        found = shutil.which(EXECUTABLE)
+        self._options = options or CallOptions()
+        found = shutil.which(self._options.claude)
         if found is None:
             raise LanguageModelError(
-                f"The claude-cli backend needs the {EXECUTABLE!r} command on PATH."
+                f"The claude-cli backend needs the {self._options.claude!r} "
+                "command on PATH."
             )
         self.model_name = model
         self._prompts = prompts or load_prompts()
@@ -280,8 +289,7 @@ class ClaudeCliLanguageModel:
         # The tokens of the last call that claude wrote to its prompt
         # cache, and those it read from it.
         self._cached = (0, 0)
-        self._timeout = timeout
-        self._options = options or CallOptions()
+        self._timeout = self._options.timeout or timeout
 
     def answer(
         self,
@@ -415,10 +423,13 @@ class ClaudeCliLanguageModel:
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
             cwd = str(self._tree) if tools else empty
             if on_block is None:
-                body = self._whole(system, schema, prompt, cwd, tools)
+                body = self._whole(
+                    self._command(kind, system, schema, tools=tools), prompt, cwd
+                )
             else:
                 stream = _grounded.BlockStream(on_block)
-                body = self._streamed(system, schema, prompt, cwd, stream.feed, tools)
+                args = self._command(kind, system, schema, stream=True, tools=tools)
+                body = self._streamed(args, prompt, cwd, stream.feed)
         failed = bool(body.get("is_error")) or "structured_output" not in body
         used = usage_of(body)
         if self._options.trace is not None:
@@ -432,6 +443,8 @@ class ClaudeCliLanguageModel:
                     "tree": str(self._tree) if tools else "",
                     "prompt_cache": self._options.prompt_cache,
                     "read_usd": self._options.read_usd,
+                    "effort": self._options.effort_of(kind),
+                    "fallback_model": self._options.fallback_model,
                     "system": system,
                     "schema": schema,
                     "prompt": prompt,
@@ -466,17 +479,10 @@ class ClaudeCliLanguageModel:
         )
         return body["structured_output"], used.read, used.wrote, used.cost_usd
 
-    def _whole(
-        self,
-        system: str,
-        schema: dict[str, object],
-        prompt: str,
-        cwd: str,
-        tools: bool = False,
-    ) -> dict:
+    def _whole(self, args: list[str], prompt: str, cwd: str) -> dict:
         """Run one call in *cwd*, and return the reply claude writes at its end."""
         return run_whole(
-            self._command(system, schema, tools=tools),
+            args,
             prompt,
             cwd=cwd,
             env=environment(os.environ, self._options.prompt_cache),
@@ -485,13 +491,14 @@ class ClaudeCliLanguageModel:
 
     def _command(
         self,
+        kind: str,
         system: str,
         schema: dict[str, object],
         *,
         stream: bool = False,
         tools: bool = False,
     ) -> list[str]:
-        """Return the arguments of one call of this model, under its options."""
+        """Return the arguments of one call of *kind*, under the options."""
         return command(
             self._executable,
             self.model_name,
@@ -500,16 +507,16 @@ class ClaudeCliLanguageModel:
             stream=stream,
             tools=tools,
             read_usd=self._options.read_usd,
+            effort=self._options.effort_of(kind),
+            fallback_model=self._options.fallback_model,
         )
 
     def _streamed(
         self,
-        system: str,
-        schema: dict[str, object],
+        args: list[str],
         prompt: str,
         cwd: str,
         on_json: Callable[[str], None],
-        tools: bool = False,
     ) -> dict:
         """Run one call in *cwd* and stream it, and return the reply at its end.
 
@@ -520,7 +527,7 @@ class ClaudeCliLanguageModel:
         late = threading.Event()
         with tempfile.TemporaryFile("w+") as errors:
             process = subprocess.Popen(
-                self._command(system, schema, stream=True, tools=tools),
+                args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=errors,

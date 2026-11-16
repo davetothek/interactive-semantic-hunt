@@ -54,8 +54,22 @@ class Named:
 
 class TestSizes:
     def test_the_settings_say_how_much_an_answer_reads(self) -> None:
-        chosen = Settings(ask_chunks=4, ask_chars=9_000, ask_search_chunks=2)
-        assert sizes(chosen) == {"pick": 4, "budget_chars": 9_000, "search_chunks": 2}
+        chosen = Settings(
+            ask_chunks=4,
+            ask_chars=9_000,
+            ask_search_chunks=2,
+            ask_searches=1,
+            rerank_preview_chars=200,
+            check_context_chars=100,
+        )
+        assert sizes(chosen) == {
+            "pick": 4,
+            "budget_chars": 9_000,
+            "search_chunks": 2,
+            "searches_a_turn": 1,
+            "preview_chars": 200,
+            "check_context_chars": 100,
+        }
 
 
 class TestChecks:

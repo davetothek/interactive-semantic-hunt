@@ -331,3 +331,15 @@ class TestAFollowUpSearchesForWhatAModelWrote:
         chat = Chat(asked, write_query=lambda q, h: q)
         chat.ask("why")
         assert chat.more().searched == ()
+
+
+class TestQueryTokens:
+    def test_the_query_reads_the_history_it_is_given(self) -> None:
+        asked = Asked(*[_answer("x" * 3000, WATCHDOG) for _ in range(3)])
+        seen: list[str] = []
+        chat = Chat(
+            asked, write_query=lambda q, h: seen.append(h) or q, query_tokens=10
+        )
+        for n in range(3):
+            chat.ask(f"q{n}")
+        assert len(seen[-1]) <= 10 * CHARS_PER_TOKEN + 3000

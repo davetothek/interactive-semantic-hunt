@@ -9,6 +9,7 @@ from ish.application.answer import SEARCHING, Answer, AnswerPart, AnswerStep
 from ish.application.ports.language_model import LanguageModelError
 from ish.domain.chunk import Chunk
 from ish.interfaces.cli.chat import HELP, PROMPT, converse
+from ish.settings import Settings
 
 WATCHDOG = Chunk(Path("docs/boot.md"), "", "section", "markdown", "Watchdog", 1, 3)
 
@@ -23,6 +24,7 @@ class Session:
         self.no_model = False
         self.queried: list[tuple[str, str]] = []
         self.query_failure: Exception | None = None
+        self.settings = Settings()
 
     def prepare(self, brief: bool = False) -> None:
         if self.no_model:
@@ -544,3 +546,27 @@ class TestAFullReplyStreams:
     def test_a_model_that_streams_nothing_replies_as_before(self, capsys) -> None:
         self._converse(Session(), "why", brief=False)
         assert "The watchdog resets the board. [1]" in capsys.readouterr().out
+
+
+class TestTheChatTakesItsSettings:
+    def test_the_history_budgets_come_from_the_settings(self, monkeypatch) -> None:
+        from ish.interfaces.cli import chat as module
+
+        given: list[dict] = []
+        real = module.Chat
+
+        def recorded(ask, **kwargs):
+            given.append(kwargs)
+            return real(ask, **kwargs)
+
+        monkeypatch.setattr(module, "Chat", recorded)
+        session = Session()
+        session.settings = Settings(chat_history_tokens=500, chat_query_tokens=50)
+        _chat(session)
+        assert (given[0]["budget_tokens"], given[0]["query_tokens"]) == (500, 50)
+
+    def test_a_chat_has_a_cache_of_its_own(self) -> None:
+        from ish.interfaces.cli.chat import for_chat
+
+        chosen = for_chat(Settings(prompt_cache="5m", chat_prompt_cache="off"))
+        assert chosen.prompt_cache == "off"

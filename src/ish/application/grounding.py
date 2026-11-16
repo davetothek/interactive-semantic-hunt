@@ -82,12 +82,14 @@ def quote_problem(quote: Quote, texts: Mapping[str, str]) -> str:
     return ""
 
 
-def context_of(quote: Quote, texts: Mapping[str, str]) -> str:
+def context_of(
+    quote: Quote, texts: Mapping[str, str], around: int = CONTEXT_CHARS
+) -> str:
     """Return the text of the source of *quote* around it, or the quote alone.
 
     Find the words of the quote in order, whatever stands between them,
-    and give ``CONTEXT_CHARS`` characters on each side, so a check reads
-    what the quoted sentence refers to.
+    and give *around* characters on each side, so a check reads what the
+    quoted sentence refers to.
     """
     source = texts.get(quote.source_id, "")
     pieces = re.findall(r"\w+", quote.text)
@@ -97,8 +99,8 @@ def context_of(quote: Quote, texts: Mapping[str, str]) -> str:
     found = re.search(pattern, source, re.IGNORECASE)
     if found is None:
         return quote.text
-    start = max(0, found.start() - CONTEXT_CHARS)
-    return source[start : found.end() + CONTEXT_CHARS]
+    start = max(0, found.start() - around)
+    return source[start : found.end() + around]
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +153,12 @@ class _Item:
     problem: str = ""
 
 
-def review(reply: Reply, texts: Mapping[str, str], judge: LanguageModel) -> Review:
+def review(
+    reply: Reply,
+    texts: Mapping[str, str],
+    judge: LanguageModel,
+    around: int = CONTEXT_CHARS,
+) -> Review:
     """Check each claim of *reply* against *texts*, the sources by key.
 
     Find each quote in its source first, which costs nothing. Ask *judge*
@@ -189,7 +196,7 @@ def review(reply: Reply, texts: Mapping[str, str], judge: LanguageModel) -> Revi
                 str(n),
                 item.text,
                 tuple(q.text for q in item.quotes),
-                tuple(context_of(q, texts) for q in item.quotes),
+                tuple(context_of(q, texts, around) for q in item.quotes),
             )
             for n, item in enumerate(asked, 1)
         ]

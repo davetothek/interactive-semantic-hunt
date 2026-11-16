@@ -348,3 +348,14 @@ class TestQuery:
             80,
             7,
         )
+
+
+class TestOptions:
+    def test_the_timeout_of_the_options_wins(self, recorder) -> None:
+        from ish.adapters.language_model._calls import CallOptions
+
+        model = AnthropicLanguageModel(
+            "claude-sonnet-5-5", timeout=5, options=CallOptions(timeout=42)
+        )
+        model.answer("q", SOURCES)
+        assert recorder.timeouts == [42]

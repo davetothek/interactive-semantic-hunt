@@ -72,6 +72,9 @@ def sizes(settings: Settings) -> dict[str, object]:
         "pick": settings.ask_chunks,
         "budget_chars": settings.ask_chars,
         "search_chunks": settings.ask_search_chunks,
+        "searches_a_turn": settings.ask_searches,
+        "preview_chars": settings.rerank_preview_chars,
+        "check_context_chars": settings.check_context_chars,
     }
 
 

@@ -13,6 +13,7 @@ and cost each time. Change one part of the call to see what it does:
 - ``--model`` asks another model.
 - ``--prompt-cache`` sets the cache: 5m, 1h, or off.
 - ``--read-usd`` sets what a call that reads the tree may cost.
+- ``--effort`` sets the effort: low, medium, high, xhigh, or max.
 - ``--system FILE`` and ``--prompt FILE`` replace the instructions or the
   message.
 - ``--no-tools`` runs a call that read the tree in an empty directory,
@@ -35,6 +36,7 @@ from pathlib import Path
 from ish.adapters.language_model import claude_cli
 from ish.adapters.language_model._calls import (
     DEFAULT_READ_USD,
+    EFFORTS,
     PROMPT_CACHES,
     write_trace,
 )
@@ -60,6 +62,7 @@ def replay(
     read_usd: float,
     tools: bool,
     timeout: float,
+    effort: str = "",
 ) -> dict:
     """Send the call of *record* once, and return it as a record of a trace."""
     executable = shutil.which(claude_cli.EXECUTABLE)
@@ -72,6 +75,8 @@ def replay(
         record["schema"],
         tools=tools,
         read_usd=read_usd,
+        effort=effort,
+        fallback_model=str(record.get("fallback_model") or ""),
     )
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="ish-replay-") as empty:
@@ -90,6 +95,7 @@ def replay(
         "tools": tools,
         "prompt_cache": prompt_cache,
         "read_usd": read_usd,
+        "effort": effort,
         "seconds": round(time.perf_counter() - started, 3),
         "usage": {
             "uncached": used.uncached,
@@ -131,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--read-usd", type=float, help="Cost cap of a call that reads.")
     parser.add_argument("--system", type=Path, help="Instructions to send in place.")
     parser.add_argument("--prompt", type=Path, help="Message to send in place.")
+    parser.add_argument("--effort", choices=[e for e in EFFORTS if e])
     parser.add_argument("--no-tools", action="store_true", help="Read no file.")
     parser.add_argument("--repeat", type=int, default=1, help="Send the call N times.")
     parser.add_argument("--timeout", type=float, default=claude_cli.TIMEOUT_SECONDS)
@@ -157,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 read_usd=args.read_usd or record.get("read_usd") or DEFAULT_READ_USD,
                 tools=bool(record["tools"]) and not args.no_tools,
                 timeout=args.timeout,
+                effort=args.effort or str(record.get("effort") or ""),
             )
         except LanguageModelError as exc:
             print("\n".join(lines))

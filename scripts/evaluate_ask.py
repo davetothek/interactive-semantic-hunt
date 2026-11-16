@@ -405,11 +405,16 @@ def run(
 
 @dataclass(frozen=True)
 class Measure:
-    """Name one number of a run, and the direction in which it is better."""
+    """Name one number of a run, and the direction in which it is better.
+
+    *higher_is_better* is None for a number that is neither better nor
+    worse when it moves, such as the tokens read from the cache, which
+    take the place of tokens written to it.
+    """
 
     key: str
     label: str
-    higher_is_better: bool
+    higher_is_better: bool | None
     percent: bool = False
 
 
@@ -423,7 +428,7 @@ MEASURES = (
     Measure("errors", "errors", False),
     Measure("input_tokens", "median input tokens", False),
     Measure("cache_write_tokens", "median input tokens written to the cache", False),
-    Measure("cache_read_tokens", "median input tokens read from the cache", False),
+    Measure("cache_read_tokens", "median input tokens read from the cache", None),
     Measure("output_tokens", "median output tokens", False),
     Measure("rerank_input_tokens", "median rerank input tokens", False),
     Measure("check_input_tokens", "median check input tokens", False),
@@ -654,9 +659,13 @@ def compare(a: tuple[int, dict], b: tuple[int, dict]) -> str:
     for line, name in ((la, "A"), (lb, "B")):
         if not line.get("complete"):
             lines += [f"Run {name} is incomplete.", ""]
-    changed = differences(la.get("settings") or {}, lb.get("settings") or {})
-    if changed:
-        lines += ["Settings that differ:", "", *changed, ""]
+    kept = [name for line, name in ((la, "A"), (lb, "B")) if not line.get("settings")]
+    if kept:
+        lines += [f"Run {' and '.join(kept)} kept no settings.", ""]
+    else:
+        changed = differences(la["settings"], lb["settings"])
+        if changed:
+            lines += ["Settings that differ:", "", *changed, ""]
     lines += [
         "| measure | A | B | B - A | spread | verdict |",
         "|---|---|---|---|---|---|",
@@ -707,6 +716,8 @@ def judged(measure: Measure, delta: float, width: float | None) -> str:
     """Say whether *delta* is better or worse, and whether it is real."""
     if delta == 0:
         return "same"
+    if measure.higher_is_better is None:
+        return "changed"
     better = (delta > 0) == measure.higher_is_better
     word = "better" if better else "worse"
     if width is None:

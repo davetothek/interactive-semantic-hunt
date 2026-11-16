@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
@@ -31,6 +32,7 @@ from ish.interfaces.busy import Ticker
 from ish.interfaces.cli.stream import StreamedAnswer
 from ish.interfaces.cli.terminal import MAX_WIDTH, grey, rendered
 from ish.interfaces.format import display_path, format_chat
+from ish.settings import Settings
 
 log = logging.getLogger("ish.cli")
 
@@ -232,6 +234,15 @@ class _Loop:
         sys.stdout.write(_UP * rows + grey(PROMPT + line) + "\n")
 
 
+def for_chat(settings: Settings) -> Settings:
+    """Return *settings* with the prompt cache of a chat.
+
+    A person reads a reply before the next question, which can come
+    more than 5 minutes later.
+    """
+    return replace(settings, prompt_cache=settings.chat_prompt_cache)
+
+
 def converse(
     session: Any,
     *,
@@ -271,7 +282,14 @@ def converse(
             **({"on_block": stream.block} if stream and not short else {}),
         )
 
-    chat = Chat(ask, brief=brief, write_query=session.query_for)
+    settings = session.settings
+    chat = Chat(
+        ask,
+        brief=brief,
+        write_query=session.query_for,
+        budget_tokens=settings.chat_history_tokens,
+        query_tokens=settings.chat_query_tokens,
+    )
     loop = _Loop(session, chat, ticker, color=color, render=render)
     if terminal:
         _use_readline()
