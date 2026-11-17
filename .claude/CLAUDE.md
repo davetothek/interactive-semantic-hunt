@@ -3,7 +3,7 @@
 `ish` (Interactive Semantic Hunt) is an interactive semantic search tool for
 code, in the style of `fzf`. It is released. This file is the map of the code
 and the evidence behind its rules. The rules live in `.claude/rules/`, the
-procedures in `.claude/skills/`, and the design under way in `spec.md` at the
+procedures in `.claude/skills/`, and the work plan in `spec-next.md` at the
 root. Read `src/` before a substantial change.
 
 ## Where to look
@@ -277,6 +277,12 @@ something broke. This is that record, so a rule is never argued from taste.
 - A worktree index under /srv/mono joined every root search and nested
   under the main tree, which put the count of a root query back on the
   listing path. Hence a search reads the indexes of its own checkout.
+- A server of 4 vCPUs with no GPU, 2,799 files of specifications. The
+  schema of 0.11.0 kept all 11,626 vectors, reused 8,161, and embedded
+  856 chunks at 0.3 a second. `doc_windows` then started the index
+  again: 41,156 new vectors, nearly all windows, at 1.5 to 1.7 a second,
+  about 7 hours. Search returned nothing at the start of each run and
+  then only the files the run had reached. No rule follows from it yet.
 
 ### Answering
 
@@ -415,6 +421,35 @@ something broke. This is that record, so a rule is never argued from taste.
   scored 10 of 10 with the candidates of each type, after one label
   that named one function of two that answer was widened. $0.068 and
   28.2 s an answer.
+- Each turn of a `claude-cli` answer was a new process that wrote its
+  whole message to the prompt cache again, and the next turn read none of
+  it. On one question the cache writes were 76 % of the cost of the
+  answer, written for 1 hour at twice the price of an uncached token.
+  Hence `prompt_cache` of `5m` by default.
+- claude puts a cache breakpoint only at the end of the system prompt
+  and at the end of the message. A probe of two calls that share 7k
+  tokens read none of them from the cache with one message or with
+  separate content blocks. It read them with the shared part in the
+  system prompt, and with `--resume` of the first session. Hence
+  `resume_turns`: on 7 questions, the same questions cited at a third
+  less cost.
+- A resumed call reports `total_cost_usd` for the whole session, so a
+  turn first counted the turns before it again. Hence the cost of a
+  resumed turn is the total less what the session spent before.
+- A chat, 3 follow-ups each 6 minutes after the first question, all
+  cited in every arm. A follow-up cost $0.070 when it resumed the session
+  with a cache of 1 hour, against $0.088 as a new process with a cache of
+  5 minutes. A resumed 5-minute cache read 0 tokens after 6 minutes,
+  because it had expired. The first question costs more with the longer
+  cache, so one follow-up comes out even and each more saves. Hence
+  `chat_prompt_cache` of `1h` and one session for a chat.
+- With `--autocompact 100000`, claude summarized a session at about 73k
+  tokens. It refuses to summarize a session of one large turn, and
+  resuming that session still works. After a summary, the model holds
+  only a summary of the earlier sources. Hence a chat sends a source
+  again after a summary, when a later question needs it.
+- claude-haiku-5-5 as the checker of claims accepted 12 of 86 claims
+  that their quotes do not support. Hence `check_model` stays as it is.
 
 ### Embedding
 
