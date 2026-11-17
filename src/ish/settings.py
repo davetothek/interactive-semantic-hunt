@@ -778,7 +778,8 @@ class Settings:
         default=False,
         metadata=_opt(
             MAINTENANCE,
-            "Remove the stored index of the path and stop. The vectors stay.",
+            "Remove the stored index of every tree at or under the path, and "
+            "stop. The vectors stay.",
             action="store_true",
         ),
     )

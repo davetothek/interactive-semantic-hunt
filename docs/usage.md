@@ -434,7 +434,7 @@ builds a language model and sends no text anywhere.
 | `--model NAME` | Override the backend model |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
-| `--forget` | Remove the stored index of the path and stop. The vectors stay |
+| `--forget` | Remove the stored index of every tree at or under the path, and stop. The vectors stay |
 | `--sweep` | Delete the vectors no index of the path's repository references, and stop |
 | `--no-cache` | Index in memory only, leaving nothing on disk |
 | `--tui-theme NAME` | Theme for the picker (default: the Textual default) |

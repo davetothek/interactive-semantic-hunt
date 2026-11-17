@@ -8,6 +8,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- `ish --forget PATH` removes the index of every tree at or under
+  `PATH`, and names each one. A worktree indexes its subtrees, not its
+  top, so its own path named no index. The vectors stay in the shared
+  store.
+
 ## 0.11.0 - 2026-11-17
 
 ### Added

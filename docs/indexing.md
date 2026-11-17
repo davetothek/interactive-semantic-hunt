@@ -107,12 +107,13 @@ A search reads only the indexes of the checkout it starts in, so a worktree
 kept under `.claude/worktrees/` does not join a search of the main tree, and
 a search from a directory above several checkouts shows each chunk once. An
 index whose tree is gone is left out of every search and said so once.
-`ish --forget PATH` removes it. The vectors stay in the shared store, because
-a checkout at an older commit still needs the vectors of text the main
-checkout has since changed: on one firmware tree, sweeping the vectors no
-index referenced took a worktree from 100 % reuse to 87 %. Sweep them only on
-purpose, with `ish --sweep PATH`, which deletes the vectors no index of the
-repository references.
+`ish --forget PATH` removes it, and the index of every tree under `PATH`
+too, so the path of a removed worktree reaches the subtrees it indexed. The
+vectors stay in the shared store, because a checkout at an older commit still
+needs the vectors of text the main checkout has since changed: on one firmware
+tree, sweeping the vectors no index referenced took a worktree from 100 %
+reuse to 87 %. Sweep them only on purpose, with `ish --sweep PATH`, which
+deletes the vectors no index of the repository references.
 
 A Markdown or AsciiDoc file with no heading is one chunk, named after the
 file, when it holds a line of prose. A file of attribute definitions,

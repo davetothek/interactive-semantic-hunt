@@ -836,7 +836,7 @@ class TestForgetIndex:
 
         with caplog.at_level(logging.INFO, logger="ish.bootstrap"):
             removed = bootstrap.forget_index(settings, tmp_path / "repo" / "one")
-        assert stores["one"] in removed
+        assert stores["one"] in removed[tmp_path / "repo" / "one"]
         assert not stores["one"].exists()
         assert stores["two"].exists()
         assert self._hashes(shared) == {"common", "only-one"}
@@ -895,8 +895,23 @@ class TestForgetIndex:
         settings, stores, _shared = self._repo_with_two_trees(tmp_path)
         shutil.rmtree(tmp_path / "repo" / "one")
         removed = bootstrap.forget_index(settings, tmp_path / "repo" / "one")
-        assert stores["one"] in removed
+        assert stores["one"] in removed[tmp_path / "repo" / "one"]
         assert not stores["one"].exists()
+
+    def test_a_worktree_reaches_the_indexes_below_it(self, tmp_path) -> None:
+        """A worktree indexes its subtrees, so its own path names none of them."""
+        settings, stores, _shared = self._repo_with_two_trees(tmp_path)
+        removed = bootstrap.forget_index(settings, tmp_path / "repo")
+        assert list(removed) == [tmp_path / "repo" / "one", tmp_path / "repo" / "two"]
+        assert not stores["one"].exists()
+        assert not stores["two"].exists()
+
+    def test_a_sibling_that_shares_a_prefix_stays(self, tmp_path) -> None:
+        """``repo/o`` is not a parent of ``repo/one``. Paths compare by part."""
+        settings, stores, _shared = self._repo_with_two_trees(tmp_path)
+        with pytest.raises(LookupError, match="or a tree under it"):
+            bootstrap.forget_index(settings, tmp_path / "repo" / "o")
+        assert stores["one"].exists()
 
     def test_an_unknown_tree_is_an_error(self, tmp_path) -> None:
         from dataclasses import replace
@@ -916,7 +931,7 @@ class TestForgetIndex:
         SqliteVectorStore(indexes / "alone.db", model_id="m", root=tree).close()
         settings = replace(Settings(), cache_dir=str(indexes))
         removed = bootstrap.forget_index(settings, tree)
-        assert indexes / "alone.db" in removed
+        assert indexes / "alone.db" in removed[tree]
         assert list(indexes.glob("*.db")) == []
 
 
