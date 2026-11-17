@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.12.0 - 2026-11-17
+
 ### Added
 
 - `grepable` names files that the index leaves out, with what they hold,
