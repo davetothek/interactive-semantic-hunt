@@ -112,12 +112,14 @@ class _Loop:
         *,
         color: bool,
         render: bool,
+        theme: str,
     ) -> None:
         self.session = session
         self.chat = chat
         self.ticker = ticker
         self.color = color
         self.render = render
+        self.theme = theme
         # The sources of the last reply, in the order of their numbers.
         self.cited: list[Chunk] = []
         # What shows the full reply that runs as the model writes it.
@@ -171,7 +173,9 @@ class _Loop:
     def _drawn(self, text: str) -> str:
         """Return the Markdown *text* drawn for the terminal, its sources grey."""
         width = min(shutil.get_terminal_size().columns, MAX_WIDTH)
-        return rendered(text, width=width, color=self.color, grey_sources=True)
+        return rendered(
+            text, width=width, color=self.color, grey_sources=True, theme=self.theme
+        )
 
     def _streamed(self, question: str) -> StreamedAnswer:
         """Return what shows a full reply to *question* above the busy line."""
@@ -295,7 +299,9 @@ def converse(
         budget_tokens=settings.chat_history_tokens,
         query_tokens=settings.chat_query_tokens,
     )
-    loop = _Loop(session, chat, ticker, color=color, render=render)
+    loop = _Loop(
+        session, chat, ticker, color=color, render=render, theme=settings.render_theme
+    )
     if terminal:
         _use_readline()
     sys.stderr.write("Ask about the files. /help names the commands.\n")

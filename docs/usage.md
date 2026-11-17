@@ -231,6 +231,24 @@ answer, and `--no-render` turns it off for one question. With
 `--color never`, or `NO_COLOR=1`, a rendered answer keeps its layout,
 takes no style, and prints each URL beside its label.
 
+`render_theme`, in the config file or as `--render-theme NAME`, sets the
+styles of a rendered answer:
+
+| theme | look |
+|---|---|
+| `quiet` | Bold headings, dim lines and bullets, code in cyan. The default |
+| `accent` | As `quiet`, with headings, bullets, and table headers in blue, and code in yellow |
+| `glow` | Fixed colors on a dark ground, and code blocks in `github-dark`. For a dark terminal only |
+| `rich` | The styles of Rich itself |
+
+```toml
+render_theme = "accent"
+```
+
+`quiet`, `accent`, and `rich` use the colors of the terminal, so they read
+on a light terminal and on a dark one. ish reports a name that no theme
+answers to, and uses `quiet`.
+
 After a blank line, stderr shows where the time and the tokens went, stage
 by stage, in grey, and the version of ish:
 
@@ -419,6 +437,7 @@ builds a language model and sends no text anywhere.
 | `-v`, `-vv` | Increase log detail |
 | `--color WHEN` | Color the logs, the timing table, and a rendered answer: `auto` (a terminal, unless `NO_COLOR` is set), `always`, or `never` |
 | `--render`, `--no-render` | Render the answer of `ish ask` on a terminal. A pipe still gets the Markdown |
+| `--render-theme NAME` | Theme of a rendered answer: `quiet`, `accent`, `glow`, or `rich` (default: `quiet`) |
 | `--limit N` | Maximum search results |
 | `--ignore DIR ...` | Directory names to skip (default `.git .venv venv __pycache__`) |
 | `--include REGEX ...` | Index only paths matching these patterns, anchored at the tree root |
