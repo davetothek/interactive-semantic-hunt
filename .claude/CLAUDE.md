@@ -3,7 +3,7 @@
 `ish` (Interactive Semantic Hunt) is an interactive semantic search tool for
 code, in the style of `fzf`. It is released. This file is the map of the code
 and the evidence behind its rules. The rules live in `.claude/rules/`, the
-procedures in `.claude/skills/`, and the design under way in `spec.md` at the
+procedures in `.claude/skills/`, and the work plan in `spec-next.md` at the
 root. Read `src/` before a substantial change.
 
 ## Where to look

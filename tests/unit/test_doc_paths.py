@@ -36,6 +36,7 @@ OUTSIDE = {
     "lua/utils/ish_link.lua": "where a user copies the Neovim link opener",
     "lua/utils/ish_ask.lua": "where a user copies the Neovim ask command",
     "spec.md": "written by /spec-interview while a design is under way",
+    "spec-next.md": "the local work plan of the owner, ignored by git",
     "tasks.md": "written by /spec-interview with spec.md",
 }
 
