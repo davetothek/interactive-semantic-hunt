@@ -207,8 +207,10 @@ these three options, because they decide where the text of a document goes.
 | `ollama` | A generation model on the local daemon. A host that is not this machine is refused | From a JSON schema | Text that must stay on the machine |
 | `claude-cli` | The Claude Code CLI, on the account it is logged in to, with every tool and settings file off | From a JSON schema | One person on their own machine |
 
-An answer reads at most ten chunks and at most 60,000 characters of them.
-A chunk that does not fit is skipped, and the answer counts it.
+An answer reads at most `ask_chunks` chunks, 10 by default, and at most
+`ask_chars` characters of them over every turn, 60,000 by default. A
+chunk that does not fit is skipped, and the answer counts it. Each
+follow-up search adds at most `ask_search_chunks` chunks, 5 by default.
 
 A search ranks the right source too low when other chunks share the
 wording of the question, such as test cases of the rule the question
@@ -350,6 +352,99 @@ server searches, and the model of this machine answers:
 uv run python scripts/evaluate_ask.py questions.yaml \
   --remote https://ish.example.com/mcp \
   --language-model claude-cli --answer-model claude-haiku-5-5
+```
+
+A model gives a different answer from run to run. `--repeat 3` asks the
+whole set three times and reports the mean and the range of each
+measure. A model usage limit stops the run, and the questions after it
+count as no miss. Each run appends one line to
+`$XDG_DATA_HOME/ish/eval/history.jsonl`, and `--label NAME` names it.
+To compare two runs, give two labels or line numbers:
+
+```sh
+uv run python scripts/evaluate_ask.py --compare baseline -1
+```
+
+A delta is real only when it is larger than the range of the two runs.
+
+### Tune an answer
+
+An answer of `claude-cli` makes several calls: one rerank, one call for
+each turn of the answer, and one check for each version of the answer.
+Each setting below changes one stage, and none needs a change to the
+code. Turn a stage off to see what it costs and what it finds:
+
+| Stage | Setting | Off |
+|---|---|---|
+| Choose what to read | `rerank_model` | `""` |
+| Search again | `ask_turns` | `0` |
+| Search against the draft | `challenge` | `false` |
+| Read the tree | `answer_tools` | `false` |
+| Check the claims | `check_claims` | `false` |
+| Fix a claim that fails | `repair_turns` | `0` |
+
+With all six off, an answer is one call. `ask_chunks`, `ask_chars`, and
+`ask_search_chunks` set how much each call sends. `ask_searches` sets the
+searches of one turn, `rerank_preview_chars` how much of each chunk the
+rerank reads, and `check_context_chars` how much of the source around a
+quote the check reads.
+
+`claude-cli` takes more settings. `answer_effort`, `rerank_effort`, and
+`check_effort` set the effort of each kind of call, from `low` to `max`.
+Thinking counts as output tokens, so a lower effort costs less. Empty
+uses the default of the model. `claude_fallback_model` names a model to
+ask when the model of a call is overloaded. `claude_command` names the
+command, and a config file in a tree cannot set it. `answer_timeout`
+sets the seconds of one call, for every backend.
+
+Each call of `claude` is a new process with a new message. claude keeps
+the prompt in its cache, and a later call reads only the part that stays
+the same, which is the instructions. `prompt_cache` sets how long the
+cache lasts. A write for `5m` costs 1.25 times an uncached token, a
+write for `1h` 2 times, and a read a tenth. `off` sends every token
+uncached, and a call that reads the tree then pays in full for each
+round of reading. `ish chat` and `ish remote chat` use
+`chat_prompt_cache`, `1h` by default, since the next question can come
+more than 5 minutes later.
+
+claude marks the cache at the end of the instructions and at the end of
+the message, and a later call reads only a part that ends at such a
+mark. The sources of a turn come first in a message whose end changes
+each turn, so a new call writes them again. With `resume_turns`, each
+later turn of an answer that reads the tree resumes the session of the
+turn before, and sends only the new sources and notes. The turn then
+reads the sources, the files the model read, and its draft from the
+cache. A chat is one conversation until it ends or `/new` starts another.
+Each follow-up still searches, and sends only the chunks the session
+does not hold, so the model reads the earlier sources, files, and
+answers from the cache. A source keeps its id over the whole chat.
+claude summarizes a chat session when it grows past
+`chat_autocompact` tokens, 100,000 by default, and `autocompact` sets
+the same for an answer, where 0 leaves it to claude. A question asked
+again outside a chat always starts fresh. claude keeps each session
+as a file under its config directory, and ish deletes it when the
+process ends, when a new session takes its place, or past 8
+conversations under way.
+
+A cache can outlast a run. A second run within the hour reads what the
+first one wrote, such as the rerank of the same question, and costs
+less than a cold run. Compare runs made the same way.
+
+Give the evaluation a setting with `--set`, or a file of settings with
+`--config`. `--trace DIR` keeps every call of every question:
+
+```sh
+uv run python scripts/evaluate_ask.py questions.yaml TREE \
+  --config tuning.toml --set challenge=false --trace trace/ --label no-challenge
+```
+
+Each call is one JSON file: the instructions, the message, the reply,
+the tokens written to the cache and read from it, and the cost. Run one
+call again alone, with one part changed:
+
+```sh
+uv run python scripts/replay_call.py trace/q07/005-check.json \
+  --model claude-haiku-5-5 --repeat 3
 ```
 
 `link_base` publishes the links of an answer under a base URL. With

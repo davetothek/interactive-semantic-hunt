@@ -446,6 +446,27 @@ builds a language model and sends no text anywhere.
 | `--rerank-model MODEL` | Model of the same backend that picks the chunks an answer reads |
 | `--rerank-candidates N` | Chunks the rerank model chooses from (default 50) |
 | `--ask-turns N` | Follow-up searches the model may ask for before it answers (default 0) |
+| `--ask-chunks N` | Chunks an answer reads in full (default 10) |
+| `--ask-chars N` | Characters of chunk text an answer may send, over every turn (default 60000) |
+| `--ask-search-chunks N` | Chunks each follow-up search adds (default 5) |
+| `--prompt-cache 5m\|1h\|off` | How long `claude-cli` keeps a prompt in its cache (default `5m`) |
+| `--ask-read-usd USD` | What one call of `claude-cli` that reads the tree may cost (default 1.0) |
+| `--ask-trace DIR` | Write one JSON file for each call of `claude-cli` there |
+| `--ask-searches N` | Searches the model may ask for in one turn (default 3) |
+| `--rerank-preview-chars N` | Characters of each chunk the rerank model reads (default 300) |
+| `--check-context-chars N` | Characters of the source on each side of a quote that the check reads (default 400) |
+| `--no-resume-turns` | Send every source on each turn of a `claude-cli` answer, and resume no session |
+| `--autocompact N` | Tokens at which claude summarizes a session that ish resumes (default: claude's) |
+| `--chat-autocompact N` | `--autocompact` of a chat, which keeps one session until it ends (default 100000) |
+| `--chat-prompt-cache 5m\|1h\|off` | `--prompt-cache` of `ish chat` and `ish remote chat` (default `1h`) |
+| `--chat-history-tokens N` | Tokens of the history of a chat that each answer reads (default 4000) |
+| `--chat-query-tokens N` | Tokens of the history that the search of a follow-up reads (default 1000) |
+| `--answer-effort LEVEL` | Effort of `claude-cli` for each turn of an answer: `low` to `max` (default: the model's) |
+| `--rerank-effort LEVEL` | Effort of `claude-cli` for the rerank and the search of a follow-up |
+| `--check-effort LEVEL` | Effort of `claude-cli` for the check of the claims |
+| `--claude-fallback-model MODEL` | Model `claude-cli` asks when the model of a call is overloaded |
+| `--claude-command PATH` | The command that runs Claude Code (default `claude`) |
+| `--answer-timeout S` | Seconds one call of a language model may take (default: the backend's) |
 | `--no-check-claims` | Do not check that a quote of a source states each claim |
 | `--check-model answer\|rerank` | Model that checks the claims (default `answer`) |
 | `--repair-turns N` | Turns the model gets to fix the claims that fail the check (default 1) |

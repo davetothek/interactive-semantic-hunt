@@ -268,6 +268,16 @@ class TestTheCheckReadsTheContext:
         assert "The DMA block sets the transfer window." in context
         assert len(context) <= 2 * CONTEXT_CHARS + len(WINDOW.text) + 2
 
+    def test_the_window_is_as_wide_as_asked(self) -> None:
+        from ish.application.grounding import context_of
+
+        text = "x" * 2000 + " The DMA block sets the transfer window. " + "y" * 2000
+        context = context_of(WINDOW, {"1": text}, around=10)
+        # Ten characters on each side of the words of the quote.
+        assert (
+            context == "x" * 9 + " The DMA block sets the transfer window. " + "y" * 8
+        )
+
     def test_a_quote_found_across_markup_still_gets_its_context(self) -> None:
         from ish.application.grounding import context_of
 

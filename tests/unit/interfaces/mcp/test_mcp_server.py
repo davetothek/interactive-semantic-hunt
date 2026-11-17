@@ -958,7 +958,7 @@ class TestAsk:
             self.covered = covered
             self.sources: list = []
 
-        def answer(self, question, sources):
+        def answer(self, question, sources, conversation=""):
             from ish.application.ports.language_model import Passage, Reply
 
             self.sources = list(sources)

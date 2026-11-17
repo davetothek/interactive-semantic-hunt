@@ -390,7 +390,7 @@ class TestAsk:
         def __init__(self) -> None:
             self.sources: list = []
 
-        def answer(self, question, sources):
+        def answer(self, question, sources, conversation=""):
             from ish.application.ports.language_model import Passage, Reply
 
             self.sources = list(sources)
@@ -438,15 +438,26 @@ class TestAsk:
     def test_at_most_ask_limit_chunks_are_read(
         self, project: Path, offline, monkeypatch
     ) -> None:
-        from ish.interfaces.python import api
 
-        for n in range(api.ASK_LIMIT + 3):
+        for n in range(Settings().ask_chunks + 3):
             (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
         model = self.Model()
         monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
         with _ish(project) as ish:
             ish.ask("function")
-        assert len(model.sources) == api.ASK_LIMIT
+        assert len(model.sources) == Settings().ask_chunks
+
+    def test_the_setting_says_how_many_chunks_are_read(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        for n in range(6):
+            (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
+        model = self.Model()
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: model)
+        chosen = Settings(no_cache=True, git=False, ask_chunks=3)
+        with Ish(project, settings=chosen) as ish:
+            ish.ask("function")
+        assert len(model.sources) == 3
 
 
 class TestLink:
@@ -485,16 +496,15 @@ class TestAskWithRerank:
         self, project: Path, offline, monkeypatch
     ) -> None:
         from ish.application.ports.language_model import Passage, Reply, Selection
-        from ish.interfaces.python import api
 
-        for n in range(api.ASK_LIMIT + 5):
+        for n in range(Settings().ask_chunks + 5):
             (project / "src" / f"m{n}.py").write_text(f"def f{n}():\n    pass\n")
         shown: list[int] = []
 
         class Model:
             model_name = "m"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
             def select(self, question, candidates, limit):
@@ -507,7 +517,7 @@ class TestAskWithRerank:
         with Ish(project, settings=settings) as ish:
             answer = ish.ask("function")
         assert shown == [14]
-        assert len(answer.sources) == api.ASK_LIMIT
+        assert len(answer.sources) == Settings().ask_chunks
 
 
 class TestAskTurns:
@@ -520,7 +530,7 @@ class TestAskTurns:
             model_name = "agent"
             turns_seen: list[int] = []
 
-            def step(self, question, sources, searched, turns_left):
+            def step(self, question, sources, searched, turns_left, conversation=""):
                 self.turns_seen.append(turns_left)
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
@@ -540,11 +550,11 @@ class TestAskTurns:
             model_name = "agent"
             turns_seen: list[int] = []
 
-            def step(self, question, sources, searched, turns_left):
+            def step(self, question, sources, searched, turns_left, conversation=""):
                 self.turns_seen.append(turns_left)
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 self.turns_seen.append(-1)
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
@@ -586,7 +596,7 @@ class TestAskBrief:
             def __init__(self, brief: bool) -> None:
                 self.model_name = "brief" if brief else "full"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 return Reply(passages=(Passage("ok", ("1",)),), covered=True)
 
         def build(settings, *, brief=False, **_):
@@ -665,7 +675,7 @@ class TestWarmReader:
     class Model:
         model_name = "fake-model"
 
-        def answer(self, question, sources):
+        def answer(self, question, sources, conversation=""):
             from ish.application.ports.language_model import Passage, Reply
 
             return Reply(passages=(Passage("Yes.", ("1",)),), covered=True)
@@ -849,3 +859,27 @@ class TestQueryFor:
         monkeypatch.setattr(bootstrap, "build_reranker", lambda s: None)
         with Ish(project, settings=Settings(no_cache=True, git=False)) as ish:
             assert ish.query_for("and it?", "Q: a") == "answer: and it?"
+
+
+class TestEachQuestionIsAConversation:
+    """A question asked again gets a fresh answer, not the session of the first."""
+
+    def test_two_questions_name_two_conversations(
+        self, project: Path, offline, monkeypatch
+    ) -> None:
+        from ish.application.ports.language_model import Passage, Reply
+
+        named: list[str] = []
+
+        class Model:
+            model_name = "fake-model"
+
+            def answer(self, question, sources, conversation=""):
+                named.append(conversation)
+                return Reply(passages=(Passage("Yes.", ("1",)),), covered=True)
+
+        monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: Model())
+        with _ish(project) as ish:
+            ish.ask("function")
+            ish.ask("function")
+        assert len(named) == 2 and all(named) and named[0] != named[1]

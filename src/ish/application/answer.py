@@ -9,12 +9,13 @@ and the closest chunks instead, never an answer from outside them.
 import logging
 import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from ish.application.glossary import Glossary, acronyms
 from ish.application.grounding import (
     CHALLENGE_DONE,
+    CONTEXT_CHARS,
     Failure,
     Review,
     challenge_note,
@@ -44,7 +45,7 @@ DEFAULT_PICK = 10
 # it. Enough for the heading and the first sentences.
 PREVIEW_CHARS = 300
 
-# Chunks each follow-up search adds.
+# Chunks each follow-up search adds, unless the caller says.
 CHUNKS_A_SEARCH = 5
 
 # Turns a challenge needs left after the draft: one to ask for searches
@@ -222,6 +223,10 @@ class Answer:
         claims_checked: Claims the checking model read, over every round.
         reads: Rounds in which the model read files of the tree, over
             every turn.
+        cache_write_tokens: Of *input_tokens*, the tokens the backend
+            wrote to its prompt cache, over every turn.
+        cache_read_tokens: Of *input_tokens*, the tokens the backend read
+            from its prompt cache, over every turn.
     """
 
     parts: tuple[AnswerPart, ...]
@@ -247,6 +252,25 @@ class Answer:
     check_output_tokens: int = 0
     claims_checked: int = 0
     reads: int = 0
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
+
+
+class SourceNumbers:
+    """Give each chunk of a conversation one id, the same in each answer of it.
+
+    A chat that resumes one session of a model over its questions shows
+    the model the sources of every question. A source keeps its id, so
+    [3] of the second question is never another text than [3] of the first.
+    """
+
+    def __init__(self) -> None:
+        """Start with no chunk numbered."""
+        self._ids: dict[Chunk, str] = {}
+
+    def of(self, chunk: Chunk) -> str:
+        """Return the id of *chunk*, and give a new chunk the next number."""
+        return self._ids.setdefault(chunk, str(len(self._ids) + 1))
 
 
 class AnswerQuestion:
@@ -271,6 +295,12 @@ class AnswerQuestion:
         repairs: int = 1,
         challenge: bool = False,
         lookup: Callable[[str], tuple[Chunk, str] | None] | None = None,
+        search_chunks: int = CHUNKS_A_SEARCH,
+        searches_a_turn: int = SEARCHES_A_TURN,
+        preview_chars: int = PREVIEW_CHARS,
+        check_context_chars: int = CONTEXT_CHARS,
+        conversation: str = "",
+        numbers: SourceNumbers | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -282,12 +312,15 @@ class AnswerQuestion:
         With a *reranker*, let it choose at most *pick* of the chunks the
         search returned, from the start of each, before any is read in
         full. A wide search then finds the source a narrow one ranks too
-        low, and the answer still reads only a few chunks.
+        low, and the answer still reads only a few chunks. The reranker
+        reads *preview_chars* characters of the start of each chunk.
 
         With *turns* above 0, let the model ask for follow-up searches up
         to that many times before it answers. Each search runs through
-        *search*, so it reads the same indexes and filters, and adds the
-        best chunks the model has not read, within the same budget.
+        *search*, so it reads the same indexes and filters, and adds at
+        most *search_chunks* of the best chunks the model has not read,
+        within the same budget. Run at most *searches_a_turn* searches of
+        one turn.
 
         Time each stage on *clock*, so a reader of the answer sees where
         its seconds went.
@@ -308,7 +341,9 @@ class AnswerQuestion:
         asks for a search is no part of the answer.
 
         With a *judge*, check each claim of the answer: find its quotes in
-        the sources, then let the judge say whether they state it. Give
+        the sources, then let the judge say whether they state it, each
+        quote with *check_context_chars* characters of its source on each
+        side. Give
         the model up to *repairs* more turns to fix the claims that fail,
         and set apart those that still fail. Stream no block then, because
         a block that streams before the check can hold a claim that fails.
@@ -322,6 +357,11 @@ class AnswerQuestion:
         *lookup*, which returns those lines as a chunk with its text, or
         None for lines that are not there. The check then finds each quote
         in the lines that the model names, as in any other source.
+
+        Give each call of the model *conversation*, the id of the calls
+        that belong together, so a backend that keeps a session can
+        resume it. Number the sources through *numbers* when the
+        conversation spans more than one answer.
         """
         self._search = search
         self._model = model
@@ -329,6 +369,12 @@ class AnswerQuestion:
         self._read = read
         self._reranker = reranker
         self._pick = pick
+        self._search_chunks = search_chunks
+        self._searches_a_turn = searches_a_turn
+        self._preview_chars = preview_chars
+        self._check_context_chars = check_context_chars
+        self._said = {"conversation": conversation} if conversation else {}
+        self._numbers = numbers
         self._turns = turns
         self._on_step = on_step
         self._clock = clock
@@ -410,7 +456,7 @@ class AnswerQuestion:
                 question, texts, left, self._turns, challenge=self._challenge
             )
         else:
-            sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            sources = self._sources(texts)
             self._on_step(AnswerStep(WRITING, model=self._model.model_name))
             reply = self._timed(
                 WRITING,
@@ -418,6 +464,7 @@ class AnswerQuestion:
                 question,
                 sources,
                 **self._streaming(texts),
+                **self._said,
             )
             searched, turns = [], 1
         self._resolve(reply)
@@ -427,7 +474,7 @@ class AnswerQuestion:
                 question, reply, texts, searched, turns, left
             )
         kept = [chunk for chunk, _ in texts]
-        by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
+        by_id = {i: chunk for i, (chunk, _) in self._numbered(texts).items()}
         by_id |= {ref: chunk for ref, (chunk, _text) in self._refs.items()}
         kept += [chunk for chunk, _text in self._refs.values() if chunk not in kept]
         log.info(
@@ -467,6 +514,8 @@ class AnswerQuestion:
             check_output_tokens=checked.output_tokens if checked else 0,
             claims_checked=checked.claims if checked else 0,
             reads=reply.reads,
+            cache_write_tokens=reply.cache_write_tokens,
+            cache_read_tokens=reply.cache_read_tokens,
         )
 
     def _checked(
@@ -517,6 +566,8 @@ class AnswerQuestion:
                 output_tokens=used.output_tokens,
                 cost_usd=used.cost_usd,
                 reads=used.reads,
+                cache_write_tokens=used.cache_write_tokens,
+                cache_read_tokens=used.cache_read_tokens,
             ),
             failures=checked.failures,
             claims=sum(r.claims for r in spent),
@@ -532,10 +583,12 @@ class AnswerQuestion:
         if judge is None or not reply.covered:
             return Review(reply)
         self._resolve(reply)
-        by_id = {str(n): text for n, (_, text) in enumerate(texts, 1)}
+        by_id = {i: text for i, (_, text) in self._numbered(texts).items()}
         by_id |= {ref: text for ref, (_chunk, text) in self._refs.items()}
         self._on_step(AnswerStep(CHECKING, model=judge.model_name))
-        return self._timed(CHECKING, review, reply, by_id, judge)
+        return self._timed(
+            CHECKING, review, reply, by_id, judge, self._check_context_chars
+        )
 
     def _named(
         self, reply: Reply, texts: list[tuple[Chunk, str]], kept: list[Chunk]
@@ -547,7 +600,7 @@ class AnswerQuestion:
         nearest to the sources the answer read. Sort them by term.
         """
         words = " ".join(_words(reply))
-        named = {t.term: t for t in _terms(reply.terms, texts, words)}
+        named = {t.term: t for t in _terms(reply.terms, self._numbered(texts), words)}
         for short in acronyms(words):
             if short in named or len(named) >= MAX_TERMS:
                 continue
@@ -565,7 +618,7 @@ class AnswerQuestion:
         """
         if self._on_block is None or not self._streams():
             return {}
-        by_id = {str(n): chunk for n, (chunk, _) in enumerate(texts, 1)}
+        by_id = {i: chunk for i, (chunk, _) in self._numbered(texts).items()}
         give = self._on_block
         return {"on_block": lambda block: give(_block(block, by_id))}
 
@@ -624,6 +677,19 @@ class AnswerQuestion:
                 self._copies.setdefault(first, []).append(chunk)
         return kept
 
+    def _numbered(
+        self, texts: Sequence[tuple[Chunk, str]]
+    ) -> dict[str, tuple[Chunk, str]]:
+        """Return *texts* by the id each source has, in order."""
+        if self._numbers is None:
+            return {str(n): pair for n, pair in enumerate(texts, 1)}
+        numbers = self._numbers
+        return {numbers.of(chunk): (chunk, text) for chunk, text in texts}
+
+    def _sources(self, texts: Sequence[tuple[Chunk, str]]) -> list[Source]:
+        """Return *texts* as the sources the model reads, each under its id."""
+        return [self._titled(i, c, t) for i, (c, t) in self._numbered(texts).items()]
+
     def _titled(self, source_id: str, chunk: Chunk, text: str) -> Source:
         """Return *chunk* as a source the model reads, with its type and copies."""
         title = f"{chunk.path}{chunk.location.render()}"
@@ -661,12 +727,12 @@ class AnswerQuestion:
         searches against it, then for the answer from all the sources.
         """
         ran: list[str] = []
-        read_in = wrote = turns = reads = 0
+        read_in = wrote = turns = reads = written = cached = 0
         cost = 0.0
         told = tuple(notes)
         challenged = False
         for turns_left in range(allowed, -1, -1):
-            sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            sources = self._sources(texts)
             self._on_step(
                 AnswerStep(
                     WRITING,
@@ -684,12 +750,15 @@ class AnswerQuestion:
                 turns_left,
                 **self._streaming(texts),
                 **({"notes": told} if told else {}),
+                **self._said,
             )
             turns += 1
             read_in += reply.input_tokens
             wrote += reply.output_tokens
             cost += reply.cost_usd
             reads += reply.reads
+            written += reply.cache_write_tokens
+            cached += reply.cache_read_tokens
             # The challenge needs a turn to ask for searches and a turn
             # after them, or its searches never run.
             if (
@@ -700,7 +769,7 @@ class AnswerQuestion:
                 and not reply.searches
             ):
                 challenged = True
-                told = (*notes, challenge_note(reply, SEARCHES_A_TURN))
+                told = (*notes, challenge_note(reply, self._searches_a_turn))
                 log.info("Turn %d drafted an answer, and searches against it", turns)
                 continue
             if not reply.searches or turns_left == 0:
@@ -713,7 +782,7 @@ class AnswerQuestion:
                 for q in dict.fromkeys(reply.searches)
                 if q not in searched and q not in ran
             ]
-            for query in fresh_queries[:SEARCHES_A_TURN]:
+            for query in fresh_queries[: self._searches_a_turn]:
                 self._on_step(AnswerStep(FOLLOWING, query=query))
                 ran.append(query)
                 fresh = self._distinct(
@@ -723,10 +792,12 @@ class AnswerQuestion:
                         if c not in seen
                     ]
                 )
-                added, _, left = self._fit(fresh[:CHUNKS_A_SEARCH], left)
+                added, _, left = self._fit(fresh[: self._search_chunks], left)
                 texts = texts + added
                 seen.update(chunk for chunk, _ in added)
-            log.info("Turn %d searched %s", turns, fresh_queries[:SEARCHES_A_TURN])
+            log.info(
+                "Turn %d searched %s", turns, fresh_queries[: self._searches_a_turn]
+            )
         final = Reply(
             passages=reply.passages,
             covered=reply.covered and not (reply.searches and not reply.passages),
@@ -736,6 +807,8 @@ class AnswerQuestion:
             blocks=reply.blocks,
             terms=reply.terms,
             reads=reads,
+            cache_write_tokens=written,
+            cache_read_tokens=cached,
         )
         return final, texts, ran, turns, left
 
@@ -754,7 +827,7 @@ class AnswerQuestion:
             text = self._read_kept(chunk)
             if not text or not text.strip():
                 continue
-            start = " ".join(text.split())[:PREVIEW_CHARS]
+            start = " ".join(text.split())[: self._preview_chars]
             previews.append(self._titled(str(n), chunk, start))
             by_id[str(n)] = chunk
         if not previews:
@@ -824,7 +897,7 @@ def _plain(text: str) -> str:
 
 
 def _terms(
-    found: Sequence[Term], texts: list[tuple[Chunk, str]], answer: str
+    found: Sequence[Term], texts: Mapping[str, tuple[Chunk, str]], answer: str
 ) -> tuple[AnswerTerm, ...]:
     """Keep each term the answer uses whose meaning a source writes.
 
@@ -835,7 +908,7 @@ def _terms(
     source writes, so a model that expands a term from its own knowledge
     adds nothing. Keep one entry for each term, sorted by term.
     """
-    by_id = {str(n): pair for n, pair in enumerate(texts, 1)}
+    by_id = texts
     kept: dict[str, AnswerTerm] = {}
     dropped = 0
     for term in found:
@@ -852,7 +925,8 @@ def _terms(
         ]
         if not writes:
             writes = next(
-                ([c] for c, text in texts if _plain(meaning) in _plain(text)), []
+                ([c] for c, text in texts.values() if _plain(meaning) in _plain(text)),
+                [],
             )
         if not writes:
             dropped += 1
@@ -927,4 +1001,6 @@ def _summed(first: Reply, last: Reply) -> Reply:
         output_tokens=first.output_tokens + last.output_tokens,
         cost_usd=first.cost_usd + last.cost_usd,
         reads=first.reads + last.reads,
+        cache_write_tokens=first.cache_write_tokens + last.cache_write_tokens,
+        cache_read_tokens=first.cache_read_tokens + last.cache_read_tokens,
     )

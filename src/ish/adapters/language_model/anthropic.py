@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ish.adapters import _http
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model._calls import CallOptions
 from ish.adapters.language_model._prompts import NOT_COVERED, Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
@@ -51,12 +52,15 @@ class AnthropicLanguageModel:
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
         tree: Path | None = None,
+        options: CallOptions | None = None,
     ) -> None:
         """Use *model*, a Claude model id such as ``claude-sonnet-5-5``.
 
         Require the model. A default chosen here would decide the cost of
         every answer without the operator saying so.
-        The model reads no file, so *tree* changes nothing.
+        The model reads no file, so *tree* changes nothing. Of *options*,
+        the backend takes the timeout. It keeps no prompt cache and writes
+        no trace.
         """
         if not model:
             raise LanguageModelError(
@@ -64,17 +68,19 @@ class AnthropicLanguageModel:
             )
         self.model_name = model
         self._prompts = prompts or load_prompts()
-        self._timeout = timeout
+        self._timeout = (options.timeout if options else 0.0) or timeout
 
     def answer(
         self,
         question: str,
         sources: Sequence[Source],
         on_block: OnBlock | None = None,
+        conversation: str = "",
     ) -> Reply:
         """Answer *question* from *sources*, with a citation per claim.
 
         Stream nothing: *on_block* gets no block, and the reply holds them all.
+        Keep no session: each call sends everything, whatever *conversation*.
         """
         body = self._post(
             _request(self.model_name, self._prompts.answer_cited, question, sources)
@@ -104,11 +110,13 @@ class AnthropicLanguageModel:
         turns_left: int,
         on_block: OnBlock | None = None,
         notes: Sequence[str] = (),
+        conversation: str = "",
     ) -> Reply:
         """Answer, or ask for searches, with structured output.
 
         A turn that may ask for searches replies in JSON, which rules out
         native citations. The passages name their sources by id instead.
+        Keep no session: each call sends everything, whatever *conversation*.
         """
         text, read, wrote = self._structured(
             self._prompts.step,

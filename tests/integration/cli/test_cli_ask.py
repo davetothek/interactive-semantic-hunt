@@ -44,7 +44,7 @@ class FakeModel:
         self.queries.append((question, history))
         return Query(f"watchdog {question}")
 
-    def answer(self, question, sources, on_block=None):
+    def answer(self, question, sources, on_block=None, conversation=""):
         self.questions.append(question)
         watchdog = next(s.id for s in sources if "watchdog" in s.text)
         return Reply(
@@ -284,7 +284,7 @@ class TestProgressStaysOffStdout:
         class Broken:
             model_name = "broken"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 raise LanguageModelError("down")
 
         monkeypatch.setattr(cli, "Ticker", Recorder)
@@ -302,7 +302,7 @@ class TestInterrupt:
         class Interrupted:
             model_name = "slow"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 raise KeyboardInterrupt
 
         _model(monkeypatch, Interrupted())
@@ -328,7 +328,7 @@ class TestInterrupt:
         class Interrupted:
             model_name = "slow"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 raise KeyboardInterrupt
 
         monkeypatch.setattr(cli, "Ticker", Recorder)
@@ -359,7 +359,7 @@ class TestFollowUpSearchesStand:
         class Agent:
             model_name = "agent"
 
-            def step(self, question, sources, searched, turns_left):
+            def step(self, question, sources, searched, turns_left, conversation=""):
                 if not searched and turns_left:
                     return Reply(
                         passages=(), covered=False, searches=("the reset command",)
@@ -388,7 +388,7 @@ class TestBrief:
         class Model:
             model_name = "m"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 return Reply(
                     passages=(Passage("It resets the board.", ("1",)),),
                     covered=True,
@@ -433,7 +433,7 @@ class TestBrief:
 class StreamingModel(FakeModel):
     """A model that writes a summary and a section, and streams each."""
 
-    def answer(self, question, sources, on_block=None):
+    def answer(self, question, sources, on_block=None, conversation=""):
         from ish.application.ports.language_model import Block
 
         self.streamed = on_block is not None

@@ -255,3 +255,19 @@ class TestQuery:
             30,
             6,
         )
+
+
+class TestOptions:
+    def test_a_larger_budget_gets_a_window_that_fits_it(self, recorder) -> None:
+        """A budget past the window would lose the last sources with no signal."""
+        from ish.adapters.language_model._calls import CallOptions
+
+        _model(options=CallOptions(budget_chars=200_000)).answer("q", SOURCES)
+        body = json.loads(recorder.requests[0][0].data)
+        assert body["options"]["num_ctx"] == 200_000 // 4 + 4_096
+
+    def test_the_timeout_of_the_options_wins(self, recorder) -> None:
+        from ish.adapters.language_model._calls import CallOptions
+
+        _model(options=CallOptions(timeout=42)).answer("q", SOURCES)
+        assert recorder.requests[0][1] == 42

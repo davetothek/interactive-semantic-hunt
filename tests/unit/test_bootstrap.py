@@ -1362,7 +1362,7 @@ class _StubModel:
     def __init__(self, model: str = "") -> None:
         self.model_name = model or "stub-default"
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         raise AssertionError("not called here")
 
 
@@ -1801,7 +1801,7 @@ class TestAnAnswerReadsTheTree:
 
         seen: list = []
 
-        def stub(model: str, *, prompts, tree=None):
+        def stub(model: str, *, prompts, tree=None, options=None):
             seen.append(tree)
             return _StubModel(model)
 
@@ -1823,3 +1823,77 @@ class TestAnAnswerReadsTheTree:
 
     def test_the_option_turns_reading_off(self, monkeypatch) -> None:
         assert self._built(monkeypatch, answer_tools=False) == [None, None]
+
+
+class TestCallOptions:
+    """What each call may do comes from the settings, into every backend."""
+
+    def test_the_settings_reach_the_backend(self, monkeypatch) -> None:
+        from ish.adapters.language_model._calls import CallOptions
+        from ish.settings import Settings
+
+        given: list = []
+
+        def stub(model: str, *, prompts, tree=None, options=None):
+            given.append(options)
+            return _StubModel(model)
+
+        monkeypatch.setitem(bootstrap.LANGUAGE_MODELS, "stub", stub)
+        monkeypatch.setenv("HOME", "/home/u")
+        chosen = Settings(
+            language_model="stub",
+            allowed_language_models=("stub",),
+            answer_model="m",
+            rerank_model="r",
+            prompt_cache="off",
+            ask_read_usd=0.5,
+            ask_trace="~/trace",
+        )
+        bootstrap.build_language_model(chosen)
+        bootstrap.build_reranker(chosen)
+        wanted = CallOptions(
+            prompt_cache="off", read_usd=0.5, trace=Path("/home/u/trace"), resume=True
+        )
+        assert given == [wanted, wanted]
+
+    def test_every_knob_of_a_call_reaches_the_options(self) -> None:
+        from ish.settings import Settings
+
+        options = bootstrap.call_options(
+            Settings(
+                answer_effort="high",
+                rerank_effort="low",
+                check_effort="medium",
+                claude_fallback_model="haiku",
+                claude_command="claude-beta",
+                answer_timeout=30.0,
+                ask_chars=90_000,
+                resume_turns=True,
+                autocompact=300_000,
+            )
+        )
+        assert (options.resume, options.autocompact) == (True, 300_000)
+        assert (options.answer_effort, options.rerank_effort) == ("high", "low")
+        assert (options.check_effort, options.fallback_model) == ("medium", "haiku")
+        assert (options.claude, options.timeout, options.budget_chars) == (
+            "claude-beta",
+            30.0,
+            90_000,
+        )
+
+    def test_the_searches_of_a_turn_reach_the_instructions(self) -> None:
+        from ish.settings import Settings
+
+        assert "up to three new search" in bootstrap.build_prompts(Settings()).step
+        prompts = bootstrap.build_prompts(Settings(ask_searches=1))
+        assert "up to one new search" in prompts.step
+
+    def test_no_trace_by_default(self) -> None:
+        from ish.settings import Settings
+
+        options = bootstrap.call_options(Settings())
+        assert (options.prompt_cache, options.read_usd, options.trace) == (
+            "5m",
+            1.0,
+            None,
+        )

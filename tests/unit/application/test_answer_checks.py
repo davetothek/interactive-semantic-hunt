@@ -389,3 +389,37 @@ class TestReadsAreCounted:
             judge=Judge(**{GUESS.text: UNSUPPORTED}),
         ).answer("q")
         assert result.reads == 3
+
+
+class TestCacheUseIsCounted:
+    """A cache write costs more than a token read once, and a cache read less."""
+
+    def test_the_cache_use_of_every_turn_adds_up(self) -> None:
+        from dataclasses import replace
+
+        searches = replace(
+            Reply(passages=(), covered=False, searches=("reset",)),
+            cache_write_tokens=300,
+            cache_read_tokens=50,
+        )
+        last = replace(answer_of(STARTS), cache_write_tokens=200, cache_read_tokens=40)
+        result = AnswerQuestion(
+            search=routed(BOOT, reset=[RESET]), model=Writer(searches, last), turns=1
+        ).answer("q")
+        assert (result.cache_write_tokens, result.cache_read_tokens) == (500, 90)
+
+    def test_a_repair_adds_its_cache_use(self) -> None:
+        from dataclasses import replace
+
+        writer = Writer(
+            replace(
+                answer_of(STARTS, GUESS), cache_write_tokens=10, cache_read_tokens=1
+            ),
+            replace(answer_of(STARTS), cache_write_tokens=20, cache_read_tokens=2),
+        )
+        result = AnswerQuestion(
+            search=searching(BOOT),
+            model=writer,
+            judge=Judge(**{GUESS.text: UNSUPPORTED}),
+        ).answer("q")
+        assert (result.cache_write_tokens, result.cache_read_tokens) == (30, 3)

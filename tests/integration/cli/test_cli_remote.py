@@ -50,7 +50,7 @@ class Silent:
 
     model_name = "silent"
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         raise AssertionError("the command asked the model")
 
 
@@ -310,7 +310,7 @@ class TestAsk:
         class Agent:
             model_name = "agent"
 
-            def step(self, question, sources, searched, turns_left):
+            def step(self, question, sources, searched, turns_left, conversation=""):
                 if not searched and turns_left:
                     return Reply(passages=(), covered=False, searches=("the sky",))
                 return Reply(passages=(Passage("Found.", ("1",)),), covered=True)
@@ -333,7 +333,7 @@ class TestAsk:
         class Interrupted:
             model_name = "interrupted"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 raise KeyboardInterrupt
 
         _model(monkeypatch, Interrupted())
@@ -443,6 +443,24 @@ class TestChat:
         # /more reads what the answer read: no second call to the server.
         assert [name for name, _ in served.calls] == ["sources"]
         assert len(model.questions) == 2
+
+    def test_a_chat_keeps_the_cache_of_a_chat(
+        self, served: Served, monkeypatch
+    ) -> None:
+        from ish import bootstrap
+
+        built: list = []
+
+        def build(settings, **_):
+            built.append(settings.prompt_cache)
+            return FakeModel()
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        monkeypatch.setattr(
+            "builtins.input", lambda prompt: (_ for _ in ()).throw(EOFError())
+        )
+        assert run(["remote", "chat"]) == 0
+        assert built and set(built) == {"1h"}
 
     def test_a_server_that_cannot_be_named(self, tmp_path, monkeypatch, caplog) -> None:
         monkeypatch.chdir(tmp_path)

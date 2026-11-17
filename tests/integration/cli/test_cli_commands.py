@@ -310,6 +310,27 @@ class TestChat:
         assert main(["chat", "--full", "--cache-dir", str(project / "idx")]) == 0
         assert capsys.readouterr().out.startswith(f"# {QUESTION}\n")
 
+    def test_a_chat_keeps_the_cache_of_a_chat(self, project: Path, monkeypatch) -> None:
+        """A person reads a reply before the next question, which can take minutes."""
+        from ish import bootstrap
+
+        built: list = []
+
+        def build(settings, **_):
+            built.append(settings.prompt_cache)
+            return FakeModel()
+
+        monkeypatch.setattr(bootstrap, "build_language_model", build)
+        self._typed(monkeypatch, QUESTION)
+        argv = ["chat", "--cache-dir", str(project / "idx"), "--prompt-cache", "off"]
+        assert main(argv) == 0
+        assert built and set(built) == {"1h"}
+        argv += ["--chat-prompt-cache", "5m"]
+        built.clear()
+        self._typed(monkeypatch, QUESTION)
+        assert main(argv) == 0
+        assert set(built) == {"5m"}
+
     def test_no_language_model_stops_the_chat(
         self, project: Path, monkeypatch, caplog
     ) -> None:

@@ -275,7 +275,7 @@ def _run_chat(args: CliArgs) -> int:
     from ish.interfaces.cli import chat
 
     line = ProgressLine()
-    with Ish(args.path, settings=args.settings) as ish:
+    with Ish(args.path, settings=chat.for_chat(args.settings)) as ish:
         ish.index(on_progress=line.show)
         line.clear()
         return chat.converse(

@@ -12,7 +12,7 @@ from ish.application.ports.language_model import (
     Reply,
     Verdicts,
 )
-from ish.interfaces.python.api import Ish, checks
+from ish.interfaces.python.api import Ish, checks, sizes
 from ish.interfaces.python.remote import RemoteIsh
 from ish.settings import Settings
 from tests.unit.interfaces.python.test_remote import (
@@ -52,6 +52,26 @@ class Named:
         self.model_name = name
 
 
+class TestSizes:
+    def test_the_settings_say_how_much_an_answer_reads(self) -> None:
+        chosen = Settings(
+            ask_chunks=4,
+            ask_chars=9_000,
+            ask_search_chunks=2,
+            ask_searches=1,
+            rerank_preview_chars=200,
+            check_context_chars=100,
+        )
+        assert sizes(chosen) == {
+            "pick": 4,
+            "budget_chars": 9_000,
+            "search_chunks": 2,
+            "searches_a_turn": 1,
+            "preview_chars": 200,
+            "check_context_chars": 100,
+        }
+
+
 class TestChecks:
     MODEL, RERANK = Named("answer"), Named("rerank")
 
@@ -89,7 +109,7 @@ class Model:
         self.quote = quote
         self.checked: list[str] = []
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         return Reply(
             passages=(
                 Passage("It explains the setup.", ("1",), (Quote("1", self.quote),)),

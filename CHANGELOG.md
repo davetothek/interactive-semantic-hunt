@@ -43,9 +43,39 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 - With `ask_turns` of 2 or more, the model searches against its first draft
   before it answers, and puts each disagreement in the gaps. `challenge`
   turns it off.
+- `ask_chunks`, `ask_chars`, and `ask_search_chunks` set how much an
+  answer reads: the chunks it reads in full, the characters of their
+  text, and the chunks each follow-up search adds. `ask_read_usd` sets
+  what one call of `claude-cli` that reads the tree may cost.
+- `ask_searches`, `rerank_preview_chars`, and `check_context_chars` set
+  the searches of one turn, the start of a chunk that the rerank reads,
+  and the source around a quote that the check reads.
+  `chat_history_tokens` and `chat_query_tokens` set the history that a
+  chat reads.
+- `claude-cli` takes `answer_effort`, `rerank_effort`, and `check_effort`
+  (`low` to `max`), `claude_fallback_model`, and `claude_command`.
+  `answer_timeout` sets the seconds of a call for every backend. An
+  Ollama answer gets a window that fits `ask_chars`.
+- `resume_turns` lets each later turn of a `claude-cli` answer resume
+  the session of the turn before and send only what is new, so it reads
+  the rest from the cache. On 7 questions it cited the same sources and
+  cost a third less. `--no-resume-turns` turns it off.
+- `ish chat` and `ish remote chat` keep one session of `claude-cli` for
+  the whole chat. Each follow-up searches again and sends only what the
+  session does not hold. claude summarizes the session past
+  `chat_autocompact` tokens, 100,000 by default, and the chat keeps a
+  prompt in the cache for 1 hour, set by `chat_prompt_cache`.
+- `ask_trace` names a directory where `claude-cli` writes one JSON file
+  for each call: the instructions, the message, the reply, the tokens,
+  and the cost. `scripts/replay_call.py` runs one such call again.
 
 ### Changed
 
+- `claude-cli` keeps a prompt in its cache for 5 minutes, not 1 hour.
+  Each turn of an answer is a new call, so the cache of 1 hour was
+  written at twice the price of an uncached token and was rarely read.
+  `prompt_cache` sets `5m`, `1h`, or `off`. On one question, the writes
+  were 76 % of the cost of the answer.
 - A checked answer shows on a terminal when the check ends, not part by
   part as the model writes it. Turn the check off with
   `--no-check-claims` to stream.

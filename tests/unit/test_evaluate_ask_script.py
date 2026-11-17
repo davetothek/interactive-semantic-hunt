@@ -4,7 +4,13 @@ The script lives outside the package, because it measures ish rather
 than ships with it. Load it by path.
 """
 
+import hashlib
 import importlib.util
+import json
+import re
+import statistics
+import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -233,7 +239,9 @@ class Opened(FakeIsh):
 class TestMain:
     @pytest.fixture()
     def questions(self, tmp_path: Path, monkeypatch) -> Path:
-        monkeypatch.setattr(ev, "load_settings", lambda start=None: Settings())
+        monkeypatch.setattr(
+            ev, "load_settings", lambda overrides=None, start=None: Settings()
+        )
         path = tmp_path / "questions.yaml"
         path.write_text(QUESTIONS)
         return path
@@ -286,3 +294,483 @@ class TestMain:
         assert given["settings"].remote == ""
         assert "| citation hit rate | 1/1 (100 %) |" in capsys.readouterr().out
         assert '"hit": true' in out.read_text()
+
+
+LIMIT = "claude did not answer: You've hit your 5-hour limit · resets 5:30pm (UTC)"
+TWO = """\
+- id: q1
+  question: a?
+  expected:
+    - path: spec/a.adoc
+      lines: 1-9
+- id: q2
+  question: b?
+  expected: not_covered
+"""
+
+
+class Turns:
+    """A session that gives one answer or error for each question, in order."""
+
+    def __init__(self, *answers: Answer | Exception) -> None:
+        self.answers = list(answers)
+        self.asked: list[str] = []
+
+    def ask(self, question: str) -> Answer:
+        self.asked.append(question)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def __enter__(self) -> "Turns":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        pass
+
+
+def _hit() -> Answer:
+    return _answer(_chunk("spec/a.adoc", 2, 4))
+
+
+def _refusal() -> Answer:
+    return _answer(covered=False)
+
+
+def _history(path: Path) -> list[dict]:
+    return [json.loads(t) for t in path.read_text().splitlines()]
+
+
+class Harness:
+    """Run main() on a question set with a fake session for a tree."""
+
+    @pytest.fixture()
+    def setup(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(
+            ev, "load_settings", lambda overrides=None, start=None: Settings()
+        )
+        monkeypatch.setattr(ev, "revision", lambda: {"sha": "abc1234", "dirty": False})
+        questions = tmp_path / "questions.yaml"
+        questions.write_text(TWO)
+        tree = TREE
+
+        def main(session: Turns, *extra: str) -> int:
+            monkeypatch.setattr(ev, "Ish", lambda path, *, settings: session)
+            return ev.main([str(questions), str(tree), *MODELS, *extra])
+
+        return main, ev.history_file()
+
+
+class TestUsageLimit(Harness):
+    def test_a_limit_is_known_by_its_words(self) -> None:
+        row = ev.score(TestScore.covered, FakeIsh(RuntimeError(LIMIT)), TREE)
+        assert row.limited
+        weekly = "You've hit your weekly limit · resets Nov 20, 3pm (UTC)"
+        assert ev.score(TestScore.covered, FakeIsh(RuntimeError(weekly)), TREE).limited
+        assert not ev.score(
+            TestScore.covered, FakeIsh(RuntimeError("down")), TREE
+        ).limited
+
+    def test_the_run_stops_and_counts_no_miss(self, setup, capsys) -> None:
+        main, history = setup
+        session = Turns(RuntimeError(LIMIT), _refusal())
+        assert main(session) == 1
+        assert session.asked == ["a?"]
+        out = capsys.readouterr().out
+        assert out.startswith("Incomplete: a model usage limit stopped the run at q1:")
+        assert "0 of 2 answers are scored." in out
+        assert "| citation hit rate | - |" in out
+        [line] = _history(history)
+        assert (line["complete"], line["rounds"]) == (False, 0)
+        assert line["stopped"].startswith("q1: claude did not answer")
+
+    def test_the_rows_before_the_limit_are_scored(self, setup, capsys) -> None:
+        main, history = setup
+        assert main(Turns(_hit(), RuntimeError(LIMIT))) == 1
+        out = capsys.readouterr().out
+        assert "1 of 2 answers are scored." in out
+        assert "| errors | 0 |" in out
+        [line] = _history(history)
+        assert line["scores"]["hit_rate"] == 1.0
+        assert "refused_rate" not in line["scores"]
+
+    def test_an_other_error_is_still_a_miss(self, setup, capsys) -> None:
+        main, history = setup
+        assert main(Turns(RuntimeError("down"), _refusal())) == 0
+        assert "| citation hit rate | 0/1 (0 %) |" in capsys.readouterr().out
+        [line] = _history(history)
+        assert line["complete"] and line["scores"]["errors"] == 1
+
+
+class TestRepeat(Harness):
+    def test_each_round_asks_the_whole_set(self, setup, capsys) -> None:
+        main, history = setup
+        session = Turns(_hit(), _refusal(), _refusal(), _refusal())
+        assert main(session, "--repeat", "2") == 0
+        assert session.asked == ["a?", "b?", "a?", "b?"]
+        out = capsys.readouterr().out
+        assert "| q1 #1 | answer | True | True |" in out
+        assert "| q1 #2 | answer | False | False |" in out
+        assert "Over 2 rounds:" in out
+        assert "| citation hit rate | 50 % | 0 % | 100 % |" in out
+        [line] = _history(history)
+        assert (line["repeat"], line["rounds"]) == (2, 2)
+        assert line["spread"]["hit_rate"] == [0.0, 1.0]
+
+    def test_a_short_last_round_is_left_out(self, setup, capsys) -> None:
+        main, history = setup
+        session = Turns(_hit(), _refusal(), _refusal(), RuntimeError(LIMIT))
+        assert main(session, "--repeat", "2") == 1
+        assert "Over 1 rounds:" in capsys.readouterr().out
+        [line] = _history(history)
+        assert line["rounds"] == 1 and line["scores"]["hit_rate"] == 1.0
+
+    def test_a_repeat_of_none_is_refused(self, setup, capsys) -> None:
+        main, _ = setup
+        with pytest.raises(SystemExit):
+            main(Turns(), "--repeat", "0")
+        assert "--repeat takes a number of 1 or more." in capsys.readouterr().err
+
+
+class TestTheReportWithNoNewOption(Harness):
+    def test_the_report_is_the_table_and_the_summary(self, setup, capsys) -> None:
+        main, _ = setup
+        assert main(Turns(_hit(), _refusal())) == 0
+        out = capsys.readouterr().out
+        rows = [
+            ev.Scored("q1", True, covered=True, hit=True, cited=["a.adoc:2-4"]),
+            ev.Scored("q2", False),
+        ]
+        expected = ev.table(rows, ev.summary(rows, 0, 0))
+        seconds = re.compile(r"\| \d+\.\d \|")
+        assert seconds.sub("| s |", out.strip()) == seconds.sub("| s |", expected)
+
+
+class TestHistory(Harness):
+    def test_one_line_for_each_run(self, setup) -> None:
+        main, history = setup
+        main(Turns(_hit(), _refusal()), "--label", "base", "--ask-turns", "3")
+        main(Turns(_hit(), _refusal()))
+        first, second = _history(history)
+        assert first["label"] == "base" and second["label"] == ""
+        assert first["ish"] == {"sha": "abc1234", "dirty": False}
+        assert first["options"]["ask_turns"] == 3
+        assert first["options"]["answer_model"] == "claude-haiku-5-5"
+        assert "out" not in first["options"]
+        assert first["questions"]["ids"] == ["q1", "q2"]
+        assert first["questions"]["sha256"] == hashlib.sha256(TWO.encode()).hexdigest()
+        assert first["scores"]["hit_rate"] == 1.0
+        assert first["scores"]["refused_rate"] == 1.0
+        assert datetime.fromisoformat(first["time"]).tzinfo is not None
+
+    def test_the_scores_of_an_answer(self) -> None:
+        answer = Answer(
+            parts=(AnswerPart("x", (_chunk("spec/a.adoc", 2, 4),)),),
+            covered=True,
+            sources=(),
+            input_tokens=100,
+            rerank_input_tokens=20,
+            check_input_tokens=30,
+            claims_checked=4,
+            unconfirmed=(AnswerPart("y"), AnswerPart("z")),
+            reads=3,
+            cache_write_tokens=60,
+            cache_read_tokens=25,
+        )
+        row = ev.score(TestScore.covered, FakeIsh(answer), TREE)
+        found = ev.measures([row])
+        assert (found["cache_write_tokens"], found["cache_read_tokens"]) == (60, 25)
+        assert (row.unconfirmed, row.claims_checked, row.reads) == (2, 4, 3)
+        assert found["unconfirmed"] == 2
+        assert found["all_input_tokens"] == 150
+        assert found["reads"] == 3
+
+    def test_the_revision_of_a_repository(self, tmp_path) -> None:
+        git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "init", "-q"], check=True)
+        (tmp_path / "f").write_text("a")
+        subprocess.run([*git, "add", "f"], check=True)
+        subprocess.run([*git, "commit", "-qm", "c"], check=True)
+        clean = ev.revision(tmp_path)
+        assert len(str(clean["sha"])) == 40 and clean["dirty"] is False
+        (tmp_path / "f").write_text("b")
+        assert ev.revision(tmp_path)["dirty"] is True
+
+    def test_no_revision_outside_a_repository(self, tmp_path) -> None:
+        assert ev.revision(tmp_path) == {"sha": "", "dirty": False}
+
+
+def _line(label: str, rounds: int, **scores: object) -> dict:
+    spread = {k: v for k, v in scores.items() if isinstance(v, list)}
+    means = {
+        k: (statistics.mean(v) if isinstance(v, list) else v) for k, v in scores.items()
+    }
+    return {
+        "time": "2026-11-16T10:00:00+00:00",
+        "label": label,
+        "ish": {"sha": "abcdef0123", "dirty": label == "b"},
+        "options": {"answer_model": "sonnet", "rerank_model": "haiku", "ask_turns": 3},
+        "questions": {"sha256": "x", "ids": ["q1"]},
+        "rounds": rounds,
+        "complete": True,
+        "stopped": "",
+        "scores": means,
+        "spread": spread,
+    }
+
+
+class TestCompare:
+    def test_a_delta_is_real_only_past_the_spread(self) -> None:
+        a = _line("a", 2, hit_rate=[0.8, 0.9], input_tokens=[100000, 104000])
+        b = _line("b", 2, hit_rate=[0.95, 1.0], input_tokens=[101000, 103000])
+        out = ev.compare((1, a), (2, b))
+        assert out.splitlines()[0].startswith("A: line 1 'a', 2026-11-16")
+        assert "ish abcdef0," in out and "ish abcdef0+dirty" in out
+        assert "answer/rerank/turns sonnet/haiku/3, 2 round(s), complete" in out
+        assert "| citation hit rate | 85 % | 98 % | +12 % | 10 % | better |" in out
+        assert "| median input tokens | 102000 | 102000 | 0 | 4000 | same |" in out
+        assert out.index("citation hit rate") < out.index("median input tokens")
+
+    def test_a_delta_inside_the_spread_is_named(self) -> None:
+        a = _line("a", 2, seconds=[50, 70])
+        b = _line("b", 2, seconds=[60, 70])
+        assert "| +5 | 20 | worse, within spread |" in ev.compare((1, a), (2, b))
+
+    def test_one_round_has_no_spread(self) -> None:
+        a = _line("a", 1, cost_usd=0.43)
+        b = _line("b", 1, cost_usd=0.21)
+        out = ev.compare((1, a), (2, b))
+        assert "| 0.4300 | 0.2100 | -0.2200 | - | better, no spread |" in out
+
+    def test_a_measure_one_run_lacks(self) -> None:
+        a = _line("a", 1, refused_rate=1.0)
+        b = _line("b", 1)
+        assert "| refused when not covered | 100 % | - | - | - | - |" in ev.compare(
+            (1, a), (2, b)
+        )
+
+    def test_the_differences_of_the_runs_are_named(self) -> None:
+        a = _line("a", 1)
+        b = {**_line("b", 1), "complete": False, "stopped": "q3: limit"}
+        b["questions"] = {"sha256": "y", "ids": ["q1"]}
+        out = ev.compare((1, a), (2, b))
+        assert "The two runs asked different questions." in out
+        assert "Run B is incomplete." in out
+        assert "stopped: q3: limit" in out
+
+    @pytest.mark.parametrize(
+        ("name", "number"), [("1", 1), ("3", 3), ("-1", 3), ("-3", 1), ("base", 2)]
+    )
+    def test_a_line_by_number_or_label(self, name, number) -> None:
+        lines = [{"label": "base"}, {"label": "base"}, {"label": ""}]
+        assert ev.pick(lines, name)[0] == number
+
+    @pytest.mark.parametrize(
+        ("name", "message"),
+        [("0", "no line 0"), ("4", "no line 4"), ("-4", "no line -4"), ("x", "'x'")],
+    )
+    def test_a_line_that_is_not_there(self, name, message) -> None:
+        with pytest.raises(ValueError, match=message):
+            ev.pick([{"label": ""}] * 3, name)
+
+    def test_main_compares_two_lines_and_asks_nothing(self, capsys) -> None:
+        path = ev.history_file()
+        ev.append(_line("a", 1, hit_rate=0.9), path)
+        ev.append(_line("b", 1, hit_rate=1.0), path)
+        assert ev.main(["--compare", "a", "-1"]) == 0
+        assert "| citation hit rate | 90 % | 100 % | +10 % |" in capsys.readouterr().out
+
+    def test_main_with_no_history(self, capsys) -> None:
+        with pytest.raises(SystemExit) as stopped:
+            ev.main(["--compare", "1", "2"])
+        assert stopped.value.code == 2
+        assert "holds no history yet." in capsys.readouterr().err
+
+
+class TestArguments:
+    @pytest.mark.parametrize(
+        ("argv", "message"),
+        [
+            ([], "Give QUESTIONS, or --compare A B."),
+            (
+                ["q.yaml", "tree"],
+                "Give --language-model and --answer-model, or set them.",
+            ),
+        ],
+    )
+    def test_a_run_needs_its_inputs(self, argv, message, capsys) -> None:
+        with pytest.raises(SystemExit):
+            ev.main(argv)
+        assert message in capsys.readouterr().err
+
+
+class TestTuning:
+    """Every setting changes for one run, with no change to the code."""
+
+    @pytest.fixture()
+    def setup(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(ev, "revision", lambda: {"sha": "abc1234", "dirty": False})
+        questions = tmp_path / "questions.yaml"
+        questions.write_text(TWO)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        opened: list[Settings] = []
+
+        def local(path: Path, *, settings: Settings) -> Turns:
+            opened.append(settings)
+            return Turns(_hit(), _refusal())
+
+        monkeypatch.setattr(ev, "Ish", local)
+
+        def main(*extra: str) -> int:
+            return ev.main([str(questions), str(tree), *extra])
+
+        return main, opened, tmp_path
+
+    def test_set_changes_one_option(self, setup) -> None:
+        main, opened, _ = setup
+        main(*MODELS, "--set", "challenge=false", "--set", "prompt-cache=off")
+        assert (opened[0].challenge, opened[0].prompt_cache) == (False, "off")
+
+    def test_set_wins_over_a_flag(self, setup) -> None:
+        main, opened, _ = setup
+        main(*MODELS, "--ask-turns", "3", "--set", "ask_turns=1")
+        assert opened[0].ask_turns == 1
+
+    def test_set_can_name_the_models(self, setup) -> None:
+        main, opened, _ = setup
+        main("--set", "language_model=claude-cli", "--set", "answer_model=haiku")
+        assert opened[0].allowed_language_models == ("claude-cli",)
+        assert opened[0].answer_model == "haiku"
+
+    def test_a_config_file_describes_the_run(self, setup) -> None:
+        main, opened, tmp_path = setup
+        config = tmp_path / "tuning.toml"
+        config.write_text('rerank_model = "haiku"\nask_turns = 2\nask_chunks = 4\n')
+        main(*MODELS, "--config", str(config))
+        chosen = opened[0]
+        assert (chosen.rerank_model, chosen.ask_turns, chosen.ask_chunks) == (
+            "haiku",
+            2,
+            4,
+        )
+
+    def test_without_a_config_the_flags_keep_their_defaults(
+        self, setup, monkeypatch
+    ) -> None:
+        main, opened, _ = setup
+        monkeypatch.setenv("ISH_RERANK_MODEL", "haiku")
+        monkeypatch.setenv("ISH_ASK_TURNS", "2")
+        main(*MODELS)
+        assert (opened[0].rerank_model, opened[0].ask_turns) == ("", 0)
+
+    @pytest.mark.parametrize(
+        ("word", "message"),
+        [("challenge", "KEY=VALUE"), ("no_such=1", "no option of ish: 'no_such'")],
+    )
+    def test_a_bad_set_is_refused(self, setup, word, message, capsys) -> None:
+        main, _, _ = setup
+        with pytest.raises(SystemExit):
+            main(*MODELS, "--set", word)
+        assert message in capsys.readouterr().err
+
+    def test_a_bad_value_is_refused(self, setup, capsys) -> None:
+        main, _, _ = setup
+        with pytest.raises(SystemExit):
+            main(*MODELS, "--set", "ask_turns=many")
+        assert "invalid value 'many'" in capsys.readouterr().err
+
+    def test_the_history_keeps_every_answer_setting(self, setup) -> None:
+        main, _, _ = setup
+        main(*MODELS, "--set", "repair_turns=0")
+        [line] = _history(ev.history_file())
+        assert line["settings"]["repair_turns"] == 0
+        assert line["settings"]["allowed_language_models"] == ["claude-cli"]
+        assert "embedder" not in line["settings"]
+
+    def test_the_trace_files_each_question(self, setup) -> None:
+        main, opened, tmp_path = setup
+        trace = tmp_path / "trace"
+        main(*MODELS, "--trace", str(trace))
+        assert opened[0].ask_trace == str(trace)
+        assert sorted(p.name for p in trace.iterdir()) == ["q1", "q2"]
+
+    def test_a_trace_files_the_calls_of_each_round(self, tmp_path: Path) -> None:
+        (tmp_path / "001-select.json").write_text("{}")
+        (tmp_path / "002-answer.json").write_text("{}")
+        ev.filed(tmp_path, ev.Scored("q1", True, round=2), repeat=2)
+        moved = sorted(p.name for p in (tmp_path / "q1-2").iterdir())
+        assert moved == ["001-select.json", "002-answer.json"]
+        assert not list(tmp_path.glob("*.json"))
+
+
+class TestCompareSettings:
+    def test_the_settings_that_differ_are_named(self) -> None:
+        a = {**_line("a", 1), "settings": {"challenge": True, "ask_turns": 3}}
+        b = {**_line("b", 1), "settings": {"challenge": False, "ask_turns": 3}}
+        out = ev.compare((1, a), (2, b))
+        assert "Settings that differ:" in out
+        assert "- challenge: True -> False" in out
+        assert "ask_turns" not in out.split("| measure")[0]
+
+    def test_a_setting_one_run_lacks(self) -> None:
+        assert ev.differences({"a": 1}, {}) == ["- a: 1 -> '-'"]
+
+
+class TestCompareFixes:
+    def test_reads_of_the_cache_are_neither_better_nor_worse(self) -> None:
+        """A read takes the place of a write, at a tenth of the price."""
+        a = _line("a", 1, cache_read_tokens=45_000)
+        b = _line("b", 1, cache_read_tokens=72_000)
+        out = ev.compare((1, a), (2, b))
+        assert "| 45000 | 72000 | +27000 | - | changed |" in out
+
+    def test_a_run_that_kept_no_settings_is_named_once(self) -> None:
+        a = _line("a", 1)
+        b = {**_line("b", 1), "settings": {"challenge": False}}
+        out = ev.compare((1, a), (2, b))
+        assert "Run A kept no settings." in out
+        assert "Settings that differ" not in out
+
+
+class TestOnlyNamesKnownQuestions:
+    """An id of --only that no question has ran an empty set, with no error."""
+
+    def test_an_unknown_id_is_refused(self, tmp_path, monkeypatch, capsys) -> None:
+        monkeypatch.setattr(
+            ev, "load_settings", lambda overrides=None, start=None: Settings()
+        )
+        questions = tmp_path / "q.yaml"
+        questions.write_text(TWO)
+        with pytest.raises(SystemExit):
+            ev.main([str(questions), str(tmp_path), *MODELS, "--only", "q1 q2"])
+        assert "--only names no question of the set: q1 q2." in capsys.readouterr().err
+
+
+class TestGaps:
+    """An answer that finds two sources in conflict says so in its gaps.
+
+    The citation hit rate cannot tell such an answer from one that names
+    no conflict. On four hard questions, the answers without the
+    challenge hit as often, and named half as many open points.
+    """
+
+    def test_the_points_left_open_are_counted(self) -> None:
+        from ish.application.answer import AnswerBlock
+
+        answer = Answer(
+            parts=(AnswerPart("x", (_chunk("spec/a.adoc", 2, 4),)),),
+            covered=True,
+            sources=(),
+            blocks=(
+                AnswerBlock("summary", parts=(AnswerPart("x"),)),
+                AnswerBlock("gaps", parts=(AnswerPart("a"), AnswerPart("b"))),
+            ),
+        )
+        row = ev.score(TestScore.covered, FakeIsh(answer), TREE)
+        assert row.gaps == 2
+        assert ev.measures([row])["gaps"] == 2
+        a = _line("a", 1, gaps=4.0)
+        b = _line("b", 1, gaps=1.5)
+        assert "| 4 | 1.5 | -2.5 | - | changed |" in ev.compare((1, a), (2, b))

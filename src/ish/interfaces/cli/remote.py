@@ -429,7 +429,7 @@ def chat(settings: Settings, *, full: bool = False) -> int:
     from ish.interfaces.cli import chat as loop
 
     try:
-        remote = RemoteIsh(settings)
+        remote = RemoteIsh(loop.for_chat(settings))
     except Exception as exc:
         return _failed(exc)
     return loop.converse(

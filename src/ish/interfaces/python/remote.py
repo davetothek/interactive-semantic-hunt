@@ -12,6 +12,7 @@ same use case and the same model rules as an answer from a local tree.
 """
 
 import logging
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -27,7 +28,7 @@ from ish.application.glossary import Glossary
 from ish.application.ports.language_model import LanguageModel
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
-from ish.interfaces.python.api import ASK_LIMIT, checks
+from ish.interfaces.python.api import checks, sizes
 from ish.settings import Settings
 
 if TYPE_CHECKING:
@@ -122,7 +123,11 @@ class RemoteIsh:
         *on_block*, as for ``Ish.ask``.
         """
         self.prepare(brief)
-        limit = self.settings.rerank_candidates if self._reranker else ASK_LIMIT
+        limit = (
+            self.settings.rerank_candidates
+            if self._reranker
+            else self.settings.ask_chunks
+        )
 
         def narrowed(text: str, kinds: Sequence[str], count: int) -> list[Match]:
             found = self._source.sources(
@@ -146,16 +151,20 @@ class RemoteIsh:
 
             found, reranker, turns = plan(reading, search, limit, reranker, turns)
         use_case = AnswerQuestion(
+            # One conversation for the turns of this answer, or for the
+            # questions of a chat. A new question elsewhere starts fresh.
+            conversation=(reading.conversation if reading else "") or uuid.uuid4().hex,
+            numbers=reading.numbers if reading else None,
             search=found,
             model=self._models[brief],
             reranker=reranker,
-            pick=ASK_LIMIT,
             turns=self.settings.ask_turns if turns is None else turns,
             read=self._texts.get,
             glossary=self._glossary,
             kind_of=self.kind_of,
             on_block=on_block,
             **({"on_step": on_step} if on_step else {}),
+            **sizes(self.settings),
             **checks(self.settings, self._models[brief], self._reranker, brief),
         )
         answer = use_case.answer(question)

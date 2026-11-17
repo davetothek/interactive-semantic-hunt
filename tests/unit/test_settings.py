@@ -221,6 +221,28 @@ class TestBoolCoercion:
         assert _coerce("flag", 1, False) is True
 
 
+class TestCoerceFloat:
+    """A cost in dollars is a float, and a file gives it as text or a number."""
+
+    @pytest.mark.parametrize("value", ["0.5", 0.5])
+    def test_a_float(self, value) -> None:
+        from ish.settings import _coerce
+
+        assert _coerce("ask_read_usd", value, 1.0) == 0.5
+
+    def test_a_float_from_a_file(self, tmp_path) -> None:
+        config = tmp_path / ".ish" / CONFIG_BASENAME
+        config.parent.mkdir()
+        config.write_text('ask_read_usd = "0.25"\n')
+        assert load_settings(start=tmp_path, environ={}).ask_read_usd == 0.25
+
+    def test_not_a_float(self) -> None:
+        from ish.settings import _coerce
+
+        with pytest.raises(ConfigError, match="invalid value"):
+            _coerce("ask_read_usd", "cheap", 1.0)
+
+
 class TestUnreadableConfig:
     """Verify that an unreadable config file is reported, not skipped."""
 
@@ -477,6 +499,23 @@ class TestAFileInATreeTellsTheModelNothing:
             "x",
             "y",
         )
+
+
+class TestAFileInATreeRunsNoProgram:
+    """A tree that names the command of claude-cli would choose a program to run."""
+
+    def test_a_project_file_names_no_command(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(
+            tmp_path / CONFIG_FILENAME, 'claude_command = "./evil"\nask_trace = "t"\n'
+        )
+        settings = load_settings(start=tmp_path, environ={})
+        assert (settings.claude_command, settings.ask_trace) == ("claude", "")
+
+    def test_the_user_file_names_it(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+        _write(tmp_path / "cfg" / "ish" / CONFIG_FILENAME, 'claude_command = "c2"\n')
+        assert load_settings(start=tmp_path / "p", environ={}).claude_command == "c2"
 
 
 class TestAFileInATreeTrustsNoProxy:

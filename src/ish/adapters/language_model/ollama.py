@@ -14,6 +14,7 @@ from pathlib import Path
 from ish.adapters import _http
 from ish.adapters._ollama import is_loopback, resolve_host
 from ish.adapters.language_model import _grounded
+from ish.adapters.language_model._calls import CallOptions
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
@@ -31,8 +32,15 @@ from ish.application.ports.language_model import (
 # window of a few thousand tokens and drops what does not fit without a
 # signal, so an answer would read only the first sources. An answer may
 # send 60,000 characters, about 15,000 tokens, plus the prompt and the
-# reply.
+# reply. A larger budget of characters gets a window that fits it.
 CONTEXT_TOKENS = 20_480
+
+# Tokens of a call beside its sources: the instructions, the question,
+# and the reply.
+PROMPT_TOKENS = 4_096
+
+# The characters that make one token of English text, on average.
+CHARS_PER_TOKEN = 4
 
 # A generation model on a CPU writes slowly. An answer of a few hundred
 # tokens can take minutes.
@@ -50,12 +58,16 @@ class OllamaLanguageModel:
         prompts: Prompts | None = None,
         timeout: float = TIMEOUT_SECONDS,
         tree: Path | None = None,
+        options: CallOptions | None = None,
     ) -> None:
         """Use *model*, such as ``qwen3:8b``, on the daemon at *host*.
 
         Read ``OLLAMA_HOST`` when no host is given. Require the model, and
         refuse a host that is not this machine.
-        The model reads no file, so *tree* changes nothing.
+        The model reads no file, so *tree* changes nothing. Of *options*,
+        the backend takes the timeout and the budget of characters, which
+        sets the window of the model. It keeps no prompt cache and writes
+        no trace.
         """
         if not model:
             raise LanguageModelError(
@@ -70,17 +82,23 @@ class OllamaLanguageModel:
         self.model_name = model
         self._prompts = prompts or load_prompts()
         self.host = chosen
-        self._timeout = timeout
+        options = options or CallOptions()
+        self._timeout = options.timeout or timeout
+        self._window = max(
+            CONTEXT_TOKENS, options.budget_chars // CHARS_PER_TOKEN + PROMPT_TOKENS
+        )
 
     def answer(
         self,
         question: str,
         sources: Sequence[Source],
         on_block: OnBlock | None = None,
+        conversation: str = "",
     ) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes.
 
         Stream nothing: *on_block* gets no block, and the reply holds them all.
+        Keep no session: each call sends everything, whatever *conversation*.
         """
         text, read, wrote = self._chat(
             self._prompts.answer,
@@ -97,8 +115,12 @@ class OllamaLanguageModel:
         turns_left: int,
         on_block: OnBlock | None = None,
         notes: Sequence[str] = (),
+        conversation: str = "",
     ) -> Reply:
-        """Answer, or ask for searches, in the JSON the schema fixes."""
+        """Answer, or ask for searches, in the JSON the schema fixes.
+
+        Keep no session: each call sends everything, whatever *conversation*.
+        """
         text, read, wrote = self._chat(
             self._prompts.step,
             _grounded.STEP_SCHEMA,
@@ -152,7 +174,7 @@ class OllamaLanguageModel:
                 "model": self.model_name,
                 "stream": False,
                 "format": schema,
-                "options": {"num_ctx": CONTEXT_TOKENS},
+                "options": {"num_ctx": self._window},
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},

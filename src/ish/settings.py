@@ -426,6 +426,70 @@ class Settings:
             metavar="N",
         ),
     )
+    ask_chunks: int = field(
+        default=10,
+        metadata=_opt(
+            ANSWERS,
+            "Chunks an answer reads in full: the best of the search, or the "
+            "ones the rerank model chooses.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    ask_chars: int = field(
+        default=60_000,
+        metadata=_opt(
+            ANSWERS,
+            "Characters of chunk text one answer may send to the model, over "
+            "every turn. About four characters make one token.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    ask_search_chunks: int = field(
+        default=5,
+        metadata=_opt(
+            ANSWERS,
+            "Chunks each follow-up search adds to what the model reads.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    ask_searches: int = field(
+        default=3,
+        metadata=_opt(
+            ANSWERS,
+            "Searches the model may ask for in one turn, also against its first draft.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    rerank_preview_chars: int = field(
+        default=300,
+        metadata=_opt(
+            ANSWERS,
+            "Characters of the start of each chunk that the rerank model "
+            "reads to choose it.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
+    check_context_chars: int = field(
+        default=400,
+        metadata=_opt(
+            ANSWERS,
+            "Characters of the source on each side of a quote that the check "
+            "of a claim reads.",
+            scope="query",
+            type=int,
+            metavar="N",
+        ),
+    )
     ask_files: int = field(
         default=32,
         metadata=_opt(
@@ -465,6 +529,143 @@ class Settings:
             "ask tool of a local ish-mcp reads the tree too. An answer over "
             "HTTP or from ish remote reads no file.",
             action="boolean_optional",
+        ),
+    )
+    ask_read_usd: float = field(
+        default=1.0,
+        metadata=_opt(
+            ANSWERS,
+            "What one call of claude-cli that reads the tree may cost, in US "
+            "dollars at the prices of the API. A model that reads in circles "
+            "stops there.",
+            type=float,
+            metavar="USD",
+        ),
+    )
+    prompt_cache: str = field(
+        default="5m",
+        metadata=_opt(
+            ANSWERS,
+            "How long claude-cli keeps the prompt of a call in its cache: 5m, "
+            "1h, or off. A write costs 1.25 times an uncached token for 5m "
+            "and 2 times for 1h, and a read costs a tenth. Each turn of an "
+            "answer is a new call, so a write for 1h is rarely read again.",
+            choices=["5m", "1h", "off"],
+        ),
+    )
+    resume_turns: bool = field(
+        default=True,
+        metadata=_opt(
+            ANSWERS,
+            "Let each later turn of a claude-cli answer that reads the tree "
+            "resume the session of the turn before, and send only the new "
+            "sources and notes. The turn reads the rest from the cache. ish "
+            "deletes a session it kept when it exits, when a new session of "
+            "the question replaces it, or past 8 questions under way.",
+            action="boolean_optional",
+        ),
+    )
+    autocompact: int = field(
+        default=0,
+        metadata=_opt(
+            ANSWERS,
+            "Tokens at which claude summarizes a session that ish resumes, "
+            "from 100000 to 1000000. 0 uses the default of claude.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    chat_autocompact: int = field(
+        default=100_000,
+        metadata=_opt(
+            ANSWERS,
+            "autocompact of ish chat and ish remote chat, which keep one "
+            "session until the chat ends or /new starts another.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    chat_prompt_cache: str = field(
+        default="1h",
+        metadata=_opt(
+            ANSWERS,
+            "prompt_cache of ish chat and ish remote chat, where the next "
+            "question can come more than 5 minutes after the last.",
+            choices=["5m", "1h", "off"],
+        ),
+    )
+    chat_history_tokens: int = field(
+        default=4_000,
+        metadata=_opt(
+            ANSWERS,
+            "Tokens of the history of a chat that each answer reads.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    chat_query_tokens: int = field(
+        default=1_000,
+        metadata=_opt(
+            ANSWERS,
+            "Tokens of the history of a chat that the model reads to write "
+            "the search of a follow-up.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    answer_effort: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Effort of claude-cli for each turn of an answer. Empty uses the "
+            "default of the model. Thinking counts as output tokens.",
+            choices=["", "low", "medium", "high", "xhigh", "max"],
+        ),
+    )
+    rerank_effort: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Effort of claude-cli for the rerank and for the search of a "
+            "follow-up in a chat. Empty uses the default of the model.",
+            choices=["", "low", "medium", "high", "xhigh", "max"],
+        ),
+    )
+    check_effort: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Effort of claude-cli for the check of the claims. Empty uses the "
+            "default of the model.",
+            choices=["", "low", "medium", "high", "xhigh", "max"],
+        ),
+    )
+    claude_fallback_model: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Model that claude-cli asks when the model of a call is "
+            "overloaded. Empty asks no other model.",
+            metavar="MODEL",
+        ),
+    )
+    claude_command: str = field(
+        default="claude",
+        metadata=_opt(
+            ANSWERS,
+            "The command that runs Claude Code, for the claude-cli backend.",
+            metavar="PATH",
+        ),
+    )
+    answer_timeout: float = field(
+        default=0.0,
+        metadata=_opt(
+            ANSWERS,
+            "Seconds one call of a language model may take. 0 uses the "
+            "default of the backend: 600 for claude-cli and ollama, 300 for "
+            "anthropic.",
+            type=float,
+            metavar="S",
         ),
     )
     check_claims: bool = field(
@@ -507,6 +708,16 @@ class Settings:
             "first draft of an answer before the model answers.",
             scope="query",
             action="boolean_optional",
+        ),
+    )
+    ask_trace: str = field(
+        default="",
+        metadata=_opt(
+            ANSWERS,
+            "Directory where claude-cli writes one JSON file for each call: "
+            "the instructions, the message, the reply, the tokens, and the "
+            "cost. Empty writes none.",
+            metavar="DIR",
         ),
     )
     prompt_dir: str = field(
@@ -714,6 +925,8 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
             return bool(value)
         if isinstance(default, int):
             return int(value)
+        if isinstance(default, float):
+            return float(value)
         return str(value)
     except (TypeError, ValueError) as exc:
         raise ConfigError(
@@ -795,10 +1008,14 @@ def _file_options(path: Path) -> Mapping[str, Any]:
 # that sets how a server signs users in chooses the directory that gets
 # each password, and how long a login lasts. A tree that sets what a
 # model is told can tell it to answer from outside the sources. A tree
-# that names a trusted proxy lets a password come from the network.
+# that names a trusted proxy lets a password come from the network. A
+# tree that sets the trace chooses where the text of each prompt goes. A
+# tree that names the command of claude-cli chooses a program to run.
 NOT_FROM_A_TREE = (
     "trusted_proxy",
     "prompt_dir",
+    "ask_trace",
+    "claude_command",
     "answer_notes",
     "rerank_notes",
     "remote",

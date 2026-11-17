@@ -393,6 +393,17 @@ class TestFollowUpSearches:
         ).answer("q")
         assert result.sources == (start, small)
 
+    def test_a_follow_up_search_adds_at_most_its_chunks(self) -> None:
+        start = make_chunk("start", "s")
+        more = [make_chunk(f"m{n}", f"t{n}") for n in range(4)]
+        result = AnswerQuestion(
+            search=routed(start, more=more),
+            model=FakeAgent(("more",)),
+            turns=1,
+            search_chunks=2,
+        ).answer("q")
+        assert result.sources == (start, *more[:2])
+
     def test_no_turns_answers_in_one_call(self) -> None:
         model = FakeModel()
         result = AnswerQuestion(search=searching(make_chunk("a")), model=model).answer(
@@ -915,3 +926,85 @@ class TestStreamedBlocks:
 
         AnswerQuestion(search=searching(make_chunk("a")), model=Model()).answer("q")
         assert calls == [{}]
+
+
+class TestSizesOfAnAnswer:
+    """Each size of an answer is a parameter, so a setting can change it."""
+
+    def test_a_turn_runs_at_most_its_searches(self) -> None:
+        runs: list[str] = []
+
+        def search(query: str) -> list[Match]:
+            runs.append(query)
+            return [Match(make_chunk(query), 1.0)]
+
+        AnswerQuestion(
+            search=search,
+            model=FakeAgent(("a", "b", "c")),
+            turns=1,
+            searches_a_turn=2,
+        ).answer("q")
+        assert runs == ["q", "a", "b"]
+
+    def test_the_rerank_reads_the_start_it_is_given(self) -> None:
+        reranker = FakeReranker(("1",))
+        AnswerQuestion(
+            search=searching(make_chunk("a", "abcdefghij")),
+            model=FakeModel(),
+            reranker=reranker,
+            preview_chars=4,
+        ).answer("q")
+        assert reranker.calls[0][1][0].text == "abcd"
+
+
+class TestAConversation:
+    """The calls of one answer, or of one chat, name their conversation."""
+
+    def test_each_call_names_the_conversation(self) -> None:
+        seen: list[dict] = []
+
+        class Named(FakeModel):
+            def answer(self, question, sources, **named):
+                seen.append(named)
+                return super().answer(question, sources)
+
+        AnswerQuestion(
+            search=searching(make_chunk("a")), model=Named(), conversation="c1"
+        ).answer("q")
+        assert seen == [{"conversation": "c1"}]
+
+    def test_no_conversation_names_none(self) -> None:
+        seen: list[dict] = []
+
+        class Named(FakeModel):
+            def answer(self, question, sources, **named):
+                seen.append(named)
+                return super().answer(question, sources)
+
+        AnswerQuestion(search=searching(make_chunk("a")), model=Named()).answer("q")
+        assert seen == [{}]
+
+    def test_a_chunk_keeps_its_id_over_the_answers_of_a_chat(self) -> None:
+        """One session shows the model the sources of every question of a chat."""
+        from ish.application.answer import SourceNumbers
+
+        first, second, third = make_chunk("a"), make_chunk("b"), make_chunk("c")
+        numbers = SourceNumbers()
+        model = FakeModel(
+            Reply(passages=(Passage("It resets.", ("3",)),), covered=True)
+        )
+        AnswerQuestion(
+            search=searching(first, second), model=model, numbers=numbers
+        ).answer("q1")
+        answer = AnswerQuestion(
+            search=searching(third, first), model=model, numbers=numbers
+        ).answer("q2")
+        assert [s.id for s in model.calls[1][1]] == ["3", "1"]
+        assert answer.parts[0].cites == (third,)
+
+    def test_the_numbers_of_a_chat_start_at_one(self) -> None:
+        from ish.application.answer import SourceNumbers
+
+        numbers = SourceNumbers()
+        a, b = make_chunk("a"), make_chunk("b")
+        assert (numbers.of(a), numbers.of(b), numbers.of(a)) == ("1", "2", "1")

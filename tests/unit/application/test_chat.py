@@ -331,3 +331,40 @@ class TestAFollowUpSearchesForWhatAModelWrote:
         chat = Chat(asked, write_query=lambda q, h: q)
         chat.ask("why")
         assert chat.more().searched == ()
+
+
+class TestQueryTokens:
+    def test_the_query_reads_the_history_it_is_given(self) -> None:
+        asked = Asked(*[_answer("x" * 3000, WATCHDOG) for _ in range(3)])
+        seen: list[str] = []
+        chat = Chat(
+            asked, write_query=lambda q, h: seen.append(h) or q, query_tokens=10
+        )
+        for n in range(3):
+            chat.ask(f"q{n}")
+        assert len(seen[-1]) <= 10 * CHARS_PER_TOKEN + 3000
+
+
+class TestOneConversation:
+    """A chat keeps one session of the model until it ends or /new."""
+
+    def test_every_answer_of_a_chat_names_one_conversation(self) -> None:
+        asked = Asked(*[_answer("x", WATCHDOG) for _ in range(3)])
+        chat = Chat(asked)
+        chat.ask("q1")
+        chat.ask("q2")
+        chat.more()
+        readings = [call[1] for call in asked.calls]
+        assert len({r.conversation for r in readings}) == 1
+        assert readings[0].conversation
+        assert readings[0].numbers is readings[1].numbers is readings[2].numbers
+
+    def test_new_starts_another_conversation(self) -> None:
+        asked = Asked(*[_answer("x", WATCHDOG) for _ in range(2)])
+        chat = Chat(asked)
+        chat.ask("q1")
+        chat.new()
+        chat.ask("q2")
+        first, second = (call[1] for call in asked.calls)
+        assert first.conversation != second.conversation
+        assert first.numbers is not second.numbers
