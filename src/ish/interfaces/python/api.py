@@ -38,6 +38,7 @@ from ish.application.answer import (
 from ish.application.candidates import candidates
 from ish.application.filters import Filters, parse_query
 from ish.application.glossary import Glossary
+from ish.application.grepable import parse_grepable
 from ish.application.ports.language_model import LanguageModel
 from ish.application.ports.link import LinkResolver
 from ish.application.progress import ProgressCallback
@@ -697,6 +698,12 @@ class Ish:
             ),
             "languages": dict(sorted(languages.items())),
             "types": dict(sorted(kinds.items())),
+            # The files the index leaves out for a model to grep. No
+            # search returns them, so the status is where they show.
+            "grepable": [
+                {"path": entry.path, "holds": entry.holds}
+                for entry in parse_grepable(self.settings.grepable)
+            ],
         }
 
     def __repr__(self) -> str:

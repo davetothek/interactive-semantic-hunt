@@ -766,3 +766,111 @@ class TestSkippedFilesAreSummarised:
             scan.run(tmp_path)
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
         assert "1 file(s)" in warnings[0].getMessage()
+
+
+class TestGrepable:
+    """A grepable path stays out of the index, and the scan says what hides one."""
+
+    @pytest.fixture()
+    def tree(self, tmp_path: Path) -> Path:
+        (tmp_path / "app.py").write_text("pass\n")
+        tables = tmp_path / "res" / "tables" / "detail"
+        tables.mkdir(parents=True)
+        (tables / "one.py").write_text("pass\n")
+        (tmp_path / "res" / "keep.py").write_text("pass\n")
+        return tmp_path
+
+    TABLES = r"(?:^|/)res/tables(?:/|$)"
+
+    def _scan(self, tree: Path, **kwargs) -> Scan:
+        return Scan(parsers=[FakeParser()], root=tree, anchor=tree, **kwargs)
+
+    def _names(self, tree: Path, **kwargs) -> list[str]:
+        return sorted(p.name for p in self._scan(tree, **kwargs).discover(tree))
+
+    def test_a_grepable_file_is_not_discovered(self, tree: Path) -> None:
+        assert self._names(tree, grepable=[self.TABLES]) == ["app.py", "keep.py"]
+
+    def test_pruning_asks_the_same_question(self, tree: Path) -> None:
+        """A file indexed before its path became grepable leaves the index."""
+        scan = self._scan(tree, grepable=[self.TABLES])
+        assert not scan.accepts(tree / "res" / "tables" / "detail" / "one.py")
+        assert scan.accepts(tree / "res" / "keep.py")
+
+    def test_a_grepable_directory_is_not_walked(self, tree: Path, monkeypatch) -> None:
+        walked: list[Path] = []
+        scan = self._scan(tree, grepable=[self.TABLES])
+        walk = scan._walk
+
+        def recording(directory: Path, result: list[Path]) -> None:
+            walked.append(directory)
+            walk(directory, result)
+
+        monkeypatch.setattr(scan, "_walk", recording)
+        scan.discover(tree)
+        assert tree / "res" / "tables" not in walked
+
+    def test_an_ignored_name_that_hides_a_grepable_path_is_reported(
+        self, tree: Path, caplog
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            self._scan(tree, grepable=[self.TABLES], ignored_dirs=["tables"]).discover(
+                tree
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "'ignore'" in warnings[0] and "'tables'" in warnings[0]
+        assert self.TABLES in warnings[0]
+
+    def test_an_exclude_that_hides_a_grepable_path_is_reported(
+        self, tree: Path, caplog
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            self._scan(tree, grepable=[self.TABLES], exclude=["/res/tables/"]).discover(
+                tree
+            )
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "'exclude'" in warnings[0] and "'/res/tables/'" in warnings[0]
+
+    def test_a_filter_on_a_directory_above_is_not_seen(
+        self, tree: Path, caplog
+    ) -> None:
+        """The walk stops at the directory above, before the grepable path."""
+        with caplog.at_level("WARNING"):
+            self._scan(tree, grepable=[self.TABLES], exclude=["/res/"]).discover(tree)
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_one_warning_for_each_entry_however_often_it_is_hidden(
+        self, tree: Path, caplog
+    ) -> None:
+        other = tree / "more" / "res" / "tables"
+        other.mkdir(parents=True)
+        (other / "two.py").write_text("pass\n")
+        with caplog.at_level("WARNING"):
+            self._scan(tree, grepable=[self.TABLES], ignored_dirs=["tables"]).discover(
+                tree
+            )
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+
+    def test_an_ignored_name_elsewhere_says_nothing(self, tree: Path, caplog) -> None:
+        (tree / "build").mkdir()
+        with caplog.at_level("WARNING"):
+            self._scan(tree, grepable=[self.TABLES], ignored_dirs=["build"]).discover(
+                tree
+            )
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_second_walk_reports_again(self, tree: Path, caplog) -> None:
+        """Each refresh is read on its own, so each says what hides a path."""
+        scan = self._scan(tree, grepable=[self.TABLES], ignored_dirs=["tables"])
+        scan.discover(tree)
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            scan.discover(tree)
+        assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 1
+
+    def test_an_invalid_expression_names_the_option(self) -> None:
+        with pytest.raises(ValueError, match="'grepable'"):
+            Scan(parsers=[FakeParser()], grepable=["(unclosed"])

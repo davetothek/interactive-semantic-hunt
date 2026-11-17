@@ -35,6 +35,7 @@ from ish.adapters.vector_store._catalog import IndexCatalog, IndexEntry
 from ish.application.categories import DOC, Categorizer, compile_categories
 from ish.application.filters import Filters
 from ish.application.filters import build_result_filter as make_result_filter
+from ish.application.grepable import listing, parse_grepable
 from ish.application.index import Index
 from ish.application.languages import LanguageResolver, resolve_with
 from ish.application.ports.chunk_source import ChunkSource
@@ -357,6 +358,7 @@ def build_prompts(settings: Settings) -> Prompts:
         directory,
         answer_notes=settings.answer_notes,
         rerank_notes=settings.rerank_notes,
+        grepable=listing(parse_grepable(settings.grepable)),
         searches_a_turn=settings.ask_searches,
     )
 
@@ -871,6 +873,7 @@ def build_scan(
         exclude=settings.exclude,
         ignored_by=build_ignored_by(settings, root, checkout),
         unignore=settings.unignore,
+        grepable=[entry.path for entry in parse_grepable(settings.grepable)],
         root=root,
         anchor=checkout,
     )

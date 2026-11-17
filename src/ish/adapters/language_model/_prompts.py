@@ -6,8 +6,9 @@ answer with native citations, ``step.md`` for a turn that may ask for
 searches, ``select.md`` for a rerank, ``query.md`` for the search query
 of a question in a chat, ``check.md`` for the check of the claims of an
 answer, ``tools.md``, which an answer that may read the files of the
-tree adds to its instruction, and ``brief.md``, which a brief
-answer adds to the instruction that writes it. A directory that an operator
+tree adds to its instruction, ``grepable.md``, which follows ``tools.md``
+when a tree names files that the index leaves out, and ``brief.md``, which
+a brief answer adds to the instruction that writes it. A directory that an operator
 names holds files of the same names, and each one it holds replaces the
 default. A file it does not hold keeps the default.
 
@@ -51,6 +52,7 @@ NAMES = (
     "query",
     "check",
     "tools",
+    "grepable",
     "brief",
 )
 
@@ -77,6 +79,7 @@ class Prompts:
     query: str = ""
     check: str = ""
     tools: str = ""
+    grepable: str = ""
     brief: str = ""
 
     def briefly(self) -> "Prompts":
@@ -98,6 +101,7 @@ def load(
     *,
     answer_notes: str = "",
     rerank_notes: str = "",
+    grepable: str = "",
     **values: int | str,
 ) -> Prompts:
     """Read the instructions, from *directory* where it holds a file.
@@ -105,7 +109,10 @@ def load(
     Fill each ``$name`` from *values*, a number as a word, and
     ``$answer`` in ``step.md`` with the answer instruction. Add
     *answer_notes* after each instruction that writes an answer, and
-    *rerank_notes* after the rerank instruction. Raise
+    *rerank_notes* after the rerank instruction. With *grepable*, the
+    lines that name the files the index leaves out, fill ``grepable.md``
+    and add it after ``tools.md``, because only a model that reads the
+    tree can grep them. Raise
     ``LanguageModelError`` that names the file for a value no code
     fills, or for a directory that does not exist.
     """
@@ -117,6 +124,7 @@ def load(
         "searches_a_turn": SEARCHES_A_TURN,
         "min_quote_words": MIN_QUOTE_WORDS,
         "min_named_quote_words": MIN_NAMED_QUOTE_WORDS,
+        "grepable": grepable,
         **values,
     }
     words = {k: _word(v) for k, v in filled.items()}
@@ -131,6 +139,8 @@ def load(
         ("select", rerank_notes),
     ):
         texts[name] = _noted(texts[name], notes)
+    if grepable.strip():
+        texts["tools"] = f"{texts['tools']}\n\n{texts['grepable']}"
     # Fill the step once, with the answer as one more value: a value is
     # never read again, so a dollar sign in the answer stays as written.
     texts["step"] = _fill(

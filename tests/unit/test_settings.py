@@ -681,3 +681,77 @@ class TestTheLdapPasswordIsNoOption:
             "",
             "",
         )
+
+
+class TestGrepable:
+    """A grepable entry is a table in a file and one string elsewhere."""
+
+    def test_a_table_in_a_file(self, tmp_path) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            "[[grepable]]\n"
+            "path = '(?:^|/)gen/tables(?:/|$)'\n"
+            'holds = "one table per item: fields, bits, reset value"\n',
+        )
+        assert load_settings(start=tmp_path, environ={}).grepable == (
+            "(?:^|/)gen/tables(?:/|$)=one table per item: fields, bits, reset value",
+        )
+
+    def test_a_table_may_name_only_a_path(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[[grepable]]\npath = '/gen/'\n")
+        assert load_settings(start=tmp_path, environ={}).grepable == ("/gen/",)
+
+    def test_an_empty_path_stays_empty(self, tmp_path) -> None:
+        """What a path holds must never become the path."""
+        _write(tmp_path / CONFIG_FILENAME, "[[grepable]]\npath = ''\nholds = 'x'\n")
+        assert load_settings(start=tmp_path, environ={}).grepable == ("=x",)
+
+    def test_a_table_under_tool_ish(self, tmp_path) -> None:
+        _write(
+            tmp_path / CONFIG_FILENAME,
+            "[[tool.ish.grepable]]\npath = '/gen/'\nholds = 'tables'\n",
+        )
+        assert load_settings(start=tmp_path, environ={}).grepable == ("/gen/=tables",)
+
+    def test_a_string_in_a_file(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "grepable = ['/gen/=tables, one a row']\n")
+        assert load_settings(start=tmp_path, environ={}).grepable == (
+            "/gen/=tables, one a row",
+        )
+
+    def test_the_environment_gives_one_entry_a_line(self, tmp_path) -> None:
+        """What a path holds is prose, and prose has commas."""
+        settings = load_settings(
+            start=tmp_path, environ={"ISH_GREPABLE": "/gen/=a, b\n/fix/=c"}
+        )
+        assert settings.grepable == ("/gen/=a, b", "/fix/=c")
+
+    def test_the_command_line_gives_one_entry_a_value(self, tmp_path) -> None:
+        args = build_parser().parse_args(["q", "--grepable", "/gen/=a, b", "/fix/"])
+        settings = load_settings(
+            {"grepable": args.grepable}, start=tmp_path, environ={}
+        )
+        assert settings.grepable == ("/gen/=a, b", "/fix/")
+
+    def test_a_table_with_no_path_is_reported(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[[grepable]]\nholds = 'tables'\n")
+        with pytest.raises(ConfigError, match="grepable.*'path'"):
+            load_settings(start=tmp_path, environ={})
+
+    def test_a_table_with_an_unknown_key_is_reported(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[[grepable]]\npath = '/gen/'\nheld = 'x'\n")
+        with pytest.raises(ConfigError, match="grepable.*'held'"):
+            load_settings(start=tmp_path, environ={})
+
+    def test_a_path_with_the_separator_is_reported(self, tmp_path) -> None:
+        """The string form ends the path at the first equals sign."""
+        _write(
+            tmp_path / CONFIG_FILENAME, "[[grepable]]\npath = '(?=gen)'\nholds = 'x'\n"
+        )
+        with pytest.raises(ConfigError, match="grepable.*'='"):
+            load_settings(start=tmp_path, environ={})
+
+    def test_a_table_for_another_list_is_reported(self, tmp_path) -> None:
+        _write(tmp_path / CONFIG_FILENAME, "[[ignore]]\npath = 'x'\n")
+        with pytest.raises(ConfigError, match="ignore"):
+            load_settings(start=tmp_path, environ={})

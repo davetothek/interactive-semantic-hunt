@@ -22,6 +22,7 @@ from typing import Any
 from ish import bootstrap
 from ish.application.answer import Answer
 from ish.application.categories import TYPES
+from ish.application.grepable import listing, parse_grepable
 from ish.application.progress import Progress
 from ish.domain.chunk import Chunk
 from ish.interfaces import heartbeat
@@ -74,6 +75,29 @@ conclusion finds text that looks like the conclusion.
 - Mark each statement that you infer, and do not read in a source, as an \
 inference.
 """
+
+# What a host gives its model when a tree names files that the index
+# leaves out. A search never returns them, so an agent that is not told
+# greps them only by chance.
+GREPABLE_INSTRUCTIONS = """\
+Some files of the tree are not in the index, so a search never returns \
+them. Grep and read them when a question needs what they hold. Each line \
+names such files with a regular expression that matches their path, and \
+says what they hold, as the operator of the tree describes them:
+"""
+
+
+def agent_instructions(settings: Settings, *, over_http: bool = False) -> str:
+    """Return what a host gives its model before the first call.
+
+    Name the files that the index leaves out, except over HTTP, where the
+    client is on another machine and has no file of the tree to grep.
+    """
+    entries = listing(parse_grepable(settings.grepable))
+    if over_http or not entries:
+        return AGENT_INSTRUCTIONS
+    return f"{AGENT_INSTRUCTIONS}\n{GREPABLE_INSTRUCTIONS}\n{entries}"
+
 
 # How a search that found nothing begins its answer. A client that
 # prints results as lines reads this as prose, not as a result.
@@ -460,6 +484,13 @@ class IshTools:
 
         languages: Any = status["languages"]
         breakdown = ", ".join(f"{n} {lang}" for lang, n in languages.items())
+        entries: Any = status["grepable"]
+        grepable = "".join(
+            f"  grepable : {e['path']}"
+            + (f" holds {e['holds']}" if e["holds"] else "")
+            + "\n"
+            for e in entries
+        )
 
         doing = self._progress.get(root) if kept is None else kept.refreshing
         keeper = (
@@ -475,6 +506,7 @@ class IshTools:
             f"  files    : {status['files']} with chunks, "
             f"{status['empty_files']} with none\n"
             f"  languages: {breakdown or 'none'}\n"
+            f"{grepable}"
             f"  embedder : {self._settings.embedder}\n"
             f"  file     : {bootstrap.catalog(self._settings).path_for(root)}"
         )
@@ -1021,7 +1053,7 @@ def main(argv: list[str] | None = None, prog: str = "ish-mcp") -> int:
         SERVER_NAME,
         installed_version(),
         tools.tools(over_http=bool(args.http)),
-        AGENT_INSTRUCTIONS,
+        agent_instructions(settings, over_http=bool(args.http)),
     )
     try:
         tools.warm_reader()

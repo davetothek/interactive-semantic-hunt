@@ -425,6 +425,7 @@ builds a language model and sends no text anywhere.
 | `--exclude REGEX ...` | Never index paths matching these patterns |
 | `--git`, `--no-git` | Skip files git ignores (default: on) |
 | `--unignore REGEX ...` | Index these paths although git ignores them, anchored at the tree root |
+| `--grepable REGEX=HOLDS ...` | Keep these paths out of the index, and tell the answering model and an agent what they hold, so each can grep them |
 | `--lang LANG ...` | Show results only from these languages |
 | `--under REGEX` | Show results only from matching paths |
 | `--type TYPE ...` | Show results only of these kinds: `code`, `doc`, `test`, `config` |

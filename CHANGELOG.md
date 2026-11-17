@@ -8,6 +8,16 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `grepable` names files that the index leaves out, with what they hold,
+  as a `[[grepable]]` table of `path` and `holds`. A search never returns
+  such a file, so the model did not know that it exists. An answer that
+  reads the tree and the `instructions` of the MCP server over stdio now
+  list each entry, so the model can grep the files. `index_status` lists
+  them too. A walk warns when an `ignore` name or an `exclude` pattern
+  also covers a grepable directory.
+
 ### Changed
 
 - `ish --forget PATH` removes the index of every tree at or under

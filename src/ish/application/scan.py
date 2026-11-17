@@ -46,6 +46,7 @@ class Scan:
         exclude: Sequence[str] = (),
         ignored_by: Callable[[Path], bool] | None = None,
         unignore: Sequence[str] = (),
+        grepable: Sequence[str] = (),
         root: Path | None = None,
         anchor: Path | None = None,
     ) -> None:
@@ -65,6 +66,11 @@ class Scan:
         # system, is the usual case, and turning the whole predicate
         # off for it exposed 1.9 GB of build output and caches.
         self._unignore = _compile(unignore, "unignore")
+        # Paths that stay out of the index for a model to grep. They are
+        # judged as an exclude pattern is. The walk reports each one that
+        # an ignored name or an exclude pattern also covers.
+        self._grepable = _compile(grepable, "grepable")
+        self._hidden: dict[str, tuple[str, str]] = {}
         # A predicate supplied by the caller, so the application never
         # learns how a version control system is asked.
         self._ignored_by = ignored_by
@@ -147,6 +153,8 @@ class Scan:
         # "^/vendor/" at the top.
         if any(p.search(self._judged(path)) for p in self._exclude):
             return False
+        if any(p.search(self._judged(path)) for p in self._grepable):
+            return False
         if self._ignored_by is None or not self._ignored_by(path):
             return True
         inside = self._relative(path)
@@ -217,7 +225,9 @@ class Scan:
             return [root] if self.accepts(root) else []
 
         result: list[Path] = []
+        self._hidden = {}
         self._walk(root, result)
+        self._report_hidden()
         result.sort()
         return result
 
@@ -234,15 +244,19 @@ class Scan:
             if entry.is_dir():
                 if entry.is_symlink():
                     log.debug("Skip directory symlink %s", entry)
-                elif entry.name in self._ignored_dirs or self._excludes_dir(entry):
-                    continue
+                elif entry.name in self._ignored_dirs:
+                    self._note_hidden(entry, "ignore", entry.name)
+                elif pattern := self._excluding(entry):
+                    self._note_hidden(entry, "exclude", pattern)
+                elif self._is_grepable_dir(entry):
+                    log.debug("Skip grepable directory %s", entry)
                 else:
                     self._walk(entry, result)
             elif entry.is_file() and self.accepts(entry):
                 result.append(entry)
 
-    def _excludes_dir(self, directory: Path) -> bool:
-        """Return True when an exclude pattern rejects the whole directory.
+    def _excluding(self, directory: Path) -> str:
+        """Return the exclude pattern that rejects the whole directory, or "".
 
         Test the path with a trailing slash, the way it opens every path
         beneath it. A walk that visited what it was going to throw away
@@ -250,7 +264,42 @@ class Scan:
         one excluded directory.
         """
         text = self._judged(directory) + "/"
-        if any(p.search(text) for p in self._exclude):
-            log.debug("Skip excluded directory %s", directory)
-            return True
-        return False
+        for p in self._exclude:
+            if p.search(text):
+                log.debug("Skip excluded directory %s", directory)
+                return p.pattern
+        return ""
+
+    def _is_grepable_dir(self, directory: Path) -> bool:
+        """Return True when a grepable entry names the whole directory."""
+        text = self._judged(directory) + "/"
+        return any(p.search(text) for p in self._grepable)
+
+    def _note_hidden(self, directory: Path, option: str, value: str) -> None:
+        """Keep each grepable entry that *option* hides at *directory*.
+
+        Only a pattern that names the directory itself is seen. A pattern
+        for files deeper in it is not, because the walk stops here.
+        """
+        text = self._judged(directory) + "/"
+        for p in self._grepable:
+            if p.search(text):
+                self._hidden.setdefault(p.pattern, (option, value))
+
+    def _report_hidden(self) -> None:
+        """Warn once for each grepable entry that an ignore or exclude hides.
+
+        A grepable entry keeps its files out of the index by itself. An
+        ignore or exclude entry that also covers them is not necessary,
+        and a grep that obeys the filters of ish cannot reach them.
+        """
+        for pattern, (option, value) in self._hidden.items():
+            log.warning(
+                "The %r option entry %r hides the grepable path %r. "
+                "Remove it from %r. A grepable path stays out of the index "
+                "without it.",
+                option,
+                value,
+                pattern,
+                option,
+            )

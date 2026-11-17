@@ -34,6 +34,20 @@ def test_build_scan_wires_the_use_case(tmp_path) -> None:
     assert isinstance(bootstrap.build_scan(Settings(), tmp_path), Scan)
 
 
+class TestGrepableWiring:
+    def test_the_scan_leaves_a_grepable_path_out(self, tmp_path) -> None:
+        (tmp_path / "gen").mkdir()
+        (tmp_path / "gen" / "table.py").write_text("x = 1\n")
+        (tmp_path / "app.py").write_text("x = 1\n")
+        settings = Settings(grepable=("/gen/=tables",), git=False)
+        found = bootstrap.build_scan(settings, tmp_path).discover(tmp_path)
+        assert [p.name for p in found] == ["app.py"]
+
+    def test_an_entry_with_no_path_is_refused(self, tmp_path) -> None:
+        with pytest.raises(ValueError, match="'grepable'.*no path"):
+            bootstrap.build_scan(Settings(grepable=("=tables",)), tmp_path)
+
+
 def test_unknown_embedder_is_reported() -> None:
     from dataclasses import replace
 

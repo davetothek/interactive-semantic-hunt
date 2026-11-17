@@ -159,6 +159,27 @@ class TestIndexStatus:
         out = tools.index_status({"path": str(project)})
         assert "files    : 1 with chunks, 1 with none" in out
 
+    def test_the_status_lists_the_grepable_paths(
+        self, project: Path, stub_backend, tmp_path_factory
+    ) -> None:
+        settings = Settings(
+            no_cache=True,
+            cache_dir=str(tmp_path_factory.mktemp("idx")),
+            grepable=("/gen/=one table per item", "/fix/"),
+        )
+        made = IshTools(settings, project)
+        try:
+            out = made.index_status({"path": str(project)})
+        finally:
+            made.close()
+        assert "  grepable : /gen/ holds one table per item\n" in out
+        assert "  grepable : /fix/\n" in out
+
+    def test_the_status_names_no_grepable_path_when_there_is_none(
+        self, tools: IshTools, stub_backend, project: Path
+    ) -> None:
+        assert "grepable" not in tools.index_status({"path": str(project)})
+
     def test_the_status_reads_and_does_not_build(
         self, tools: IshTools, stub_backend, project: Path
     ) -> None:
@@ -322,6 +343,30 @@ class TestEntryPoint:
 
         reply = json.loads(out.getvalue().splitlines()[0])
         assert reply["result"]["instructions"] == AGENT_INSTRUCTIONS
+
+    def test_the_handshake_names_the_grepable_paths(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """An agent learns which files a search never returns, and greps them."""
+        import io
+        import json
+        import sys
+
+        (tmp_path / ".ish").mkdir()
+        (tmp_path / ".ish" / "config.toml").write_text(
+            "[[grepable]]\npath = '/gen/'\nholds = 'one table per item'\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        out = io.StringIO()
+        hello = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(hello) + "\n"))
+        monkeypatch.setattr(sys, "stdout", out)
+        main([])
+
+        said = json.loads(out.getvalue().splitlines()[0])["result"]["instructions"]
+        assert said.startswith(AGENT_INSTRUCTIONS)
+        assert said.endswith("- `/gen/` holds one table per item")
+        assert "grep" in said.removeprefix(AGENT_INSTRUCTIONS).lower()
 
     def test_protocol_goes_to_stdout_only(self, monkeypatch, tmp_path: Path) -> None:
         """Log output on stdout would corrupt the transport."""
@@ -1169,6 +1214,14 @@ class TestSources:
         monkeypatch.setattr(bootstrap, "build_language_model", refuse)
         monkeypatch.setattr(bootstrap, "build_reranker", refuse)
         assert self._sources(tools, query="config")["sources"]
+
+    def test_a_server_over_http_names_no_grepable_path(self) -> None:
+        """A client on another machine has no files of the tree to grep."""
+        from ish.interfaces.mcp.server import agent_instructions
+
+        settings = Settings(grepable=("/gen/=tables",))
+        assert agent_instructions(settings, over_http=True) == AGENT_INSTRUCTIONS
+        assert agent_instructions(settings) != AGENT_INSTRUCTIONS
 
     def test_only_a_server_over_http_offers_the_tool(self, tools: IshTools) -> None:
         local = [t.name for t in tools.tools()]
