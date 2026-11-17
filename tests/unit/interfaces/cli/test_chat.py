@@ -327,6 +327,28 @@ class TestColor:
         assert "\x1b[90mdocs/boot.md:1-3\x1b[0m" in sources
         assert "](" not in out
 
+    def test_a_rendered_reply_takes_the_theme_of_the_settings(
+        self, monkeypatch, capsys
+    ) -> None:
+        drawn: list[str] = []
+
+        def fake(text: str, **kwargs: object) -> str:
+            drawn.append(str(kwargs["theme"]))
+            return text
+
+        monkeypatch.setattr("ish.interfaces.cli.chat.rendered", fake)
+        session = Session()
+        session.settings = Settings(render_theme="accent")
+        converse(
+            session,
+            brief=True,
+            report=lambda t, s: None,
+            read_line=_lines("why"),
+            render=True,
+            terminal=False,
+        )
+        assert drawn == ["accent"]
+
     def test_a_rendered_reply_with_no_color_keeps_the_layout(self, capsys) -> None:
         converse(
             Session(),

@@ -62,6 +62,7 @@ OPTIONS = (
     "format",
     "color",
     "render",
+    "render_theme",
     "verbosity",
     "language_model",
     "answer_model",

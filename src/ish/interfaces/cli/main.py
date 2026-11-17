@@ -157,7 +157,7 @@ def streamed(
 
         def render(text: str) -> str:
             width = min(shutil.get_terminal_size().columns, MAX_WIDTH)
-            return rendered(text, width=width, color=color)
+            return rendered(text, width=width, color=color, theme=settings.render_theme)
 
     return StreamedAnswer(question, link, write=ticker.above, render=render)
 
@@ -178,6 +178,7 @@ def show_answer(settings: Settings, answer: str, usage: str, *, brief: bool) -> 
             answer,
             width=min(shutil.get_terminal_size().columns, MAX_WIDTH),
             color=resolve_color(settings.color, sys.stdout),
+            theme=settings.render_theme,
         )
     sys.stdout.write(f"{answer}\n")
     sys.stdout.flush()

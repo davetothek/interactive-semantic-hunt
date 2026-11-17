@@ -8,6 +8,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `render_theme`, or `--render-theme NAME`, sets the styles of a
+  rendered answer: `quiet`, `accent`, `glow`, or `rich`. The default is
+  `quiet`, with bold headings, dim lines and bullets, and no magenta.
+  `rich` keeps the styles of Rich, which a rendered answer used before.
+
 ## 0.12.0 - 2026-11-17
 
 ### Added

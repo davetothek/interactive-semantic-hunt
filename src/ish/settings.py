@@ -338,6 +338,14 @@ class Settings:
             action="boolean_optional",
         ),
     )
+    render_theme: str = field(
+        default="quiet",
+        metadata=_opt(
+            OUTPUT,
+            "Theme of a rendered answer: quiet, accent, glow, or rich.",
+            metavar="NAME",
+        ),
+    )
     verbosity: int = field(
         default=0,
         metadata=_opt(

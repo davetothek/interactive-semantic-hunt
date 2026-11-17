@@ -158,6 +158,20 @@ class TestAsk:
         assert " 1 boot.md:1-3" in out and "(file://" in out
         assert "#" not in out.replace("#L1-3", "") and "[^1]" not in out
 
+    def test_render_theme_draws_the_answer_in_the_named_theme(
+        self, project: Path, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setenv("TERM", "xterm-256color")
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
+        args = ["--ask", "what does the watchdog do", str(project), *FLAGS]
+        shown = {}
+        for name in ("quiet", "rich"):
+            _model(monkeypatch, FakeModel())
+            main([*args, "--render", "--color", "always", "--render-theme", name])
+            shown[name] = capsys.readouterr().out
+        assert shown["quiet"] != shown["rich"]
+
     def test_render_keeps_to_a_width_that_reads_well(
         self, project: Path, monkeypatch, capsys
     ) -> None:

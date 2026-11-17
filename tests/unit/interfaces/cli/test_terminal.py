@@ -9,7 +9,7 @@ import pytest
 
 from ish.application.answer import Answer, AnswerBlock, AnswerPart, AnswerRow
 from ish.domain.chunk import Chunk
-from ish.interfaces.cli.terminal import GREY, grey, rendered
+from ish.interfaces.cli.terminal import GREY, THEMES, grey, rendered
 from ish.interfaces.format import format_answer
 
 SOURCE = Chunk(
@@ -166,6 +166,52 @@ class TestGreySources:
     def test_with_no_color_it_is_the_plain_rendering(self) -> None:
         plain = rendered(_covered(), width=80, color=False)
         assert "\n".join(self._lines(color=False)) == plain
+
+
+class TestThemes:
+    """The settings name the theme of a rendered answer."""
+
+    TEXT = "## Watchdog\n\nIt uses `AEMODE`.\n\n```c\nwdt_kick();\n```"
+
+    def test_the_default_is_quiet(self) -> None:
+        assert rendered(self.TEXT, width=80, color=True) == rendered(
+            self.TEXT, width=80, color=True, theme="quiet"
+        )
+
+    def test_quiet_draws_a_heading_in_bold_with_no_color(self) -> None:
+        heading = rendered(self.TEXT, width=80, color=True).split("\n")[0]
+        assert f"{ESCAPE}[1m" in heading and ";35m" not in heading
+
+    def test_rich_draws_a_heading_in_the_colors_of_rich(self) -> None:
+        heading = rendered(self.TEXT, width=80, color=True, theme="rich")
+        assert f"{ESCAPE}[4;35m" in heading.split("\n")[0]
+
+    @pytest.mark.parametrize("name", sorted(THEMES))
+    def test_each_theme_keeps_the_layout(self, name: str) -> None:
+        def shown(text: str) -> str:
+            return re.sub(r"\033\[[0-9;]*m|\033\]8;[^\033]*\033\\", "", text)
+
+        out = rendered(_covered(), width=80, color=True, theme=name)
+        assert shown(out) == shown(rendered(_covered(), width=80, color=True))
+
+    def test_glow_paints_a_code_block_on_a_dark_ground(self) -> None:
+        glow = rendered(self.TEXT, width=80, color=True, theme="glow")
+        quiet = rendered(self.TEXT, width=80, color=True)
+        assert ";48;" in glow and ";48;" not in quiet
+
+    def test_an_unknown_name_is_reported_once_and_draws_the_default(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        out = [
+            rendered(self.TEXT, width=80, color=True, theme="no-such-theme")
+            for _ in range(2)
+        ]
+        assert out == [rendered(self.TEXT, width=80, color=True)] * 2
+        warnings = [r.getMessage() for r in caplog.records]
+        assert warnings == [
+            "There is no render theme named no-such-theme. "
+            "Use one of: quiet, accent, glow, rich"
+        ]
 
 
 class TestGrey:
