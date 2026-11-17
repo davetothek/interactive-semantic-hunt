@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.11.0 - 2026-11-17
+
 ### Added
 
 - `--format text` prints the start of each chunk under its result line, at
