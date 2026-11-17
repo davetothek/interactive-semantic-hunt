@@ -57,6 +57,8 @@ class Runner:
         self.error: Exception | None = None
         # The replies of the next calls, one each, before stdout.
         self.replies: list[str] = []
+        # Events a streamed call writes before its reply.
+        self.events: list[dict] = []
 
     def __call__(self, args, **kwargs):
         if self.replies:
@@ -71,10 +73,43 @@ class Runner:
         )
 
 
+class Streamed:
+    """A claude that streams the next reply of a Runner, as a resumed call reads it."""
+
+    def __init__(self, runner: Runner) -> None:
+        self.runner = runner
+
+    def __call__(self, args, **kwargs):
+        import io
+
+        runner = self.runner
+        if runner.replies:
+            runner.stdout = runner.replies.pop(0)
+        events = [*runner.events, json.loads(runner.stdout) | {"type": "result"}]
+        call = {"args": args, **kwargs, "input": ""}
+        runner.calls.append(call)
+        process = type("Process", (), {})()
+        process.stdin = io.StringIO()
+        close = process.stdin.close
+
+        def closed() -> None:
+            call["input"] = process.stdin.getvalue()
+            close()
+
+        process.stdin.close = closed
+        process.stdout = iter(json.dumps(e) + "\n" for e in events)
+        process.returncode = 0
+        process.wait = lambda: 0
+        process.poll = lambda: 0
+        process.kill = lambda: None
+        return process
+
+
 @pytest.fixture()
 def runner(monkeypatch) -> Runner:
     made = Runner()
     monkeypatch.setattr(claude_cli.subprocess, "run", made)
+    monkeypatch.setattr(claude_cli.subprocess, "Popen", Streamed(made))
     monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
     return made
 
@@ -1052,3 +1087,44 @@ class TestAResumedCallCostsItsOwnPart:
         last = json.loads(sorted((tmp_path / "trace").iterdir())[-1].read_text())
         assert last["cost_usd"] == pytest.approx(0.0451)
         assert last["session_cost_usd"] == 0.0652
+
+
+class TestACompactedSessionGetsItsSourcesAgain:
+    """After a compaction a session holds a summary, not the sources it was sent.
+
+    Sent only what was new, a later call would answer from the summary of
+    an old source, whose words the model no longer sees.
+    """
+
+    def test_the_sources_go_again_after_a_compaction(
+        self, runner, tmp_path, monkeypatch, caplog
+    ) -> None:
+        caplog.set_level("INFO", logger=claude_cli.__name__)
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+        _sessions(runner, "s1", "s1", "s1")
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        options = CallOptions(resume=True, trace=tmp_path / "trace")
+        model = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tree, options=options)
+        model.step("How?", [FIRST], [], 2, conversation="c")
+        runner.events = [
+            {"type": "system", "subtype": "status", "status": "compacting"},
+            {"type": "system", "subtype": "status", "compact_result": "success"},
+        ]
+        model.step("How?", [FIRST, SECOND], [], 1, conversation="c")
+        runner.events = []
+        model.step("How?", [FIRST, SECOND], [], 0, conversation="c")
+        assert "It starts at boot." not in runner.calls[1]["input"]
+        # claude compacts before it sends the message of a call. The
+        # summary took the place of FIRST, and SECOND came after it.
+        third = runner.calls[2]["input"]
+        assert "It starts at boot." in third and "A reset clears it." not in third
+        assert "compacted the session" in caplog.text
+        records = [
+            json.loads(p.read_text()) for p in sorted((tmp_path / "trace").iterdir())
+        ]
+        assert [r["compacted"] for r in records] == [False, True, False]
+
+    def test_a_failed_compaction_keeps_what_the_session_holds(self) -> None:
+        failed = {"type": "system", "subtype": "status", "compact_result": "failed"}
+        assert claude_cli._compacted(failed) is False

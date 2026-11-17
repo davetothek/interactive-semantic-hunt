@@ -35,6 +35,7 @@ from ish.adapters.language_model._calls import (
 from ish.adapters.language_model._prompts import Prompts
 from ish.adapters.language_model._prompts import load as load_prompts
 from ish.application.ports.language_model import (
+    Block,
     Claim,
     LanguageModelError,
     OnBlock,
@@ -363,6 +364,9 @@ class ClaudeCliLanguageModel:
         self._session_usd = 0.0
         self._conversations: dict[str, Conversation] = {}
         self._home: str | None = None
+        # True when claude compacted the session of the last call, which
+        # then holds a summary in place of the sources it was sent.
+        self._compacted = False
         self._lock = threading.Lock()
         atexit.register(self.forget)
 
@@ -392,7 +396,7 @@ class ClaudeCliLanguageModel:
             session=session,
             spent_usd=spent,
         )
-        self._keep(conversation, "answer", sources)
+        self._keep(conversation, "answer", told)
         reply = _grounded.parse(
             json.dumps(structured),
             f"claude {self.model_name}",
@@ -430,7 +434,7 @@ class ClaudeCliLanguageModel:
             session=session,
             spent_usd=spent,
         )
-        self._keep(conversation, "step", sources)
+        self._keep(conversation, "step", told)
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
         )
@@ -469,20 +473,25 @@ class ClaudeCliLanguageModel:
             return True, "", 0.0
         return False, earlier.session, earlier.spent_usd
 
-    def _keep(self, conversation: str, kind: str, sources: Sequence[Source]) -> None:
+    def _keep(self, conversation: str, kind: str, told: Sequence[Source]) -> None:
         """Keep the session of the last call as the state of *conversation*.
 
-        Add *sources* to what a resumed session holds. Delete a session
-        that a new one takes the place of, and the oldest conversations
-        past ``MAX_CONVERSATIONS``.
+        The session holds what it held before and the sources *told*, the
+        ones the call sent. A compaction leaves a summary of what it held
+        before, so it then holds *told* alone. Delete a session that a new
+        one takes the place of, and the oldest conversations past
+        ``MAX_CONVERSATIONS``.
         """
         if not (self._options.resume and conversation):
             return
-        sent = {s.id: (s.title, s.text) for s in sources}
+        sent = {s.id: (s.title, s.text) for s in told}
         with self._lock:
             before = self._conversations.pop(conversation, None)
             same = before is not None and before.session == self._session
-            held = {**before.sources, **sent} if before and same else sent
+            whole = before is not None and same and not self._compacted
+            held = {**before.sources, **sent} if whole and before else sent
+            if self._compacted:
+                log.info("claude compacted the session, so ish sends its sources again")
             self._conversations[conversation] = Conversation(
                 self._session, kind, held, self._session_usd
             )
@@ -604,16 +613,19 @@ class ClaudeCliLanguageModel:
         if tools:
             system = f"{system}\n\n{self._prompts.tools}"
         started = time.perf_counter()
+        self._compacted = False
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
             kept = persist or bool(session)
             cwd = str(self._tree) if tools else (self._home_dir() if kept else empty)
-            if on_block is None:
+            # claude says that it compacted a session only in its stream,
+            # so a call that resumes one streams with no reader too.
+            if on_block is None and not session:
                 args = self._command(
                     kind, system, schema, tools=tools, persist=persist, session=session
                 )
                 body = self._whole(args, prompt, cwd)
             else:
-                stream = _grounded.BlockStream(on_block)
+                stream = _grounded.BlockStream(on_block or _unread)
                 args = self._command(
                     kind,
                     system,
@@ -644,6 +656,7 @@ class ClaudeCliLanguageModel:
                     "fallback_model": self._options.fallback_model,
                     "resumed": session,
                     "autocompact": self._options.autocompact,
+                    "compacted": self._compacted,
                     "system": system,
                     "schema": schema,
                     "prompt": prompt,
@@ -749,6 +762,8 @@ class ClaudeCliLanguageModel:
                 process.stdin.close()
                 for line in process.stdout:
                     event = _event(line)
+                    if _compacted(event):
+                        self._compacted = True
                     if event.get("type") == "result":
                         body = event
                     elif piece := _structured_piece(event):
@@ -799,3 +814,16 @@ def _structured_piece(event: dict) -> str:
     if delta.get("type") != "input_json_delta":
         return ""
     return str(delta.get("partial_json") or "")
+
+
+def _unread(block: Block) -> None:
+    """Take a block of a stream that no one reads."""
+
+
+def _compacted(event: dict) -> bool:
+    """Return True for the event of a stream that says claude compacted the session."""
+    return (
+        event.get("type") == "system"
+        and event.get("subtype") == "status"
+        and event.get("compact_result") == "success"
+    )
