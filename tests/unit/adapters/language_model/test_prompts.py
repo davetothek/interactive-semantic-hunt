@@ -119,6 +119,44 @@ class TestNotes:
         assert built == load(answer_notes="A.", rerank_notes="R.")
 
 
+class TestGrepable:
+    """Only a model that can grep reads which files the index leaves out."""
+
+    ENTRIES = "- `/gen/` holds tables"
+
+    def test_the_entries_follow_the_tools_instruction(self) -> None:
+        loaded = load(grepable=self.ENTRIES)
+        assert loaded.tools.startswith(load().tools)
+        assert loaded.tools.endswith(self.ENTRIES)
+        assert "grep" in loaded.tools.removeprefix(load().tools)
+
+    def test_no_entries_leave_the_tools_instruction_as_it_is(self) -> None:
+        assert load(grepable="").tools == load().tools
+
+    def test_no_other_instruction_names_them(self) -> None:
+        loaded, plain = load(grepable=self.ENTRIES), load()
+        for name in NAMES:
+            if name not in {"tools", "grepable"}:
+                assert getattr(loaded, name) == getattr(plain, name), name
+
+    def test_each_entry_keeps_its_own_line(self) -> None:
+        entries = "- `/gen/` holds tables\n- `(?:^|/)fix$`"
+        assert load(grepable=entries).tools.endswith(entries)
+
+    def test_an_own_file_replaces_the_shipped_one(self, tmp_path: Path) -> None:
+        (tmp_path / "grepable.md").write_text("Grep these:\n\n$grepable\n")
+        loaded = load(tmp_path, grepable=self.ENTRIES)
+        assert loaded.tools.endswith(f"Grep these:\n\n{self.ENTRIES}")
+
+    def test_bootstrap_hands_the_entries_on(self) -> None:
+        from ish import bootstrap
+        from ish.settings import Settings
+
+        settings = Settings(grepable=("/gen/=tables", "/fix/"))
+        built = bootstrap.build_prompts(settings)
+        assert built == load(grepable="- `/gen/` holds tables\n- `/fix/`")
+
+
 class TestInjection:
     def test_bootstrap_hands_the_backend_the_prompts_of_prompt_dir(
         self, tmp_path: Path, monkeypatch

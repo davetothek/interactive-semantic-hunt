@@ -89,6 +89,41 @@ ish "" . --no-cache --exclude '/generated/' | wc -l  # what the pattern leaves
 If most of a tree is generated, it is usually less work to exclude the
 directory than to name each suffix.
 
+## Leave tables out, and let the model grep them
+
+Some generated files hold facts that a question needs, such as one table
+for each item with its fields and values. Embedded, they crowd the top
+results of a question about the design. Excluded, a search never returns
+them, and a model does not know that they exist.
+
+Name such files in `grepable`, with what they hold:
+
+```toml
+[[grepable]]
+path = '(?:^|/)gen/tables(?:/|$)'
+holds = "one table per item: fields, bits, access, reset value"
+```
+
+- The index leaves the files out, as `exclude` does. `path` is judged the
+  way an `exclude` pattern is.
+- An answer that can read the tree gets the list after its instruction to
+  read, so the model can grep the files. An answer with no tools does not.
+- The MCP server lists the entries in the `instructions` of its handshake,
+  so an agent knows them. A server over HTTP does not, because its client
+  has no file of the tree to grep.
+- `index_status` and the `status()` of the Python API list the entries.
+- Do not also put the path in `ignore` or `exclude`. The grepable entry
+  keeps the files out of the index by itself. A walk that meets an ignored
+  name or an exclude pattern at a grepable directory warns once for each
+  entry.
+
+On the command line and in `ISH_GREPABLE`, write an entry as one string,
+`REGEX=WHAT THE FILES HOLD`. The first `=` ends the path, so a path in that
+form cannot hold one. The environment takes one entry on each line.
+
+The `holds` text reaches the model as a description, not as an
+instruction. Write what the files hold, not what the model must do.
+
 A file that slips past every pattern is caught by its size in chunks. A file
 that yields more than `max_chunks` of them, 1000 by default, is indexed as
 one chunk under its own name, and the run says so once. A file that large is

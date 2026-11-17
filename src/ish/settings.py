@@ -104,6 +104,8 @@ def _opt(
     *,
     scope: str = "index",
     flag: str | None = None,
+    table: tuple[str, ...] = (),
+    split: str = ",",
     **cli: Any,
 ):
     """Describe one option for both the CLI and the TOML file.
@@ -113,6 +115,11 @@ def _opt(
     what a search returns. An index-scope option must never be settable
     per call, because the next refresh would prune whatever it excluded.
 
+    A list option with *table* also takes, in a file, a table for each
+    item, with those keys. The first key is required. The item is the
+    values joined by ``=``, the one string the other sources give. *split*
+    divides the one string of the environment into items.
+
     Derive the long flag from the field name unless *flag* adds a short
     one. Every option reaches both interfaces — there is deliberately no
     way to declare one that only a config file accepts.
@@ -120,7 +127,15 @@ def _opt(
     Extra keywords describe how the command line accepts the option. The
     CLI interface interprets them; this module never imports a parser.
     """
-    return {"section": section, "help": help, "scope": scope, "flag": flag, "cli": cli}
+    return {
+        "section": section,
+        "help": help,
+        "scope": scope,
+        "flag": flag,
+        "table": table,
+        "split": split,
+        "cli": cli,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +254,20 @@ class Settings:
             "Anchored at the tree root, like include.",
             nargs="+",
             metavar="REGEX",
+        ),
+    )
+    grepable: tuple[str, ...] = field(
+        default=(),
+        metadata=_opt(
+            INDEXED,
+            "Keep paths matching these expressions out of the index, and tell "
+            "the answering model and an agent what they hold, so each can grep "
+            "them. Judged like exclude. A file takes a [[grepable]] table with "
+            "path and holds.",
+            table=("path", "holds"),
+            split="\n",
+            nargs="+",
+            metavar="REGEX=HOLDS",
         ),
     )
     context_tokens: int = field(
@@ -908,18 +937,26 @@ def query_scope_names() -> tuple[str, ...]:
     return tuple(f.name for f in fields(Settings) if f.metadata.get("scope") == "query")
 
 
-def _coerce(name: str, value: Any, default: Any) -> Any:
+def _coerce(
+    name: str,
+    value: Any,
+    default: Any,
+    *,
+    table: tuple[str, ...] = (),
+    split: str = ",",
+) -> Any:
     """Convert *value* to the type of the field default.
 
-    Raise ``ConfigError`` when the value cannot represent that type.
+    Take a list item that is a table only for an option with *table*
+    keys. Raise ``ConfigError`` when the value cannot represent that type.
     """
     try:
         if isinstance(default, tuple):
             if isinstance(value, str):
-                value = [part for part in value.split(",") if part]
+                value = [part for part in value.split(split) if part]
             if not isinstance(value, Sequence) or isinstance(value, str | bytes):
                 raise TypeError("expected a list of strings")
-            return tuple(str(item) for item in value)
+            return tuple(_item(item, table) for item in value)
         if isinstance(default, bool):
             if isinstance(value, str):
                 return value.strip().lower() in {"1", "true", "yes", "on"}
@@ -935,15 +972,46 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         ) from exc
 
 
+def _item(item: Any, table: tuple[str, ...]) -> str:
+    """Return one list item as a string, joining the values of a table.
+
+    Raise ``TypeError`` for a table that the option does not take, or
+    that lacks its first key, holds another key, or would not split
+    back into the same values.
+    """
+    if not isinstance(item, Mapping):
+        return str(item)
+    if not table:
+        raise TypeError("expected a list of strings, not a table")
+    unknown = sorted(set(item) - set(table))
+    if unknown:
+        raise TypeError(f"a table takes only {', '.join(table)}, not {unknown[0]!r}")
+    if table[0] not in item:
+        raise TypeError(f"a table needs {table[0]!r}")
+    values = [str(item[key]).strip() for key in table if key in item]
+    if any("=" in v for v in values[:-1]):
+        raise TypeError(f"a table value before the last cannot hold '=': {values}")
+    while len(values) > 1 and not values[-1]:
+        values.pop()
+    return "=".join(values)
+
+
 def _accept(source: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     """Keep the known options from *raw*, reporting the rest to stderr."""
-    known = {f.name: f.default for f in fields(Settings)}
+    known = {f.name: f for f in fields(Settings)}
     accepted: dict[str, Any] = {}
     for key, value in raw.items():
         if key not in known:
             log.warning("Ignore unknown option %r in %s", key, source)
             continue
-        accepted[key] = _coerce(key, value, known[key])
+        meta = known[key].metadata
+        accepted[key] = _coerce(
+            key,
+            value,
+            known[key].default,
+            table=meta["table"],
+            split=meta["split"],
+        )
     return accepted
 
 

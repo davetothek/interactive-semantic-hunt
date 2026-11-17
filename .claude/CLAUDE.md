@@ -83,6 +83,7 @@ and an underscore is machinery. `.claude/rules/architecture.md` has the rule.
 | Application | `src/ish/application/search.py` | Search use case: refresh once, then query |
 | Application | `src/ish/application/ranking.py` | The one ranking policy every store runs |
 | Application | `src/ish/application/filters.py` | `Filters`, `parse_query()`, the result filter |
+| Application | `src/ish/application/grepable.py` | `Grepable`: paths the index leaves out, and what they hold, for a model to grep |
 | Application | `src/ish/application/categories.py` | `type:` — code, doc, test, config |
 | Application | `src/ish/application/languages.py` | Resolve a spelling to a registered language |
 | Application | `src/ish/application/progress.py` | `Progress`, what an index run reports |

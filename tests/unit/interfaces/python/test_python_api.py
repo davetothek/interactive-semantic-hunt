@@ -226,6 +226,11 @@ class TestStatus:
             assert status["files"] == 3
             assert status["empty_files"] == 1
 
+    def test_status_lists_the_grepable_paths(self, project: Path, offline) -> None:
+        settings = Settings(no_cache=True, git=False, grepable=("/gen/=tables",))
+        with Ish(project, settings=settings) as ish:
+            assert ish.status()["grepable"] == [{"path": "/gen/", "holds": "tables"}]
+
     def test_status_reads_and_does_not_build(self, project: Path, offline) -> None:
         """A status call that indexed first held the caller for the whole run."""
         with _ish(project) as ish:
