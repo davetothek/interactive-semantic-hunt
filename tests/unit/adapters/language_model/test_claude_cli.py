@@ -831,7 +831,7 @@ def _sessions(runner: Runner, *ids: str) -> None:
 
 
 class TestResume:
-    """A later turn reads what the turn before wrote, from the cache.
+    """A later call of a conversation reads what the call before wrote, from the cache.
 
     Each turn of an answer was a new call that sent every source again,
     and claude wrote all of it to the cache at a price above an uncached
@@ -844,11 +844,16 @@ class TestResume:
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
         return home
 
-    def _model(self, tmp_path: Path, **options) -> ClaudeCliLanguageModel:
-        tree = tmp_path / "tree"
-        tree.mkdir(exist_ok=True)
+    def _model(
+        self, tmp_path: Path, tree: bool = True, **options
+    ) -> ClaudeCliLanguageModel:
+        where = tmp_path / "tree"
+        where.mkdir(exist_ok=True)
         return ClaudeCliLanguageModel(
-            "sonnet", timeout=5, tree=tree, options=CallOptions(resume=True, **options)
+            "sonnet",
+            timeout=5,
+            tree=where if tree else None,
+            options=CallOptions(resume=True, **options),
         )
 
     def _file(self, config: Path, session: str) -> Path:
@@ -862,8 +867,8 @@ class TestResume:
     ) -> None:
         _sessions(runner, "s1", "s1")
         model = self._model(tmp_path)
-        model.step("How?", [FIRST], [], 2)
-        model.step("How?", [FIRST, SECOND], ["more"], 1)
+        model.step("How?", [FIRST], [], 2, conversation="c")
+        model.step("How?", [FIRST, SECOND], ["more"], 1, conversation="c")
         first, second = (c["args"] for c in runner.calls)
         assert "--no-session-persistence" not in first and "--resume" not in first
         assert second[second.index("--resume") + 1] == "s1"
@@ -871,28 +876,77 @@ class TestResume:
         assert "A reset clears it." in sent and "It starts at boot." not in sent
         assert "Question: How?" in sent and "- more" in sent
 
+    def test_the_sources_of_a_follow_up_come_in_any_order(
+        self, runner, tmp_path, config
+    ) -> None:
+        """A chat searches again, and the search orders what it finds its own way."""
+        _sessions(runner, "s1", "s1")
+        model = self._model(tmp_path)
+        model.step("How?", [FIRST], [], 2, conversation="c")
+        model.step("Why?", [SECOND, FIRST], [], 1, conversation="c")
+        sent = runner.calls[1]["input"]
+        assert "--resume" in runner.calls[1]["args"]
+        assert "A reset clears it." in sent and "It starts at boot." not in sent
+
+    def test_a_call_with_no_conversation_starts_fresh(
+        self, runner, tmp_path, config
+    ) -> None:
+        """A question asked again in one process got the session of the first answer."""
+        _sessions(runner, "s1", "s2")
+        model = self._model(tmp_path)
+        model.step("How?", [FIRST], [], 0)
+        model.step("How?", [FIRST], [], 0)
+        for call in runner.calls:
+            assert "--no-session-persistence" in call["args"]
+            assert "--resume" not in call["args"]
+
     def test_a_changed_source_starts_again(self, runner, tmp_path, config) -> None:
         _sessions(runner, "s1", "s2")
         old = self._file(config, "s1")
         model = self._model(tmp_path)
-        model.step("How?", [FIRST], [], 2)
+        model.step("How?", [FIRST], [], 2, conversation="c")
         changed = Source("1", FIRST.title, "It starts later.")
-        model.step("How?", [changed, SECOND], [], 1)
+        model.step("How?", [changed, SECOND], [], 1, conversation="c")
         assert "--resume" not in runner.calls[1]["args"]
         assert "It starts later." in runner.calls[1]["input"]
         assert not old.exists()
 
-    def test_another_question_is_another_conversation(
+    def test_a_call_of_another_kind_starts_again(
         self, runner, tmp_path, config
     ) -> None:
+        """An answer and a turn have their own instructions."""
+        _sessions(runner, "s1", "s2")
+        runner.replies[0] = json.dumps(json.loads(runner.stdout) | {"session_id": "s1"})
+        model = self._model(tmp_path)
+        model.answer("How?", [FIRST], conversation="c")
+        model.step("How?", [FIRST], [], 0, conversation="c")
+        assert "--resume" not in runner.calls[1]["args"]
+
+    def test_another_conversation_is_apart(self, runner, tmp_path, config) -> None:
         _sessions(runner, "a", "b", "a")
         model = self._model(tmp_path)
-        model.step("How?", [FIRST], [], 2)
-        model.step("Why?", [FIRST], [], 2)
-        model.step("How?", [FIRST], [], 1)
+        model.step("How?", [FIRST], [], 2, conversation="one")
+        model.step("How?", [FIRST], [], 2, conversation="two")
+        model.step("How?", [FIRST], [], 1, conversation="one")
         assert "--resume" not in runner.calls[1]["args"]
         third = runner.calls[2]["args"]
         assert third[third.index("--resume") + 1] == "a"
+
+    def test_a_call_that_reads_no_file_resumes_in_one_directory(
+        self, runner, tmp_path, config
+    ) -> None:
+        """claude finds a session by the directory it ran in."""
+        answer = json.loads(runner.stdout)
+        runner.replies = [json.dumps(answer | {"session_id": "s1"})] * 2
+        model = self._model(tmp_path, tree=False)
+        model.answer("How?", [FIRST], conversation="chat")
+        model.answer("And then?", [FIRST, SECOND], conversation="chat")
+        first, second = runner.calls
+        assert first["cwd"] == second["cwd"]
+        assert "--resume" in second["args"] and "--tools" in second["args"]
+        assert second["args"][second["args"].index("--tools") + 1] == ""
+        model.forget()
+        assert not Path(first["cwd"]).exists()
 
     def test_the_oldest_conversation_goes_past_the_limit(
         self, runner, tmp_path, config
@@ -902,32 +956,39 @@ class TestResume:
         files = [self._file(config, session) for session in ids]
         model = self._model(tmp_path)
         for n in range(len(ids)):
-            model.step(f"q{n}", [FIRST], [], 1)
+            model.step("How?", [FIRST], [], 1, conversation=f"c{n}")
         assert not files[0].exists() and all(f.exists() for f in files[1:])
         model.forget()
         assert not any(f.exists() for f in files)
 
-    def test_no_resume_without_the_setting_or_a_tree(self, runner, tmp_path) -> None:
-        _sessions(runner, "s1", "s2", "s3", "s4")
+    def test_no_resume_without_the_setting(self, runner, tmp_path) -> None:
+        _sessions(runner, "s1", "s2")
         plain = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tmp_path)
-        plain.step("How?", [FIRST], [], 1)
-        plain.step("How?", [FIRST, SECOND], [], 0)
-        untreed = ClaudeCliLanguageModel(
-            "sonnet", timeout=5, options=CallOptions(resume=True)
-        )
-        untreed.step("How?", [FIRST], [], 1)
-        untreed.step("How?", [FIRST, SECOND], [], 0)
+        plain.step("How?", [FIRST], [], 1, conversation="c")
+        plain.step("How?", [FIRST, SECOND], [], 0, conversation="c")
         for call in runner.calls:
             assert "--no-session-persistence" in call["args"]
             assert "--resume" not in call["args"]
+
+    def test_a_kept_session_compacts_at_its_size(
+        self, runner, tmp_path, config
+    ) -> None:
+        _sessions(runner, "s1", "s1", "s2")
+        model = self._model(tmp_path, autocompact=100_000)
+        model.step("How?", [FIRST], [], 1, conversation="c")
+        model.step("How?", [FIRST], [], 0, conversation="c")
+        model.step("How?", [FIRST], [], 0)
+        kept, resumed, alone = (c["args"] for c in runner.calls)
+        assert kept[kept.index("--autocompact") + 1] == "100000"
+        assert "--autocompact" in resumed and "--autocompact" not in alone
 
     def test_the_trace_names_the_session_it_resumed(
         self, runner, tmp_path, config
     ) -> None:
         _sessions(runner, "s1", "s1")
         model = self._model(tmp_path, trace=tmp_path / "trace")
-        model.step("How?", [FIRST], [], 2)
-        model.step("How?", [FIRST, SECOND], [], 1)
+        model.step("How?", [FIRST], [], 2, conversation="c")
+        model.step("How?", [FIRST, SECOND], [], 1, conversation="c")
         records = [
             json.loads(p.read_text()) for p in sorted((tmp_path / "trace").iterdir())
         ]
@@ -949,7 +1010,9 @@ class TestResume:
         monkeypatch.setattr(claude_cli.subprocess, "Popen", made)
         monkeypatch.setattr(claude_cli.shutil, "which", lambda name: f"/usr/bin/{name}")
         model = self._model(tmp_path)
-        model.step("How?", [FIRST], [], 0, on_block=lambda block: None)
+        model.step(
+            "How?", [FIRST], [], 0, on_block=lambda block: None, conversation="c"
+        )
         assert "--no-session-persistence" not in made.args
 
 
@@ -981,9 +1044,9 @@ class TestAResumedCallCostsItsOwnPart:
         options = CallOptions(resume=True, trace=tmp_path / "trace")
         model = ClaudeCliLanguageModel("sonnet", timeout=5, tree=tree, options=options)
         costs = [
-            model.step("How?", [FIRST], [], 2).cost_usd,
-            model.step("How?", [FIRST, SECOND], [], 1).cost_usd,
-            model.step("How?", [FIRST, SECOND], [], 0).cost_usd,
+            model.step("How?", [FIRST], [], 2, conversation="c").cost_usd,
+            model.step("How?", [FIRST, SECOND], [], 1, conversation="c").cost_usd,
+            model.step("How?", [FIRST, SECOND], [], 0, conversation="c").cost_usd,
         ]
         assert costs == pytest.approx([0.0135, 0.0066, 0.0451])
         last = json.loads(sorted((tmp_path / "trace").iterdir())[-1].read_text())

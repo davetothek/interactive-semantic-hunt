@@ -414,9 +414,17 @@ each turn, so a new call writes them again. With `resume_turns`, each
 later turn of an answer that reads the tree resumes the session of the
 turn before, and sends only the new sources and notes. The turn then
 reads the sources, the files the model read, and its draft from the
-cache. claude keeps each session as a file under its config directory,
-and ish deletes it when the process ends, when a new session of the
-same question takes its place, or past 8 questions under way.
+cache. A chat is one conversation until it ends or `/new` starts another.
+Each follow-up still searches, and sends only the chunks the session
+does not hold, so the model reads the earlier sources, files, and
+answers from the cache. A source keeps its id over the whole chat.
+claude summarizes a chat session when it grows past
+`chat_autocompact` tokens, 100,000 by default, and `autocompact` sets
+the same for an answer, where 0 leaves it to claude. A question asked
+again outside a chat always starts fresh. claude keeps each session
+as a file under its config directory, and ish deletes it when the
+process ends, when a new session takes its place, or past 8
+conversations under way.
 
 A cache can outlast a run. A second run within the hour reads what the
 first one wrote, such as the rerank of the same question, and costs

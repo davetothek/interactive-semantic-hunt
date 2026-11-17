@@ -570,3 +570,11 @@ class TestTheChatTakesItsSettings:
 
         chosen = for_chat(Settings(prompt_cache="5m", chat_prompt_cache="off"))
         assert chosen.prompt_cache == "off"
+
+
+class TestACompactingChat:
+    def test_a_chat_compacts_at_its_own_size(self) -> None:
+        from ish.interfaces.cli.chat import for_chat
+
+        chosen = for_chat(Settings(autocompact=0, chat_autocompact=200_000))
+        assert chosen.autocompact == 200_000

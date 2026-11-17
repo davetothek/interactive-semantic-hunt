@@ -109,7 +109,7 @@ class Model:
         self.quote = quote
         self.checked: list[str] = []
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         return Reply(
             passages=(
                 Passage("It explains the setup.", ("1",), (Quote("1", self.quote),)),

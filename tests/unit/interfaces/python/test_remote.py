@@ -93,10 +93,10 @@ class Model:
             passages=(Passage(self.text, ("1",)),), covered=True, searches=searches
         )
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         return self._reply(sources)
 
-    def step(self, question, sources, searched, turns_left):
+    def step(self, question, sources, searched, turns_left, conversation=""):
         self.steps.append(turns_left)
         return self._reply(sources, self.follow.pop(0) if self.follow else ())
 
@@ -106,7 +106,7 @@ class Silent:
 
     model_name = "silent"
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         raise AssertionError("the model was asked")
 
     step = select = answer

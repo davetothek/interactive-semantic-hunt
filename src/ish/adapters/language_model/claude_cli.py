@@ -131,6 +131,7 @@ def command(
     fallback_model: str = "",
     persist: bool = False,
     session: str = "",
+    autocompact: int = 0,
 ) -> list[str]:
     """Return the argument list that asks one question with nothing else loaded.
 
@@ -141,7 +142,8 @@ def command(
     *effort*, and for *fallback_model* when the model is overloaded,
     only when each is set. With *persist*, claude keeps the session on
     disk, so a later call can resume it. With *session*, the call resumes
-    that session.
+    that session. A session that is kept summarizes itself at
+    *autocompact* tokens, when it is set.
     """
     allowed = (
         [
@@ -169,6 +171,11 @@ def command(
         "--strict-mcp-config",
         *([] if persist or session else ["--no-session-persistence"]),
         *(["--resume", session] if session else []),
+        *(
+            ["--autocompact", str(autocompact)]
+            if autocompact and (persist or session)
+            else []
+        ),
         "--model",
         model,
         *(["--effort", effort] if effort else []),
@@ -182,30 +189,47 @@ def command(
     ]
 
 
-# Conversations a model keeps at most: one for each question under way.
+# Conversations a model keeps at most: an answer or a chat under way each.
 MAX_CONVERSATIONS = 8
 
 
 @dataclass(frozen=True, slots=True)
 class Conversation:
-    """Hold the session of the last turn of a question, and what it holds.
+    """Hold the session of the last call of a conversation, and what it holds.
 
     Attributes:
         session: The session that claude kept on disk.
-        sources: The id, the title, and the text of each source the
-            session holds, in order.
+        kind: The method that made the call. Each method has its own
+            instructions, and a session keeps those it started with.
+        sources: The title and the text of each source the session
+            holds, by id.
         spent_usd: What claude says the session has cost so far. A
             resumed call reports the cost of its whole session.
     """
 
     session: str
-    sources: tuple[tuple[str, str, str], ...]
+    kind: str
+    sources: Mapping[str, tuple[str, str]]
     spent_usd: float = 0.0
 
 
-def held(sources: Sequence[Source]) -> tuple[tuple[str, str, str], ...]:
-    """Return what a session holds of *sources*, to compare with a later turn."""
-    return tuple((s.id, s.title, s.text) for s in sources)
+def unheld(
+    sources: Sequence[Source], held: Mapping[str, tuple[str, str]]
+) -> list[Source] | None:
+    """Return the sources a session does not hold, in order.
+
+    Return None when a source that the session holds under an id has
+    another title or text now, because the model would read two texts
+    under one id.
+    """
+    told = []
+    for source in sources:
+        kept = held.get(source.id)
+        if kept is None:
+            told.append(source)
+        elif kept != (source.title, source.text):
+            return None
+    return told
 
 
 def session_files(session: str, source: Mapping[str, str]) -> list[Path]:
@@ -338,6 +362,7 @@ class ClaudeCliLanguageModel:
         self._session = ""
         self._session_usd = 0.0
         self._conversations: dict[str, Conversation] = {}
+        self._home: str | None = None
         self._lock = threading.Lock()
         atexit.register(self.forget)
 
@@ -346,20 +371,28 @@ class ClaudeCliLanguageModel:
         question: str,
         sources: Sequence[Source],
         on_block: OnBlock | None = None,
+        conversation: str = "",
     ) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes.
 
         With *on_block*, stream the reply, and give on each block of it
-        as soon as its JSON is whole.
+        as soon as its JSON is whole. Resume the session of
+        *conversation* as ``step`` does.
         """
+        told, earlier = self._resumed(conversation, "answer", sources)
+        persist, session, spent = self._session_of(conversation, earlier)
         structured, read, wrote, cost = self._run(
             "answer",
             self._prompts.answer,
             _grounded.SCHEMA,
-            _grounded.prompt(question, sources),
+            _grounded.prompt(question, told),
             on_block,
             reads=True,
+            persist=persist,
+            session=session,
+            spent_usd=spent,
         )
+        self._keep(conversation, "answer", sources)
         reply = _grounded.parse(
             json.dumps(structured),
             f"claude {self.model_name}",
@@ -376,17 +409,16 @@ class ClaudeCliLanguageModel:
         turns_left: int,
         on_block: OnBlock | None = None,
         notes: Sequence[str] = (),
+        conversation: str = "",
     ) -> Reply:
         """Answer, or ask for searches, in the JSON the schema fixes.
 
-        With ``resume`` and a tree, a later turn of the same question
-        resumes the session of the turn before, when that session holds
-        the first of *sources* as they are. It sends only the sources the
-        session does not hold, so claude reads the rest from its cache.
+        With ``resume``, a call of *conversation* resumes the session of
+        the last call of it, and sends only the sources that session does
+        not hold, so claude reads the rest from its cache.
         """
-        resume = self._options.resume and self._tree is not None
-        earlier = self._earlier(question, sources) if resume else None
-        told = sources[len(earlier.sources) :] if earlier else sources
+        told, earlier = self._resumed(conversation, "step", sources)
+        persist, session, spent = self._session_of(conversation, earlier)
         structured, read, wrote, cost = self._run(
             "step",
             self._prompts.step,
@@ -394,49 +426,93 @@ class ClaudeCliLanguageModel:
             _grounded.step_prompt(question, told, searched, turns_left, notes),
             on_block,
             reads=True,
-            persist=resume,
-            session=earlier.session if earlier else "",
-            spent_usd=earlier.spent_usd if earlier else 0.0,
+            persist=persist,
+            session=session,
+            spent_usd=spent,
         )
-        if resume:
-            self._keep(question, sources)
+        self._keep(conversation, "step", sources)
         reply = _grounded.parse_step(
             json.dumps(structured), f"claude {self.model_name}", read, wrote
         )
         return self._with_usage(reply, cost)
 
-    def _earlier(self, question: str, sources: Sequence[Source]) -> Conversation | None:
-        """Return the conversation of *question* that a turn on *sources* resumes."""
-        with self._lock:
-            found = self._conversations.get(question)
-        if found is None or held(sources[: len(found.sources)]) != found.sources:
-            return None
-        return found
+    def _resumed(
+        self, conversation: str, kind: str, sources: Sequence[Source]
+    ) -> tuple[Sequence[Source], Conversation | None]:
+        """Return the sources a call sends, and the conversation it resumes.
 
-    def _keep(self, question: str, sources: Sequence[Source]) -> None:
-        """Keep the session of the last call as the conversation of *question*.
-
-        Delete the session it takes the place of, when the call started a
-        new one, and the oldest conversations past ``MAX_CONVERSATIONS``.
+        Resume nothing without ``resume`` or a conversation, after a call
+        of another kind, or when a source the session holds has changed.
         """
+        if not (self._options.resume and conversation):
+            return sources, None
         with self._lock:
-            before = self._conversations.pop(question, None)
-            self._conversations[question] = Conversation(
-                self._session, held(sources), self._session_usd
+            found = self._conversations.get(conversation)
+        if found is None or found.kind != kind:
+            return sources, None
+        told = unheld(sources, found.sources)
+        if told is None:
+            return sources, None
+        return told, found
+
+    def _session_of(
+        self, conversation: str, earlier: Conversation | None
+    ) -> tuple[bool, str, float]:
+        """Return whether a call keeps its session, the one it resumes, and its cost.
+
+        A call that resumes a session gives the session and what it cost
+        so far. A call that starts one keeps it on disk.
+        """
+        if not (self._options.resume and conversation):
+            return False, "", 0.0
+        if earlier is None:
+            return True, "", 0.0
+        return False, earlier.session, earlier.spent_usd
+
+    def _keep(self, conversation: str, kind: str, sources: Sequence[Source]) -> None:
+        """Keep the session of the last call as the state of *conversation*.
+
+        Add *sources* to what a resumed session holds. Delete a session
+        that a new one takes the place of, and the oldest conversations
+        past ``MAX_CONVERSATIONS``.
+        """
+        if not (self._options.resume and conversation):
+            return
+        sent = {s.id: (s.title, s.text) for s in sources}
+        with self._lock:
+            before = self._conversations.pop(conversation, None)
+            same = before is not None and before.session == self._session
+            held = {**before.sources, **sent} if before and same else sent
+            self._conversations[conversation] = Conversation(
+                self._session, kind, held, self._session_usd
             )
-            gone = [before] if before and before.session != self._session else []
+            gone = [before] if before and not same else []
             while len(self._conversations) > MAX_CONVERSATIONS:
                 gone.append(self._conversations.pop(next(iter(self._conversations))))
-        for conversation in gone:
-            self._delete(conversation.session)
+        for old in gone:
+            self._delete(old.session)
 
     def forget(self) -> None:
-        """Delete every session this model kept on disk."""
+        """Delete every session this model kept on disk, and its directory."""
         with self._lock:
             gone = list(self._conversations.values())
             self._conversations.clear()
+            home, self._home = self._home, None
         for conversation in gone:
             self._delete(conversation.session)
+        if home is not None:
+            shutil.rmtree(home, ignore_errors=True)
+
+    def _home_dir(self) -> str:
+        """Return the empty directory where a call that reads no file keeps a session.
+
+        claude finds a session by the directory it ran in, so a session
+        that a later call resumes needs the same directory each time.
+        """
+        with self._lock:
+            if self._home is None:
+                self._home = tempfile.mkdtemp(prefix="ish-ask-")
+            return self._home
 
     def _delete(self, session: str) -> None:
         """Delete the files of *session*, which hold the text of the tree."""
@@ -529,7 +605,8 @@ class ClaudeCliLanguageModel:
             system = f"{system}\n\n{self._prompts.tools}"
         started = time.perf_counter()
         with tempfile.TemporaryDirectory(prefix="ish-ask-") as empty:
-            cwd = str(self._tree) if tools else empty
+            kept = persist or bool(session)
+            cwd = str(self._tree) if tools else (self._home_dir() if kept else empty)
             if on_block is None:
                 args = self._command(
                     kind, system, schema, tools=tools, persist=persist, session=session
@@ -566,6 +643,7 @@ class ClaudeCliLanguageModel:
                     "effort": self._options.effort_of(kind),
                     "fallback_model": self._options.fallback_model,
                     "resumed": session,
+                    "autocompact": self._options.autocompact,
                     "system": system,
                     "schema": schema,
                     "prompt": prompt,
@@ -635,6 +713,7 @@ class ClaudeCliLanguageModel:
             fallback_model=self._options.fallback_model,
             persist=persist,
             session=session,
+            autocompact=self._options.autocompact,
         )
 
     def _streamed(

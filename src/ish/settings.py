@@ -565,6 +565,26 @@ class Settings:
             action="boolean_optional",
         ),
     )
+    autocompact: int = field(
+        default=0,
+        metadata=_opt(
+            ANSWERS,
+            "Tokens at which claude summarizes a session that ish resumes, "
+            "from 100000 to 1000000. 0 uses the default of claude.",
+            type=int,
+            metavar="N",
+        ),
+    )
+    chat_autocompact: int = field(
+        default=100_000,
+        metadata=_opt(
+            ANSWERS,
+            "autocompact of ish chat and ish remote chat, which keep one "
+            "session until the chat ends or /new starts another.",
+            type=int,
+            metavar="N",
+        ),
+    )
     chat_prompt_cache: str = field(
         default="1h",
         metadata=_opt(

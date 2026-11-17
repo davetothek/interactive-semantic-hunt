@@ -55,6 +55,8 @@ class CallOptions:
         resume: Let each later turn of an answer of claude-cli that reads
             the tree resume the session of the turn before, and send only
             what is new.
+        autocompact: The size in tokens at which claude summarizes a
+            session it resumes, or 0 for the default of claude.
     """
 
     prompt_cache: str = DEFAULT_PROMPT_CACHE
@@ -68,6 +70,7 @@ class CallOptions:
     timeout: float = 0.0
     budget_chars: int = DEFAULT_BUDGET_CHARS
     resume: bool = False
+    autocompact: int = 0
 
     def __post_init__(self) -> None:
         """Refuse a cache or an effort that claude-cli does not know."""

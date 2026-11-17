@@ -955,3 +955,56 @@ class TestSizesOfAnAnswer:
             preview_chars=4,
         ).answer("q")
         assert reranker.calls[0][1][0].text == "abcd"
+
+
+class TestAConversation:
+    """The calls of one answer, or of one chat, name their conversation."""
+
+    def test_each_call_names_the_conversation(self) -> None:
+        seen: list[dict] = []
+
+        class Named(FakeModel):
+            def answer(self, question, sources, **named):
+                seen.append(named)
+                return super().answer(question, sources)
+
+        AnswerQuestion(
+            search=searching(make_chunk("a")), model=Named(), conversation="c1"
+        ).answer("q")
+        assert seen == [{"conversation": "c1"}]
+
+    def test_no_conversation_names_none(self) -> None:
+        seen: list[dict] = []
+
+        class Named(FakeModel):
+            def answer(self, question, sources, **named):
+                seen.append(named)
+                return super().answer(question, sources)
+
+        AnswerQuestion(search=searching(make_chunk("a")), model=Named()).answer("q")
+        assert seen == [{}]
+
+    def test_a_chunk_keeps_its_id_over_the_answers_of_a_chat(self) -> None:
+        """One session shows the model the sources of every question of a chat."""
+        from ish.application.answer import SourceNumbers
+
+        first, second, third = make_chunk("a"), make_chunk("b"), make_chunk("c")
+        numbers = SourceNumbers()
+        model = FakeModel(
+            Reply(passages=(Passage("It resets.", ("3",)),), covered=True)
+        )
+        AnswerQuestion(
+            search=searching(first, second), model=model, numbers=numbers
+        ).answer("q1")
+        answer = AnswerQuestion(
+            search=searching(third, first), model=model, numbers=numbers
+        ).answer("q2")
+        assert [s.id for s in model.calls[1][1]] == ["3", "1"]
+        assert answer.parts[0].cites == (third,)
+
+    def test_the_numbers_of_a_chat_start_at_one(self) -> None:
+        from ish.application.answer import SourceNumbers
+
+        numbers = SourceNumbers()
+        a, b = make_chunk("a"), make_chunk("b")
+        assert (numbers.of(a), numbers.of(b), numbers.of(a)) == ("1", "2", "1")

@@ -346,6 +346,7 @@ def call_options(settings: Settings) -> CallOptions:
         timeout=settings.answer_timeout,
         budget_chars=settings.ask_chars,
         resume=settings.resume_turns,
+        autocompact=settings.autocompact,
     )
 
 

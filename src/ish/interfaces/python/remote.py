@@ -12,6 +12,7 @@ same use case and the same model rules as an answer from a local tree.
 """
 
 import logging
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -150,6 +151,10 @@ class RemoteIsh:
 
             found, reranker, turns = plan(reading, search, limit, reranker, turns)
         use_case = AnswerQuestion(
+            # One conversation for the turns of this answer, or for the
+            # questions of a chat. A new question elsewhere starts fresh.
+            conversation=(reading.conversation if reading else "") or uuid.uuid4().hex,
+            numbers=reading.numbers if reading else None,
             search=found,
             model=self._models[brief],
             reranker=reranker,

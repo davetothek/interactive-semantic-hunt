@@ -265,6 +265,7 @@ class LanguageModel(Protocol):
         question: str,
         sources: Sequence[Source],
         on_block: OnBlock | None = None,
+        conversation: str = "",
     ) -> Reply:
         """Answer *question* from *sources* only.
 
@@ -273,6 +274,12 @@ class LanguageModel(Protocol):
         every block again. A backend that cannot stream gives none.
         Raise ``LanguageModelError`` when the model does not answer.
         Never answer from knowledge outside *sources*.
+
+        *conversation* names the calls that belong together, such as the
+        turns of one answer or the questions of one chat. A backend that
+        keeps a session may resume the session of the last call of the
+        same conversation, and send only what that session does not hold.
+        A call with no conversation starts fresh.
         """
         ...
 
@@ -284,6 +291,7 @@ class LanguageModel(Protocol):
         turns_left: int,
         on_block: OnBlock | None = None,
         notes: Sequence[str] = (),
+        conversation: str = "",
     ) -> Reply:
         """Answer from *sources*, or ask for more searches first.
 
@@ -293,7 +301,8 @@ class LanguageModel(Protocol):
         sources do not cover the question. Give *on_block* each block as
         ``answer`` does. Give the model *notes* from ish beside the
         question, such as the claims a check found unsupported. Never
-        answer from knowledge outside *sources*.
+        answer from knowledge outside *sources*. *conversation* means
+        what it means for ``answer``.
         """
         ...
 

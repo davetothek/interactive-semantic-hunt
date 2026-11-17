@@ -75,10 +75,12 @@ class AnthropicLanguageModel:
         question: str,
         sources: Sequence[Source],
         on_block: OnBlock | None = None,
+        conversation: str = "",
     ) -> Reply:
         """Answer *question* from *sources*, with a citation per claim.
 
         Stream nothing: *on_block* gets no block, and the reply holds them all.
+        Keep no session: each call sends everything, whatever *conversation*.
         """
         body = self._post(
             _request(self.model_name, self._prompts.answer_cited, question, sources)
@@ -108,11 +110,13 @@ class AnthropicLanguageModel:
         turns_left: int,
         on_block: OnBlock | None = None,
         notes: Sequence[str] = (),
+        conversation: str = "",
     ) -> Reply:
         """Answer, or ask for searches, with structured output.
 
         A turn that may ask for searches replies in JSON, which rules out
         native citations. The passages name their sources by id instead.
+        Keep no session: each call sends everything, whatever *conversation*.
         """
         text, read, wrote = self._structured(
             self._prompts.step,

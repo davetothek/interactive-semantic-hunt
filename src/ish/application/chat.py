@@ -17,10 +17,11 @@ ones.
 """
 
 import logging
+import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from ish.application.answer import Answer
+from ish.application.answer import Answer, SourceNumbers
 from ish.application.ports.language_model import LanguageModel, LanguageModelError
 from ish.domain.chunk import Chunk
 from ish.domain.match import Match
@@ -61,12 +62,18 @@ class Reading:
 
     Run each of *queries*, and offer the chunks of *carry* beside the
     results. With *only*, read those chunks and nothing else: no search
-    and no rerank.
+    and no rerank. *conversation* names the chat, so a model that keeps
+    a session resumes it, and *numbers* gives each chunk one id over
+    every answer of it.
     """
 
     queries: tuple[str, ...] = ()
     carry: tuple[Chunk, ...] = ()
     only: tuple[Chunk, ...] = ()
+    # The chat an answer belongs to, which is no part of how it finds
+    # its sources, so two readings that search alike are equal.
+    conversation: str = field(default="", compare=False)
+    numbers: SourceNumbers | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +123,8 @@ class Chat:
         self._budget = budget_tokens * CHARS_PER_TOKEN
         self._query_budget = query_tokens * CHARS_PER_TOKEN
         self._turns: list[Turn] = []
+        self._conversation = uuid.uuid4().hex
+        self._numbers = SourceNumbers()
 
     @property
     def last(self) -> Turn | None:
@@ -144,7 +153,7 @@ class Chat:
             queries = self._queries(question, previous)
             carry = cited(previous.answer)
         asked = self._with_history(question)
-        answer = self._ask(asked, Reading(queries, carry), self.brief)
+        answer = self._ask(asked, Reading(queries, carry, **self._same()), self.brief)
         turn = Turn(question, answer, asked, self.brief, queries)
         self._turns.append(turn)
         return turn
@@ -160,7 +169,9 @@ class Chat:
         last = self.last
         if last is None:
             raise LookupError("There is no answer yet. Ask a question first.")
-        answer = self._ask(last.asked, Reading(only=last.answer.sources), False)
+        answer = self._ask(
+            last.asked, Reading(only=last.answer.sources, **self._same()), False
+        )
         turn = Turn(last.question, answer, last.asked, False)
         self._turns[-1] = turn
         return turn
@@ -183,8 +194,18 @@ class Chat:
             return joined
 
     def new(self) -> None:
-        """Forget the history, as if the chat started now."""
+        """Forget the history, as if the chat started now.
+
+        Start a new conversation, so a model that keeps a session starts
+        a new one, and number the sources from 1 again.
+        """
         self._turns.clear()
+        self._conversation = uuid.uuid4().hex
+        self._numbers = SourceNumbers()
+
+    def _same(self) -> dict:
+        """Return the conversation and the numbering every answer of the chat shares."""
+        return {"conversation": self._conversation, "numbers": self._numbers}
 
     def _with_history(self, question: str) -> str:
         """Return *question* with the history the budget holds above it."""

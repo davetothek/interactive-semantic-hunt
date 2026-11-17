@@ -50,7 +50,7 @@ class Silent:
 
     model_name = "silent"
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         raise AssertionError("the command asked the model")
 
 
@@ -310,7 +310,7 @@ class TestAsk:
         class Agent:
             model_name = "agent"
 
-            def step(self, question, sources, searched, turns_left):
+            def step(self, question, sources, searched, turns_left, conversation=""):
                 if not searched and turns_left:
                     return Reply(passages=(), covered=False, searches=("the sky",))
                 return Reply(passages=(Passage("Found.", ("1",)),), covered=True)
@@ -333,7 +333,7 @@ class TestAsk:
         class Interrupted:
             model_name = "interrupted"
 
-            def answer(self, question, sources):
+            def answer(self, question, sources, conversation=""):
                 raise KeyboardInterrupt
 
         _model(monkeypatch, Interrupted())

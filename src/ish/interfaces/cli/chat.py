@@ -235,12 +235,17 @@ class _Loop:
 
 
 def for_chat(settings: Settings) -> Settings:
-    """Return *settings* with the prompt cache of a chat.
+    """Return *settings* with the prompt cache and the compaction of a chat.
 
     A person reads a reply before the next question, which can come
-    more than 5 minutes later.
+    more than 5 minutes later. A chat keeps one session until it ends,
+    and claude summarizes it when it grows past ``chat_autocompact``.
     """
-    return replace(settings, prompt_cache=settings.chat_prompt_cache)
+    return replace(
+        settings,
+        prompt_cache=settings.chat_prompt_cache,
+        autocompact=settings.chat_autocompact,
+    )
 
 
 def converse(

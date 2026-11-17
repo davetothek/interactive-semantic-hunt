@@ -21,6 +21,7 @@ free of layer imports, and `tests/unit/test_package.py` enforces that.
 
 import logging
 import re
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -404,6 +405,10 @@ class Ish:
 
             found, reranker, turns = plan(reading, search, limit, reranker, turns)
         use_case = AnswerQuestion(
+            # One conversation for the turns of this answer, or for the
+            # questions of a chat. A new question elsewhere starts fresh.
+            conversation=(reading.conversation if reading else "") or uuid.uuid4().hex,
+            numbers=reading.numbers if reading else None,
             search=found,
             model=self._models[brief],
             reranker=reranker,

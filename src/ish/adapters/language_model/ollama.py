@@ -93,10 +93,12 @@ class OllamaLanguageModel:
         question: str,
         sources: Sequence[Source],
         on_block: OnBlock | None = None,
+        conversation: str = "",
     ) -> Reply:
         """Answer *question* from *sources* in the JSON the schema fixes.
 
         Stream nothing: *on_block* gets no block, and the reply holds them all.
+        Keep no session: each call sends everything, whatever *conversation*.
         """
         text, read, wrote = self._chat(
             self._prompts.answer,
@@ -113,8 +115,12 @@ class OllamaLanguageModel:
         turns_left: int,
         on_block: OnBlock | None = None,
         notes: Sequence[str] = (),
+        conversation: str = "",
     ) -> Reply:
-        """Answer, or ask for searches, in the JSON the schema fixes."""
+        """Answer, or ask for searches, in the JSON the schema fixes.
+
+        Keep no session: each call sends everything, whatever *conversation*.
+        """
         text, read, wrote = self._chat(
             self._prompts.step,
             _grounded.STEP_SCHEMA,

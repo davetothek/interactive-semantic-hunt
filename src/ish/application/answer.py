@@ -9,7 +9,7 @@ and the closest chunks instead, never an answer from outside them.
 import logging
 import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from ish.application.glossary import Glossary, acronyms
@@ -256,6 +256,23 @@ class Answer:
     cache_read_tokens: int = 0
 
 
+class SourceNumbers:
+    """Give each chunk of a conversation one id, the same in each answer of it.
+
+    A chat that resumes one session of a model over its questions shows
+    the model the sources of every question. A source keeps its id, so
+    [3] of the second question is never another text than [3] of the first.
+    """
+
+    def __init__(self) -> None:
+        """Start with no chunk numbered."""
+        self._ids: dict[Chunk, str] = {}
+
+    def of(self, chunk: Chunk) -> str:
+        """Return the id of *chunk*, and give a new chunk the next number."""
+        return self._ids.setdefault(chunk, str(len(self._ids) + 1))
+
+
 class AnswerQuestion:
     """Orchestrate one answer: search, fit the budget, ask the model."""
 
@@ -282,6 +299,8 @@ class AnswerQuestion:
         searches_a_turn: int = SEARCHES_A_TURN,
         preview_chars: int = PREVIEW_CHARS,
         check_context_chars: int = CONTEXT_CHARS,
+        conversation: str = "",
+        numbers: SourceNumbers | None = None,
     ) -> None:
         """Answer from what *search* returns, written by *model*.
 
@@ -338,6 +357,11 @@ class AnswerQuestion:
         *lookup*, which returns those lines as a chunk with its text, or
         None for lines that are not there. The check then finds each quote
         in the lines that the model names, as in any other source.
+
+        Give each call of the model *conversation*, the id of the calls
+        that belong together, so a backend that keeps a session can
+        resume it. Number the sources through *numbers* when the
+        conversation spans more than one answer.
         """
         self._search = search
         self._model = model
@@ -349,6 +373,8 @@ class AnswerQuestion:
         self._searches_a_turn = searches_a_turn
         self._preview_chars = preview_chars
         self._check_context_chars = check_context_chars
+        self._said = {"conversation": conversation} if conversation else {}
+        self._numbers = numbers
         self._turns = turns
         self._on_step = on_step
         self._clock = clock
@@ -430,7 +456,7 @@ class AnswerQuestion:
                 question, texts, left, self._turns, challenge=self._challenge
             )
         else:
-            sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            sources = self._sources(texts)
             self._on_step(AnswerStep(WRITING, model=self._model.model_name))
             reply = self._timed(
                 WRITING,
@@ -438,6 +464,7 @@ class AnswerQuestion:
                 question,
                 sources,
                 **self._streaming(texts),
+                **self._said,
             )
             searched, turns = [], 1
         self._resolve(reply)
@@ -447,7 +474,7 @@ class AnswerQuestion:
                 question, reply, texts, searched, turns, left
             )
         kept = [chunk for chunk, _ in texts]
-        by_id = {str(n): chunk for n, chunk in enumerate(kept, 1)}
+        by_id = {i: chunk for i, (chunk, _) in self._numbered(texts).items()}
         by_id |= {ref: chunk for ref, (chunk, _text) in self._refs.items()}
         kept += [chunk for chunk, _text in self._refs.values() if chunk not in kept]
         log.info(
@@ -556,7 +583,7 @@ class AnswerQuestion:
         if judge is None or not reply.covered:
             return Review(reply)
         self._resolve(reply)
-        by_id = {str(n): text for n, (_, text) in enumerate(texts, 1)}
+        by_id = {i: text for i, (_, text) in self._numbered(texts).items()}
         by_id |= {ref: text for ref, (_chunk, text) in self._refs.items()}
         self._on_step(AnswerStep(CHECKING, model=judge.model_name))
         return self._timed(
@@ -573,7 +600,7 @@ class AnswerQuestion:
         nearest to the sources the answer read. Sort them by term.
         """
         words = " ".join(_words(reply))
-        named = {t.term: t for t in _terms(reply.terms, texts, words)}
+        named = {t.term: t for t in _terms(reply.terms, self._numbered(texts), words)}
         for short in acronyms(words):
             if short in named or len(named) >= MAX_TERMS:
                 continue
@@ -591,7 +618,7 @@ class AnswerQuestion:
         """
         if self._on_block is None or not self._streams():
             return {}
-        by_id = {str(n): chunk for n, (chunk, _) in enumerate(texts, 1)}
+        by_id = {i: chunk for i, (chunk, _) in self._numbered(texts).items()}
         give = self._on_block
         return {"on_block": lambda block: give(_block(block, by_id))}
 
@@ -650,6 +677,19 @@ class AnswerQuestion:
                 self._copies.setdefault(first, []).append(chunk)
         return kept
 
+    def _numbered(
+        self, texts: Sequence[tuple[Chunk, str]]
+    ) -> dict[str, tuple[Chunk, str]]:
+        """Return *texts* by the id each source has, in order."""
+        if self._numbers is None:
+            return {str(n): pair for n, pair in enumerate(texts, 1)}
+        numbers = self._numbers
+        return {numbers.of(chunk): (chunk, text) for chunk, text in texts}
+
+    def _sources(self, texts: Sequence[tuple[Chunk, str]]) -> list[Source]:
+        """Return *texts* as the sources the model reads, each under its id."""
+        return [self._titled(i, c, t) for i, (c, t) in self._numbered(texts).items()]
+
     def _titled(self, source_id: str, chunk: Chunk, text: str) -> Source:
         """Return *chunk* as a source the model reads, with its type and copies."""
         title = f"{chunk.path}{chunk.location.render()}"
@@ -692,7 +732,7 @@ class AnswerQuestion:
         told = tuple(notes)
         challenged = False
         for turns_left in range(allowed, -1, -1):
-            sources = [self._titled(str(n), c, t) for n, (c, t) in enumerate(texts, 1)]
+            sources = self._sources(texts)
             self._on_step(
                 AnswerStep(
                     WRITING,
@@ -710,6 +750,7 @@ class AnswerQuestion:
                 turns_left,
                 **self._streaming(texts),
                 **({"notes": told} if told else {}),
+                **self._said,
             )
             turns += 1
             read_in += reply.input_tokens
@@ -856,7 +897,7 @@ def _plain(text: str) -> str:
 
 
 def _terms(
-    found: Sequence[Term], texts: list[tuple[Chunk, str]], answer: str
+    found: Sequence[Term], texts: Mapping[str, tuple[Chunk, str]], answer: str
 ) -> tuple[AnswerTerm, ...]:
     """Keep each term the answer uses whose meaning a source writes.
 
@@ -867,7 +908,7 @@ def _terms(
     source writes, so a model that expands a term from its own knowledge
     adds nothing. Keep one entry for each term, sorted by term.
     """
-    by_id = {str(n): pair for n, pair in enumerate(texts, 1)}
+    by_id = texts
     kept: dict[str, AnswerTerm] = {}
     dropped = 0
     for term in found:
@@ -884,7 +925,8 @@ def _terms(
         ]
         if not writes:
             writes = next(
-                ([c] for c, text in texts if _plain(meaning) in _plain(text)), []
+                ([c] for c, text in texts.values() if _plain(meaning) in _plain(text)),
+                [],
             )
         if not writes:
             dropped += 1

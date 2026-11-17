@@ -1362,7 +1362,7 @@ class _StubModel:
     def __init__(self, model: str = "") -> None:
         self.model_name = model or "stub-default"
 
-    def answer(self, question, sources):
+    def answer(self, question, sources, conversation=""):
         raise AssertionError("not called here")
 
 
@@ -1869,9 +1869,10 @@ class TestCallOptions:
                 answer_timeout=30.0,
                 ask_chars=90_000,
                 resume_turns=True,
+                autocompact=300_000,
             )
         )
-        assert options.resume is True
+        assert (options.resume, options.autocompact) == (True, 300_000)
         assert (options.answer_effort, options.rerank_effort) == ("high", "low")
         assert (options.check_effort, options.fallback_model) == ("medium", "haiku")
         assert (options.claude, options.timeout, options.budget_chars) == (

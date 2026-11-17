@@ -456,6 +456,8 @@ builds a language model and sends no text anywhere.
 | `--rerank-preview-chars N` | Characters of each chunk the rerank model reads (default 300) |
 | `--check-context-chars N` | Characters of the source on each side of a quote that the check reads (default 400) |
 | `--no-resume-turns` | Send every source on each turn of a `claude-cli` answer, and resume no session |
+| `--autocompact N` | Tokens at which claude summarizes a session that ish resumes (default: claude's) |
+| `--chat-autocompact N` | `--autocompact` of a chat, which keeps one session until it ends (default 100000) |
 | `--chat-prompt-cache 5m\|1h\|off` | `--prompt-cache` of `ish chat` and `ish remote chat` (default `1h`) |
 | `--chat-history-tokens N` | Tokens of the history of a chat that each answer reads (default 4000) |
 | `--chat-query-tokens N` | Tokens of the history that the search of a follow-up reads (default 1000) |

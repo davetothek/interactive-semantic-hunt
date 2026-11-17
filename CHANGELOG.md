@@ -60,8 +60,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   the session of the turn before and send only what is new, so it reads
   the rest from the cache. On 7 questions it cited the same sources and
   cost a third less. `--no-resume-turns` turns it off.
-- `ish chat` and `ish remote chat` keep a prompt in the cache for 1 hour,
-  set by `chat_prompt_cache`.
+- `ish chat` and `ish remote chat` keep one session of `claude-cli` for
+  the whole chat. Each follow-up searches again and sends only what the
+  session does not hold. claude summarizes the session past
+  `chat_autocompact` tokens, 100,000 by default, and the chat keeps a
+  prompt in the cache for 1 hour, set by `chat_prompt_cache`.
 - `ask_trace` names a directory where `claude-cli` writes one JSON file
   for each call: the instructions, the message, the reply, the tokens,
   and the cost. `scripts/replay_call.py` runs one such call again.
