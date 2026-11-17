@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.13.0 - 2026-11-17
+
 ### Added
 
 - `render_theme`, or `--render-theme NAME`, sets the styles of a
