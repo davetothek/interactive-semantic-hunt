@@ -3,7 +3,7 @@
 Both adapters read the host the same way: an explicit option, then
 ``OLLAMA_HOST``, then the default port on this machine. A bare
 ``host:port`` is accepted, because that is how Ollama documents the
-variable.
+variable. Both also show a refusal of the daemon the same way.
 """
 
 import os
@@ -37,3 +37,21 @@ def is_loopback(host: str) -> bool:
         return ipaddress.ip_address(name).is_loopback
     except ValueError:
         return False
+
+
+def error_text(detail: str) -> str:
+    """Return the message of an error body of the daemon, else *detail*.
+
+    The daemon puts the reason for a refusal in the ``error`` field of a
+    JSON body. A reader needs that sentence, not the JSON around it.
+    """
+    # Only the error paths call this, so pay the import here.
+    import json
+
+    try:
+        body = json.loads(detail)
+    except ValueError:
+        return detail
+    if isinstance(body, dict) and isinstance(body.get("error"), str):
+        return body["error"]
+    return detail

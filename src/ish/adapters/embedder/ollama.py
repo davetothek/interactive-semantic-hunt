@@ -10,7 +10,7 @@ import time
 from collections.abc import Sequence
 
 from ish.adapters import _http
-from ish.adapters._ollama import is_loopback, resolve_host
+from ish.adapters._ollama import error_text, is_loopback, resolve_host
 from ish.adapters.embedder._prefixes import PrefixingEmbedder
 from ish.adapters.embedder._turn import Turn, default_turn
 
@@ -191,7 +191,8 @@ class OllamaEmbedder(PrefixingEmbedder):
                     f"not a generation model."
                 )
             raise RuntimeError(
-                f"Ollama refused the request ({exc.code}): {exc.detail}. {hint}"
+                f"Ollama refused the request ({exc.code}): "
+                f"{error_text(exc.detail)}. {hint}"
             ) from exc
         except _http.Unreachable as exc:
             raise _Transient(

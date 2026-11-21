@@ -15,6 +15,11 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   it, and 37 of 37 without it, at $0.045 against $0.136 and 21 s against
   47 s an answer. `--check-claims` turns it on.
 
+### Fixed
+
+- A refusal of Ollama shows the reason the daemon gives, such as
+  `model "nomic-embed-text" not found`, and not the JSON body around it.
+
 ## 0.13.0 - 2026-11-17
 
 ### Added

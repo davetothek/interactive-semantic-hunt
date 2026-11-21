@@ -342,6 +342,21 @@ class TestFailures:
         with pytest.raises(RuntimeError, match="ollama pull nomic-embed-text"):
             OllamaEmbedder().embed_documents(["a"])
 
+    def test_a_refusal_shows_the_reason_and_not_the_json(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        body = b'{"error":"model \\"nomic-embed-text\\" not found"}'
+        self._fail_with(
+            monkeypatch,
+            urllib.error.HTTPError("u", 404, "Not Found", {}, io.BytesIO(body)),
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            OllamaEmbedder().embed_documents(["a"])
+        assert str(exc_info.value) == (
+            'Ollama refused the request (404): model "nomic-embed-text" not '
+            "found. Pull it with 'ollama pull nomic-embed-text'."
+        )
+
     def test_generation_model_is_not_a_missing_model(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
