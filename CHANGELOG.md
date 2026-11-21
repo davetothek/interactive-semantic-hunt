@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.14.0 - 2026-11-21
+
 ### Added
 
 - `ollama_pull`, or `--ollama-pull`, lets ish pull the embedding model
