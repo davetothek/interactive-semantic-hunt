@@ -147,10 +147,10 @@ source is a link that opens the file at its lines:
    tests/
 ```
 
-### Each claim is checked
+### Check each claim
 
-Each claim of an answer carries the words of a source it rests on. ish
-checks each claim in two steps:
+Each claim of an answer carries the words of a source it rests on. With
+`--check-claims`, ish checks each claim in two steps:
 
 1. ish looks for the quoted words in the source the claim cites. Markup,
    punctuation, and line breaks do not count, but each word and its order
@@ -174,8 +174,10 @@ you see what the model wrote and why it is no fact:
 >   words do not state it.) Cites dma.h:36-45.
 ```
 
-The check costs one more call to the model, and the timing table shows
-it as `check`. `--no-check-claims` turns it off, `--check-model rerank`
+The check is off by default. On 41 questions with a known answer, the
+check set apart correct facts, and 20 of 37 answers were correct with
+it against 37 of 37 without it. It costs one more call to the model, and
+the timing table shows it as `check`. `--check-model rerank`
 gives it to the cheaper rerank model, and `--repair-turns N` sets the
 turns to fix a claim, 1 by default. A brief answer cites no source, so
 it is not checked.
@@ -487,7 +489,7 @@ builds a language model and sends no text anywhere.
 | `--claude-fallback-model MODEL` | Model `claude-cli` asks when the model of a call is overloaded |
 | `--claude-command PATH` | The command that runs Claude Code (default `claude`) |
 | `--answer-timeout S` | Seconds one call of a language model may take (default: the backend's) |
-| `--no-check-claims` | Do not check that a quote of a source states each claim |
+| `--check-claims` | Check that a quote of a source states each claim (default: off) |
 | `--check-model answer\|rerank` | Model that checks the claims (default `answer`) |
 | `--repair-turns N` | Turns the model gets to fix the claims that fail the check (default 1) |
 | `--no-challenge` | With `--ask-turns`, do not search against the first draft |

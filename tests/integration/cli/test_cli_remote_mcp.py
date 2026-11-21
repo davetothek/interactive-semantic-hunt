@@ -89,7 +89,9 @@ class TestRemoteMcp:
     ) -> None:
         _model(monkeypatch, FakeModel())
         code, results = _serve(
-            monkeypatch, ["remote", "mcp"], _call(1, "ask", {"question": QUESTION})
+            monkeypatch,
+            ["remote", "mcp", "--check-claims"],
+            _call(1, "ask", {"question": QUESTION}),
         )
         assert code == 0
         answer = json.loads(results[1]["content"][0]["text"])
@@ -111,7 +113,9 @@ class TestRemoteMcp:
 
         _model(monkeypatch, Guesser())
         code, results = _serve(
-            monkeypatch, ["remote", "mcp"], _call(1, "ask", {"question": QUESTION})
+            monkeypatch,
+            ["remote", "mcp", "--check-claims"],
+            _call(1, "ask", {"question": QUESTION}),
         )
         assert code == 0
         answer = json.loads(results[1]["content"][0]["text"])
