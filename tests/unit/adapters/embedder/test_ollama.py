@@ -342,6 +342,22 @@ class TestFailures:
         with pytest.raises(RuntimeError, match="ollama pull nomic-embed-text"):
             OllamaEmbedder().embed_documents(["a"])
 
+    def test_a_refusal_shows_the_reason_and_not_the_json(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        body = b'{"error":"model \\"nomic-embed-text\\" not found"}'
+        self._fail_with(
+            monkeypatch,
+            urllib.error.HTTPError("u", 404, "Not Found", {}, io.BytesIO(body)),
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            OllamaEmbedder().embed_documents(["a"])
+        assert str(exc_info.value) == (
+            'Ollama refused the request (404): model "nomic-embed-text" not '
+            "found. Pull it with 'ollama pull nomic-embed-text', or set "
+            "ollama_pull to let ish pull it."
+        )
+
     def test_generation_model_is_not_a_missing_model(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -511,3 +527,83 @@ class TestTakingTurns:
     ) -> None:
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
         assert OllamaEmbedder().turn.path == tmp_path / "ish" / "query"
+
+
+class Daemon:
+    """Stand in for a daemon that lacks the model until a pull gets it."""
+
+    def __init__(self, pull_error: Exception | None = None, keeps: bool = True) -> None:
+        self.calls: list[tuple[str, dict, float | None]] = []
+        self.has_model = False
+        self._pull_error = pull_error
+        self._keeps = keeps
+
+    def __call__(self, request, timeout=None):
+        body = json.loads(request.data)
+        self.calls.append((request.full_url.rsplit("/", 1)[-1], body, timeout))
+        if request.full_url.endswith("/api/pull"):
+            if self._pull_error is not None:
+                raise self._pull_error
+            self.has_model = self._keeps
+            return _response({"status": "success"})
+        if not self.has_model:
+            missing = b'{"error":"model \\"nomic-embed-text\\" not found"}'
+            raise urllib.error.HTTPError("u", 404, "nf", {}, io.BytesIO(missing))
+        return _response({"embeddings": [[1.0] for _ in body["input"]]})
+
+
+class TestPull:
+    """With ollama_pull, pull a missing model once, then send the request again."""
+
+    def _daemon(self, monkeypatch, **named) -> Daemon:
+        daemon = Daemon(**named)
+        monkeypatch.setattr(urllib.request, "urlopen", daemon)
+        return daemon
+
+    def test_a_missing_model_is_pulled_and_then_embeds(
+        self, monkeypatch, caplog
+    ) -> None:
+        daemon = self._daemon(monkeypatch)
+        with caplog.at_level(logging.WARNING):
+            vectors = OllamaEmbedder(pull=True).embed_documents(["a"])
+        assert vectors == [[1.0]]
+        assert [name for name, _, _ in daemon.calls] == ["embed", "pull", "embed"]
+        _, payload, timeout = daemon.calls[1]
+        assert payload == {"model": DEFAULT_MODEL, "stream": False}
+        assert timeout == ollama.PULL_TIMEOUT_SECONDS
+        assert "Pulling it" in caplog.text
+        assert f"Ollama pulled {DEFAULT_MODEL!r}." in caplog.text
+
+    def test_the_model_option_carries_the_pull(self, monkeypatch) -> None:
+        daemon = self._daemon(monkeypatch)
+        OllamaEmbedder.from_option("", pull=True).embed_query("q")
+        assert [name for name, _, _ in daemon.calls] == ["embed", "pull", "embed"]
+
+    def test_no_pull_without_the_option(self, monkeypatch) -> None:
+        daemon = self._daemon(monkeypatch)
+        with pytest.raises(RuntimeError, match="set ollama_pull"):
+            OllamaEmbedder().embed_documents(["a"])
+        assert [name for name, _, _ in daemon.calls] == ["embed"]
+
+    def test_a_model_still_missing_after_a_pull_is_an_error(self, monkeypatch) -> None:
+        """One pull for each embedder, so a pull that brings nothing cannot loop."""
+        daemon = self._daemon(monkeypatch, keeps=False)
+        with pytest.raises(RuntimeError, match=r"refused the request \(404\)"):
+            OllamaEmbedder(pull=True).embed_documents(["a"])
+        assert [name for name, _, _ in daemon.calls] == ["embed", "pull", "embed"]
+
+    def test_a_refused_pull_shows_the_reason(self, monkeypatch) -> None:
+        body = io.BytesIO(b'{"error":"pull model manifest: file does not exist"}')
+        error = urllib.error.HTTPError("u", 500, "e", {}, body)
+        self._daemon(monkeypatch, pull_error=error)
+        with pytest.raises(RuntimeError) as exc_info:
+            OllamaEmbedder("no-such-model", pull=True).embed_documents(["a"])
+        assert str(exc_info.value) == (
+            "Ollama could not pull 'no-such-model' (500): "
+            "pull model manifest: file does not exist."
+        )
+
+    def test_a_pull_that_does_not_complete_is_an_error(self, monkeypatch) -> None:
+        self._daemon(monkeypatch, pull_error=TimeoutError("timed out"))
+        with pytest.raises(RuntimeError, match="did not complete the pull"):
+            OllamaEmbedder(pull=True).embed_documents(["a"])

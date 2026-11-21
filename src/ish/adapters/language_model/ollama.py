@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ish.adapters import _http
-from ish.adapters._ollama import is_loopback, resolve_host
+from ish.adapters._ollama import error_text, is_loopback, resolve_host
 from ish.adapters.language_model import _grounded
 from ish.adapters.language_model._calls import CallOptions
 from ish.adapters.language_model._prompts import Prompts
@@ -205,7 +205,8 @@ class OllamaLanguageModel:
                 else ""
             )
             raise LanguageModelError(
-                f"Ollama refused the request ({exc.code}): {exc.detail}.{hint}"
+                f"Ollama refused the request ({exc.code}): "
+                f"{error_text(exc.detail)}.{hint}"
             ) from exc
         except _http.Unreachable as exc:
             raise LanguageModelError(

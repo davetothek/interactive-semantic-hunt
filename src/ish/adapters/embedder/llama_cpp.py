@@ -43,7 +43,11 @@ class LlamaCppEmbedder(PrefixingEmbedder):
 
     @classmethod
     def from_option(
-        cls, model: str, context_tokens: int | None = None
+        cls,
+        model: str,
+        context_tokens: int | None = None,
+        *,
+        pull: bool = False,  # llama.cpp downloads the model itself.
     ) -> "LlamaCppEmbedder":
         """Build the backend the ``model`` option names.
 

@@ -152,6 +152,15 @@ class Settings:
             EMBEDDING, "Override the backend model. Empty uses the backend default."
         ),
     )
+    ollama_pull: bool = field(
+        default=False,
+        metadata=_opt(
+            EMBEDDING,
+            "Let ish pull the embedding model when the Ollama daemon does not "
+            "have it. The first search or index run waits for the pull.",
+            action="boolean_optional",
+        ),
+    )
     limit: int = field(
         default=5,
         metadata=_opt(
@@ -706,12 +715,13 @@ class Settings:
         ),
     )
     check_claims: bool = field(
-        default=True,
+        default=False,
         metadata=_opt(
             ANSWERS,
             "Check each claim of an answer: find its quote in the source, and "
             "let a model say whether the quote states it. A claim that fails "
-            "is set apart as unconfirmed.",
+            "is set apart as unconfirmed. Off by default, because the check "
+            "also sets apart correct claims.",
             scope="query",
             action="boolean_optional",
         ),

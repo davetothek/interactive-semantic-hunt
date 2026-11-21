@@ -184,6 +184,21 @@ a wider window is worth its re-index only when the table moves. The
 `llama.cpp` backend takes the window the same way. The `st` backend reads
 it from the model card, so there only the cap follows.
 
+## Pull a missing embedding model
+
+The Ollama daemon serves only the models that it has pulled. When it does
+not have the embedding model, ish stops and tells you the command to run.
+To let ish pull the model instead:
+
+```toml
+ollama_pull = true
+```
+
+The first search or index run waits for the pull, and a model of a few
+hundred MB can take minutes. ish pulls on the daemon that `OLLAMA_HOST`
+names, which can be another machine. The `llama.cpp` and `st` backends
+download their models themselves, so the option does not apply to them.
+
 ## Find one sentence of a long section
 
 One vector stands for one chunk, and an embedding model averages what the

@@ -158,6 +158,16 @@ class TestFailures:
         error = urllib.error.HTTPError("u", 404, "nf", None, io.BytesIO(b"not found"))
         self._fails(recorder, error, "ollama pull qwen3:8b")
 
+    def test_a_refusal_shows_the_reason_and_not_the_json(self, recorder) -> None:
+        body = io.BytesIO(b'{"error":"model \\"qwen3:8b\\" not found"}')
+        error = urllib.error.HTTPError("u", 404, "nf", None, body)
+        self._fails(
+            recorder,
+            error,
+            r'^Ollama refused the request \(404\): model "qwen3:8b" not found\. '
+            r"Pull it with 'ollama pull qwen3:8b'\.$",
+        )
+
     def test_another_refusal_shows_the_detail(self, recorder) -> None:
         error = urllib.error.HTTPError("u", 500, "e", None, io.BytesIO(b"boom"))
         self._fails(recorder, error, r"\(500\): boom\.$")

@@ -1,8 +1,14 @@
-"""Test how the Ollama adapters find the daemon they share."""
+"""Test how the Ollama adapters find the daemon they share and read its errors."""
 
 import pytest
 
-from ish.adapters._ollama import DEFAULT_HOST, is_loopback, normalize_host, resolve_host
+from ish.adapters._ollama import (
+    DEFAULT_HOST,
+    error_text,
+    is_loopback,
+    normalize_host,
+    resolve_host,
+)
 
 
 @pytest.mark.parametrize(
@@ -46,3 +52,22 @@ class TestResolveHost:
     def test_this_machine_is_last(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OLLAMA_HOST", raising=False)
         assert resolve_host("") == DEFAULT_HOST
+
+
+@pytest.mark.parametrize(
+    ("detail", "text"),
+    [
+        (
+            '{"error":"model \\"nomic-embed-text\\" not found, try pulling it first"}',
+            'model "nomic-embed-text" not found, try pulling it first',
+        ),
+        ("not found", "not found"),
+        ('{"status":"no"}', '{"status":"no"}'),
+        ('{"error":{"message":"no"}}', '{"error":{"message":"no"}}'),
+        ('["error"]', '["error"]'),
+        ("", ""),
+    ],
+)
+def test_an_error_body_gives_its_message(detail: str, text: str) -> None:
+    """Show the reason of the daemon, and any other body as it came."""
+    assert error_text(detail) == text

@@ -75,16 +75,23 @@ class TestSizes:
 class TestChecks:
     MODEL, RERANK = Named("answer"), Named("rerank")
 
-    def test_the_model_that_wrote_the_answer_checks_it_by_default(self) -> None:
+    def test_the_claims_are_not_checked_by_default(self) -> None:
+        """The check sets apart correct claims, so an answer runs none (#171)."""
+        assert Settings().check_claims is False
         found = checks(Settings(), self.MODEL, self.RERANK, brief=False)
+        assert found == {"challenge": True}
+
+    def test_the_model_that_wrote_the_answer_checks_it(self) -> None:
+        settings = Settings(check_claims=True)
+        found = checks(settings, self.MODEL, self.RERANK, brief=False)
         assert found == {"challenge": True, "judge": self.MODEL, "repairs": 1}
 
     def test_the_rerank_model_checks_when_the_settings_ask(self) -> None:
-        settings = Settings(check_model="rerank")
+        settings = Settings(check_claims=True, check_model="rerank")
         assert checks(settings, self.MODEL, self.RERANK, False)["judge"] is self.RERANK
 
     def test_the_answer_model_checks_when_no_rerank_model_is_set(self) -> None:
-        settings = Settings(check_model="rerank")
+        settings = Settings(check_claims=True, check_model="rerank")
         assert checks(settings, self.MODEL, None, False)["judge"] is self.MODEL
 
     def test_a_brief_answer_is_neither_checked_nor_challenged(self) -> None:
@@ -96,7 +103,7 @@ class TestChecks:
         assert checks(settings, self.MODEL, None, False) == {"challenge": False}
 
     def test_a_negative_count_of_repairs_runs_none(self) -> None:
-        settings = Settings(repair_turns=-3)
+        settings = Settings(check_claims=True, repair_turns=-3)
         assert checks(settings, self.MODEL, None, False)["repairs"] == 0
 
 
@@ -131,7 +138,8 @@ class TestAnAnswerIsChecked:
     ) -> None:
         made = Model("How to configure it.")
         monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: made)
-        with Ish(project, settings=Settings(no_cache=True, git=False)) as ish:
+        settings = Settings(no_cache=True, git=False, check_claims=True)
+        with Ish(project, settings=settings) as ish:
             answer = ish.ask("how to configure", type=("doc",))
         assert made.checked == ["It explains the setup."]
         assert (answer.check_model, answer.claims_checked) == ("checked", 1)
@@ -142,7 +150,7 @@ class TestAnAnswerIsChecked:
         monkeypatch.setattr(bootstrap, "build_chunk_source", lambda settings: server)
         monkeypatch.setattr(bootstrap, "build_language_model", lambda s, **_: made)
         monkeypatch.setattr(bootstrap, "build_reranker", lambda s: None)
-        answer = RemoteIsh(Settings(remote=URL)).ask(QUESTION)
+        answer = RemoteIsh(Settings(remote=URL, check_claims=True)).ask(QUESTION)
         assert made.checked == ["It explains the setup."]
         assert answer.covered and answer.unconfirmed == ()
 

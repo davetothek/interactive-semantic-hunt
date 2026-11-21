@@ -272,7 +272,8 @@ class TestProgressStaysOffStdout:
 
         monkeypatch.setattr(cli, "Ticker", Recorder)
         _model(monkeypatch, FakeModel())
-        assert main(["--ask", "what does the watchdog do", str(project), *FLAGS]) == 0
+        argv = ["--ask", "what does the watchdog do", "--check-claims"]
+        assert main([*argv, str(project), *FLAGS]) == 0
         assert shown[0] == "Searching"
         assert shown[-2:] == [
             "fake-model writing the answer",
@@ -488,7 +489,8 @@ class TestStreamedAnswer:
         model = StreamingModel()
         _model(monkeypatch, model)
         monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
-        assert main(["--ask", "what does the watchdog do", str(project), *FLAGS]) == 0
+        argv = ["--ask", "what does the watchdog do", "--check-claims"]
+        assert main([*argv, str(project), *FLAGS]) == 0
         assert model.streamed is False
         assert model.checked == ["It resets the board.", "At boot."]
         assert "**Short answer:** It resets the board. [^1]" in capsys.readouterr().out

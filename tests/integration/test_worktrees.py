@@ -28,7 +28,9 @@ class CountingBackend:
     embedded: list[str] = []
 
     @classmethod
-    def from_option(cls, model: str, context_tokens=None) -> "CountingBackend":
+    def from_option(
+        cls, model: str, context_tokens=None, pull=False
+    ) -> "CountingBackend":
         return cls()
 
     def embed_documents(self, texts):

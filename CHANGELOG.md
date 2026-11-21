@@ -8,6 +8,25 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `ollama_pull`, or `--ollama-pull`, lets ish pull the embedding model
+  when the Ollama daemon does not have it. The first search or index run
+  waits for the pull. The option is off by default, and the message for
+  a missing model names it.
+
+### Changed
+
+- `check_claims` is off by default. On 41 questions, the check set
+  correct facts apart as unconfirmed: 20 of 37 answers were correct with
+  it, and 37 of 37 without it, at $0.045 against $0.136 and 21 s against
+  47 s an answer. `--check-claims` turns it on.
+
+### Fixed
+
+- A refusal of Ollama shows the reason the daemon gives, such as
+  `model "nomic-embed-text" not found`, and not the JSON body around it.
+
 ## 0.13.0 - 2026-11-17
 
 ### Added
