@@ -69,7 +69,7 @@ class TestSweep:
             model_name = "stub"
 
             @classmethod
-            def from_option(cls, model, context_tokens=None):
+            def from_option(cls, model, context_tokens=None, pull=False):
                 return cls()
 
             def embed_documents(self, texts):

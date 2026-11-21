@@ -46,6 +46,10 @@ RETRY_ATTEMPTS = 3
 # is loading a model, or restarting, needs time rather than another
 # request.
 RETRY_BACKOFF_SECONDS = 1.0
+# A pull of a model of a few hundred MB over a slow line takes minutes.
+# The daemon sends nothing until the pull is complete, so this bounds
+# the whole pull.
+PULL_TIMEOUT_SECONDS = 3600
 
 
 class _Transient(RuntimeError):
@@ -71,8 +75,12 @@ class OllamaEmbedder(PrefixingEmbedder):
         batch_size: int = DEFAULT_BATCH_SIZE,
         context_tokens: int | None = None,
         turn: Turn | None = None,
+        pull: bool = False,
     ) -> None:
         super().__init__(model_name)
+        # Get the model from the daemon when it is missing, once for
+        # each embedder. A second refusal after a pull is an error.
+        self._pull = pull
         self.host = resolve_host(host)
         self._batch_size = max(1, batch_size)
         # The marker a query leaves, which holds a document request back.
@@ -86,10 +94,10 @@ class OllamaEmbedder(PrefixingEmbedder):
 
     @classmethod
     def from_option(
-        cls, model: str, context_tokens: int | None = None
+        cls, model: str, context_tokens: int | None = None, *, pull: bool = False
     ) -> "OllamaEmbedder":
         """Build the backend the ``model`` option names. Empty means the default."""
-        return cls(model or DEFAULT_MODEL, context_tokens=context_tokens)
+        return cls(model or DEFAULT_MODEL, context_tokens=context_tokens, pull=pull)
 
     def _embed(
         self,
@@ -169,6 +177,30 @@ class OllamaEmbedder(PrefixingEmbedder):
             "then '--embedder llama.cpp'."
         )
 
+    def _pull_model(self) -> None:
+        """Get the model from the registry of the daemon. Wait for the whole pull."""
+        log.warning(
+            "Ollama at %s does not have %r. Pulling it. This can take minutes.",
+            self.host,
+            self.model_name,
+        )
+        payload = {"model": self.model_name, "stream": False}
+        try:
+            _http.post_json(
+                f"{self.host}/api/pull", payload, timeout=PULL_TIMEOUT_SECONDS
+            )
+        except _http.Refused as exc:
+            raise RuntimeError(
+                f"Ollama could not pull {self.model_name!r} ({exc.code}): "
+                f"{error_text(exc.detail)}."
+            ) from exc
+        except _http.HttpFailure as exc:
+            raise RuntimeError(
+                f"Ollama at {self.host} did not complete the pull of "
+                f"{self.model_name!r}: {exc}."
+            ) from exc
+        log.warning("Ollama pulled %r.", self.model_name)
+
     def _embed_batch(self, batch: list[str], timeout: float) -> list[Sequence[float]]:
         """Send one batch and return its vectors."""
         payload: dict[str, object] = {"model": self.model_name, "input": batch}
@@ -183,8 +215,15 @@ class OllamaEmbedder(PrefixingEmbedder):
                 f"for the batch an index run has in flight."
             ) from exc
         except _http.Refused as exc:
+            if exc.code == 404 and self._pull:
+                self._pull = False
+                self._pull_model()
+                return self._embed_batch(batch, timeout)
             if exc.code == 404:
-                hint = f"Pull it with 'ollama pull {self.model_name}'."
+                hint = (
+                    f"Pull it with 'ollama pull {self.model_name}', or set "
+                    f"ollama_pull to let ish pull it."
+                )
             else:
                 hint = (
                     f"Confirm that {self.model_name!r} is an embedding model, "

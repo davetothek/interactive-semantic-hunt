@@ -271,7 +271,11 @@ def build_embedder(settings: Settings) -> Embedder:
             f"Unknown embedder {settings.embedder!r}. Valid backends: {valid}"
         ) from None
 
-    return backend.from_option(settings.model, context_tokens=context_window(settings))
+    return backend.from_option(
+        settings.model,
+        context_tokens=context_window(settings),
+        pull=settings.ollama_pull,
+    )
 
 
 def build_language_model(

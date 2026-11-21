@@ -454,6 +454,7 @@ builds a language model and sends no text anywhere.
 | `--max-chunks N` | Index a file that yields more chunks than this as one chunk (default 1000) |
 | `--context-tokens N` | How many tokens the model reads of each chunk (default 2048) |
 | `--model NAME` | Override the backend model |
+| `--ollama-pull` | Pull the embedding model when the Ollama daemon does not have it (default: off) |
 | `--refresh` | Bring every stored index at or below the path up to date first |
 | `--reindex` | Discard the stored index and build it again |
 | `--forget` | Remove the stored index of every tree at or under the path, and stop. The vectors stay |

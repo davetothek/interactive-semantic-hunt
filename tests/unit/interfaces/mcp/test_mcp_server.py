@@ -60,7 +60,7 @@ class StubEmbedder:
     model_name = "stub"
 
     @classmethod
-    def from_option(cls, model: str, context_tokens=None) -> "StubEmbedder":
+    def from_option(cls, model: str, context_tokens=None, pull=False) -> "StubEmbedder":
         return cls()
 
     def embed_documents(self, texts):

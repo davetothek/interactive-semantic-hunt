@@ -28,7 +28,8 @@ ollama serve
 ollama pull nomic-embed-text
 ```
 
-Set `OLLAMA_HOST` to reach a daemon elsewhere.
+Set `OLLAMA_HOST` to reach a daemon elsewhere. With `ollama_pull = true`,
+ish pulls the model itself when the daemon does not have it.
 
 Two other backends need no daemon:
 

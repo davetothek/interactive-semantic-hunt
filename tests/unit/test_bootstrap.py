@@ -70,6 +70,11 @@ class TestRegistries:
             backend.from_option("mxbai-embed-large").model_name == "mxbai-embed-large"
         )
 
+    def test_the_settings_give_the_pull_to_the_backend(self) -> None:
+        made = bootstrap.build_embedder(Settings(ollama_pull=True))
+        assert made._pull is True
+        assert bootstrap.build_embedder(Settings())._pull is False
+
     def test_the_extras_are_not_imported_by_the_registry(self) -> None:
         """Listing the backends must not import a package that may be absent."""
         import sys
@@ -492,7 +497,7 @@ class TestContextWindow:
             model_name = "r"
 
             @classmethod
-            def from_option(cls, model, context_tokens=None):
+            def from_option(cls, model, context_tokens=None, pull=False):
                 asked.append((model, context_tokens))
                 return cls()
 
@@ -768,7 +773,7 @@ class _StubBackend:
     model_name = "stub"
 
     @classmethod
-    def from_option(cls, model: str, context_tokens=None) -> "_StubBackend":
+    def from_option(cls, model: str, context_tokens=None, pull=False) -> "_StubBackend":
         return cls()
 
     def embed_documents(self, texts):

@@ -152,6 +152,15 @@ class Settings:
             EMBEDDING, "Override the backend model. Empty uses the backend default."
         ),
     )
+    ollama_pull: bool = field(
+        default=False,
+        metadata=_opt(
+            EMBEDDING,
+            "Let ish pull the embedding model when the Ollama daemon does not "
+            "have it. The first search or index run waits for the pull.",
+            action="boolean_optional",
+        ),
+    )
     limit: int = field(
         default=5,
         metadata=_opt(

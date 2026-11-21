@@ -8,6 +8,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+- `ollama_pull`, or `--ollama-pull`, lets ish pull the embedding model
+  when the Ollama daemon does not have it. The first search or index run
+  waits for the pull. The option is off by default, and the message for
+  a missing model names it.
+
 ### Changed
 
 - `check_claims` is off by default. On 41 questions, the check set

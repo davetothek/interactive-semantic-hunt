@@ -131,7 +131,7 @@ class TestCLIEdgeCases:
 
         class Boom:
             @classmethod
-            def from_option(cls, model: str, context_tokens=None) -> None:
+            def from_option(cls, model: str, context_tokens=None, pull=False) -> None:
                 raise ConnectionError("Failed to connect to Ollama")
 
         monkeypatch.setitem(bootstrap.EMBEDDERS, "ollama", Boom)
@@ -153,7 +153,7 @@ class TestCLIEdgeCases:
 
         class Boom:
             @classmethod
-            def from_option(cls, model: str, context_tokens=None) -> None:
+            def from_option(cls, model: str, context_tokens=None, pull=False) -> None:
                 raise ModuleNotFoundError("No module named 'sentence_transformers'")
 
         monkeypatch.setitem(bootstrap.EMBEDDERS, "st", Boom)

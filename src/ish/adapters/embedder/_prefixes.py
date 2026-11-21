@@ -56,13 +56,15 @@ class PrefixingEmbedder:
 
     @classmethod
     def from_option(
-        cls, model: str, context_tokens: int | None = None
+        cls, model: str, context_tokens: int | None = None, *, pull: bool = False
     ) -> "PrefixingEmbedder":
         """Build the backend the ``model`` option names. Empty means the default.
 
         *context_tokens* is the window the model reads of each text, or
-        None to leave the backend's own default. Each backend reads the
-        options its own way, so each defines this.
+        None to leave the backend's own default. With *pull*, a backend
+        whose daemon serves the models gets a missing model from that
+        daemon. A backend that gets its model by itself ignores *pull*.
+        Each backend reads the options its own way, so each defines this.
         """
         raise NotImplementedError
 

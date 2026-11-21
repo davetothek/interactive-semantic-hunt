@@ -38,7 +38,11 @@ class SentenceTransformerEmbedder(PrefixingEmbedder):
 
     @classmethod
     def from_option(
-        cls, model: str, context_tokens: int | None = None
+        cls,
+        model: str,
+        context_tokens: int | None = None,
+        *,
+        pull: bool = False,  # The library downloads the model itself.
     ) -> "SentenceTransformerEmbedder":
         """Build the backend the ``model`` option names. Empty means the default.
 
