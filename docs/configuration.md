@@ -247,8 +247,13 @@ allowed_language_models = ["anthropic"]
 ```
 
 `allowed_language_models` is the gate. A backend that it does not name is
-never built, even when `language_model` names it. There is no default model
-and no fallback: when the backend fails, the answer fails. No call can change
+never built, even when `language_model` names it. There is no default
+backend and no fallback: when the backend fails, the answer fails.
+
+The `anthropic` and `ollama` backends need `answer_model`. The `claude-cli`
+backend runs `sonnet` when `answer_model` is empty. claude resolves that
+alias to its newest Sonnet, so the model changes when a new one is
+released. Set a full ID, such as `claude-sonnet-5-5`, to keep one model. No call can change
 these three options, because they decide where the text of a document goes.
 
 | Backend | Where the text goes | Citations | Use it for |

@@ -118,9 +118,8 @@ class TestConfiguration:
     def test_the_registry_names_the_backend(self) -> None:
         assert LANGUAGE_MODELS["claude-cli"] is ClaudeCliLanguageModel
 
-    def test_no_model_is_chosen_for_the_operator(self) -> None:
-        with pytest.raises(LanguageModelError, match="answer_model"):
-            ClaudeCliLanguageModel("")
+    def test_an_empty_model_runs_the_newest_sonnet(self, runner) -> None:
+        assert ClaudeCliLanguageModel("").model_name == "sonnet"
 
     def test_a_missing_command_is_named(self, monkeypatch) -> None:
         monkeypatch.setattr(claude_cli.shutil, "which", lambda name: None)

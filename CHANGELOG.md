@@ -18,6 +18,9 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
   says whether Ollama is installed. An installed Ollama gets the command
   to start the daemon. A missing one gets the install page and a backend
   that needs no daemon.
+- The `claude-cli` backend runs `sonnet` when `answer_model` is empty.
+  claude resolves the alias to its newest Sonnet. The `anthropic` and
+  `ollama` backends still need `answer_model`.
 
 ## 0.14.0 - 2026-11-21
 
