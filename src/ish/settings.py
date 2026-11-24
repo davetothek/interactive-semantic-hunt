@@ -153,7 +153,7 @@ class Settings:
         ),
     )
     ollama_pull: bool = field(
-        default=False,
+        default=True,
         metadata=_opt(
             EMBEDDING,
             "Let ish pull the embedding model when the Ollama daemon does not "

@@ -21,15 +21,16 @@ sentence-transformers. A server that signs users in to an LDAP directory
 needs `[ldap]`.
 
 The default embedding backend is Ollama, which keeps the model resident so no
-run pays a model load. Start it once and pull the embedding model:
+run pays a model load. Start the daemon once:
 
 ```sh
 ollama serve
-ollama pull nomic-embed-text
 ```
 
-Set `OLLAMA_HOST` to reach a daemon elsewhere. With `ollama_pull = true`,
-ish pulls the model itself when the daemon does not have it.
+The default model is `nomic-embed-text`. When the daemon does not have it,
+the first search or index run pulls it, about 270 MB. Set
+`ollama_pull = false` to pull it yourself with `ollama pull nomic-embed-text`.
+Set `OLLAMA_HOST` to reach a daemon elsewhere.
 
 Two other backends need no daemon:
 

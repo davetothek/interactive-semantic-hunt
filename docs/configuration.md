@@ -187,15 +187,15 @@ it from the model card, so there only the cap follows.
 ## Pull a missing embedding model
 
 The Ollama daemon serves only the models that it has pulled. When it does
-not have the embedding model, ish stops and tells you the command to run.
-To let ish pull the model instead:
+not have the embedding model, ish pulls it. The first search or index run
+waits for the pull, and a model of a few hundred MB can take minutes.
+To stop ish and get the command to run instead:
 
 ```toml
-ollama_pull = true
+ollama_pull = false
 ```
 
-The first search or index run waits for the pull, and a model of a few
-hundred MB can take minutes. ish pulls on the daemon that `OLLAMA_HOST`
+ish pulls on the daemon that `OLLAMA_HOST`
 names, which can be another machine. The `llama.cpp` and `st` backends
 download their models themselves, so the option does not apply to them.
 

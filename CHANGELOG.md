@@ -8,6 +8,13 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- `ollama_pull` is on by default. A first run needs only `ollama serve`:
+  ish pulls the default embedding model, `nomic-embed-text`, when the
+  daemon does not have it. `--no-ollama-pull`, or `ollama_pull = false`,
+  stops with the command to run instead.
+
 ## 0.14.0 - 2026-11-21
 
 ### Added

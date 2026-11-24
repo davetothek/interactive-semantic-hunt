@@ -71,9 +71,12 @@ class TestRegistries:
         )
 
     def test_the_settings_give_the_pull_to_the_backend(self) -> None:
-        made = bootstrap.build_embedder(Settings(ollama_pull=True))
-        assert made._pull is True
-        assert bootstrap.build_embedder(Settings())._pull is False
+        made = bootstrap.build_embedder(Settings(ollama_pull=False))
+        assert made._pull is False
+
+    def test_the_backend_pulls_a_missing_model_by_default(self) -> None:
+        """A first run needs only a running daemon, not a pull by hand."""
+        assert bootstrap.build_embedder(Settings())._pull is True
 
     def test_the_extras_are_not_imported_by_the_registry(self) -> None:
         """Listing the backends must not import a package that may be absent."""
