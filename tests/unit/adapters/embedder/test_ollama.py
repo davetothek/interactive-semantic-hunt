@@ -293,7 +293,10 @@ class TestFailures:
 
         monkeypatch.setattr(urllib.request, "urlopen", boom)
 
-    def test_daemon_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_an_installed_daemon_that_does_not_run_is_told_to_start(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
         self._fail_with(
             monkeypatch, urllib.error.URLError(ConnectionRefusedError("refused"))
         )
@@ -302,7 +305,24 @@ class TestFailures:
 
         message = str(exc_info.value)
         assert "ollama serve" in message
+        assert "not installed" not in message
+        assert "--embedder llama.cpp" not in message
+
+    def test_a_missing_install_names_ollama_and_a_backend_with_no_daemon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("shutil.which", lambda name: None)  # noqa: ARG005
+        self._fail_with(
+            monkeypatch, urllib.error.URLError(ConnectionRefusedError("refused"))
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            OllamaEmbedder().embed_documents(["a"])
+
+        message = str(exc_info.value)
+        assert "Ollama is not installed" in message
+        assert "https://ollama.com" in message
         assert "--embedder llama.cpp" in message
+        assert "ollama serve" not in message
 
     def test_daemon_not_running_names_this_machine(
         self, monkeypatch: pytest.MonkeyPatch
