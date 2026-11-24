@@ -171,10 +171,19 @@ class OllamaEmbedder(PrefixingEmbedder):
                 "there and accepts a remote connection. To embed on this "
                 "machine instead, unset OLLAMA_HOST."
             )
+        # Only the error path calls this, so pay the import here.
+        import shutil
+
+        if shutil.which("ollama"):
+            return (
+                "Ollama is installed, but its daemon does not run. Start it "
+                "with 'ollama serve', or start the service of Ollama."
+            )
         return (
-            "Start it with 'ollama serve', or install another backend and "
-            "select it, as in 'pip install interactive-semantic-hunt[llama]' "
-            "then '--embedder llama.cpp'."
+            "Ollama is not installed. Install it from https://ollama.com, or "
+            "install a backend that needs no daemon and select it: "
+            "'pip install interactive-semantic-hunt[llama]', then "
+            "'--embedder llama.cpp'."
         )
 
     def _pull_model(self) -> None:

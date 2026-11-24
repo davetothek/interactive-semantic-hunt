@@ -187,15 +187,15 @@ it from the model card, so there only the cap follows.
 ## Pull a missing embedding model
 
 The Ollama daemon serves only the models that it has pulled. When it does
-not have the embedding model, ish stops and tells you the command to run.
-To let ish pull the model instead:
+not have the embedding model, ish pulls it. The first search or index run
+waits for the pull, and a model of a few hundred MB can take minutes.
+To stop ish and get the command to run instead:
 
 ```toml
-ollama_pull = true
+ollama_pull = false
 ```
 
-The first search or index run waits for the pull, and a model of a few
-hundred MB can take minutes. ish pulls on the daemon that `OLLAMA_HOST`
+ish pulls on the daemon that `OLLAMA_HOST`
 names, which can be another machine. The `llama.cpp` and `st` backends
 download their models themselves, so the option does not apply to them.
 
@@ -247,8 +247,13 @@ allowed_language_models = ["anthropic"]
 ```
 
 `allowed_language_models` is the gate. A backend that it does not name is
-never built, even when `language_model` names it. There is no default model
-and no fallback: when the backend fails, the answer fails. No call can change
+never built, even when `language_model` names it. There is no default
+backend and no fallback: when the backend fails, the answer fails.
+
+The `anthropic` and `ollama` backends need `answer_model`. The `claude-cli`
+backend runs `sonnet` when `answer_model` is empty. claude resolves that
+alias to its newest Sonnet, so the model changes when a new one is
+released. Set a full ID, such as `claude-sonnet-5-5`, to keep one model. No call can change
 these three options, because they decide where the text of a document goes.
 
 | Backend | Where the text goes | Citations | Use it for |

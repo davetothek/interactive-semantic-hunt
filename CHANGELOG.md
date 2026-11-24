@@ -8,6 +8,20 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- `ollama_pull` is on by default. A first run needs only `ollama serve`:
+  ish pulls the default embedding model, `nomic-embed-text`, when the
+  daemon does not have it. `--no-ollama-pull`, or `ollama_pull = false`,
+  stops with the command to run instead.
+- When ish cannot reach the Ollama daemon on this machine, the message
+  says whether Ollama is installed. An installed Ollama gets the command
+  to start the daemon. A missing one gets the install page and a backend
+  that needs no daemon.
+- The `claude-cli` backend runs `sonnet` when `answer_model` is empty.
+  claude resolves the alias to its newest Sonnet. The `anthropic` and
+  `ollama` backends still need `answer_model`.
+
 ## 0.14.0 - 2026-11-21
 
 ### Added

@@ -50,6 +50,10 @@ log = logging.getLogger(__name__)
 
 EXECUTABLE = DEFAULT_CLAUDE
 TIMEOUT_SECONDS = 600
+# The alias claude resolves to its newest Sonnet. The backend receives
+# text only when allowed_language_models names it, so a default model
+# sends nothing that the operator did not allow.
+DEFAULT_MODEL = "sonnet"
 
 # Ask the CLI to load no memory: no CLAUDE.md of any scope, and no auto
 # memory. Do not rely on these alone. Version 2.1.296 still loaded the
@@ -329,17 +333,14 @@ class ClaudeCliLanguageModel:
         tree: Path | None = None,
         options: CallOptions | None = None,
     ) -> None:
-        """Use *model*, a Claude model id or alias such as ``sonnet``.
+        """Use *model*, a Claude model id or alias. Empty uses ``sonnet``.
 
-        Require the model and the ``claude`` command on the path. With
+        Require the ``claude`` command on the path. With
         *tree*, an answer may read the files of that tree, and of no other
         place, before it replies. Every other call reads only its message.
         *options* set the cache, the cost of reading, and the trace.
         """
-        if not model:
-            raise LanguageModelError(
-                "Set answer_model to a Claude model for the claude-cli backend."
-            )
+        model = model or DEFAULT_MODEL
         self._options = options or CallOptions()
         found = shutil.which(self._options.claude)
         if found is None:
