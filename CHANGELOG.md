@@ -8,6 +8,8 @@ and the version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## 0.14.1 - 2026-11-24
+
 ### Changed
 
 - `ollama_pull` is on by default. A first run needs only `ollama serve`:
